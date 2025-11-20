@@ -20,17 +20,23 @@ pub struct LogOwlApp {
     is_loading: bool,
     load_progress: f32,
     load_receiver: Option<Receiver<LoadMessage>>,
+    initial_file: Option<PathBuf>,
 }
 
 impl LogOwlApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
         LogOwlApp {
             log_view: LogView::new(),
             current_file: None,
-            status_message: "Ready. Open a log file to begin.".to_string(),
+            status_message: if file.is_some() {
+                "Loading file...".to_string()
+            } else {
+                "Ready. Open a log file to begin.".to_string()
+            },
             is_loading: false,
             load_progress: 0.0,
             load_receiver: None,
+            initial_file: file,
         }
     }
     
@@ -156,6 +162,15 @@ impl LogOwlApp {
 
 impl eframe::App for LogOwlApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Load initial file if provided via command line
+        if let Some(file) = self.initial_file.take() {
+            if file.exists() {
+                self.load_file(file, ctx.clone());
+            } else {
+                self.status_message = format!("Error: File not found: {}", file.display());
+            }
+        }
+        
         // Check for messages from background thread
         let mut should_clear_receiver = false;
         if let Some(ref rx) = self.load_receiver {
