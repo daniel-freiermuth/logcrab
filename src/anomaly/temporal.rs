@@ -48,13 +48,15 @@ impl AnomalyScorer for TemporalScorer {
         // Component 1: Time since last occurrence (recency)
         if let Some(&last_time) = self.last_seen.get(&line.template_key) {
             let time_diff = current_time - last_time;
+            let time_diff_secs = time_diff.num_seconds().abs(); // Use absolute value for out-of-order logs
             
-            // If we haven't seen this template in a while, it's more anomalous
-            if time_diff > self.window_duration {
-                score += 0.5; // Long absence
+            // Compare absolute time difference to window
+            let window_secs = self.window_duration.num_seconds().abs();
+            if time_diff_secs > window_secs {
+                score += 0.5; // Long time gap (regardless of direction)
             } else {
-                // Linear decay based on time since last seen
-                let ratio = time_diff.num_seconds() as f64 / self.window_duration.num_seconds() as f64;
+                // Linear decay based on time gap
+                let ratio = (time_diff_secs as f64 / window_secs as f64).min(1.0);
                 score += ratio * 0.3;
             }
         } else {
@@ -66,7 +68,7 @@ impl AnomalyScorer for TemporalScorer {
         // If we're seeing unusually high activity in the time window
         let window_size = self.recent_timestamps.len();
         if window_size > 0 {
-            let rate = window_size as f64 / self.window_duration.num_seconds() as f64;
+            let rate = window_size as f64 / self.window_duration.num_seconds().abs() as f64;
             
             // Adaptive threshold: if rate is unusually high, boost score
             // For now, use a simple heuristic
@@ -75,7 +77,7 @@ impl AnomalyScorer for TemporalScorer {
             }
         }
         
-        score.min(1.0)
+        score.min(1.0).max(0.0) // Ensure score is always in [0, 1]
     }
     
     fn update(&mut self, line: &LogLine) {
