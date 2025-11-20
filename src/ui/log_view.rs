@@ -1,7 +1,7 @@
 use crate::parser::line::LogLine;
 use egui::{Color32, RichText, Ui, text::LayoutJob, TextFormat};
 use egui_extras::{TableBuilder, Column};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 pub struct LogView {
     pub lines: Vec<LogLine>,
@@ -9,6 +9,7 @@ pub struct LogView {
     pub search_text: String,
     pub search_regex: Option<Regex>,
     pub regex_error: Option<String>,
+    pub case_insensitive: bool,
     // Cache for filtered/visible lines - only rebuild when search/filter changes
     filtered_indices: Vec<usize>,
     filter_dirty: bool,
@@ -22,6 +23,7 @@ impl LogView {
             search_text: String::new(),
             search_regex: None,
             regex_error: None,
+            case_insensitive: false,
             filtered_indices: Vec::new(),
             filter_dirty: true,
         }
@@ -37,7 +39,10 @@ impl LogView {
             self.search_regex = None;
             self.regex_error = None;
         } else {
-            match Regex::new(&self.search_text) {
+            match RegexBuilder::new(&self.search_text)
+                .case_insensitive(self.case_insensitive)
+                .build()
+            {
                 Ok(regex) => {
                     self.search_regex = Some(regex);
                     self.regex_error = None;
@@ -150,6 +155,12 @@ impl LogView {
             );
             
             if search_response.changed() {
+                self.update_search_regex();
+            }
+            
+            // Case insensitive checkbox
+            let case_changed = ui.checkbox(&mut self.case_insensitive, "Case insensitive").changed();
+            if case_changed {
                 self.update_search_regex();
             }
             
