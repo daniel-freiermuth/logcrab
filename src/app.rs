@@ -4,6 +4,14 @@ use crate::ui::LogView;
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
+
+enum LoadMessage {
+    Progress(f32, String),
+    Complete(Vec<LogLine>, PathBuf),
+    Error(String),
+}
 
 pub struct LogOwlApp {
     log_view: LogView,
@@ -11,6 +19,7 @@ pub struct LogOwlApp {
     status_message: String,
     is_loading: bool,
     load_progress: f32,
+    load_receiver: Option<Receiver<LoadMessage>>,
 }
 
 impl LogOwlApp {
@@ -21,47 +30,69 @@ impl LogOwlApp {
             status_message: "Ready. Open a log file to begin.".to_string(),
             is_loading: false,
             load_progress: 0.0,
+            load_receiver: None,
         }
     }
     
-    pub fn load_file(&mut self, path: PathBuf) {
+    pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {
         self.is_loading = true;
         self.load_progress = 0.0;
         self.status_message = format!("Loading {}...", path.display());
         
-        match self.process_file(&path) {
-            Ok(lines) => {
-                self.log_view.set_lines(lines);
-                self.current_file = Some(path.clone());
-                self.status_message = format!("Loaded {} successfully with {} lines", 
-                    path.display(), 
-                    self.log_view.lines.len());
-            }
-            Err(e) => {
-                self.status_message = format!("Error loading file: {}", e);
-            }
-        }
+        let (tx, rx) = channel();
+        self.load_receiver = Some(rx);
         
-        self.is_loading = false;
-        self.load_progress = 1.0;
+        thread::spawn(move || {
+            Self::process_file_background(path, tx, ctx);
+        });
     }
     
-    fn process_file(&mut self, path: &PathBuf) -> Result<Vec<LogLine>, std::io::Error> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
+    fn process_file_background(path: PathBuf, tx: Sender<LoadMessage>, ctx: egui::Context) {
+        // Get file size for progress tracking
+        let metadata = std::fs::metadata(&path);
+        if let Err(e) = metadata {
+            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {}", e)));
+            return;
+        }
+        let file_size = metadata.unwrap().len() as f32;
+        
+        let file = File::open(&path);
+        if let Err(e) = file {
+            let _ = tx.send(LoadMessage::Error(format!("Cannot open file: {}", e)));
+            return;
+        }
+        let mut reader = BufReader::new(file.unwrap());
         
         let mut scorer = create_default_scorer();
         let mut lines = Vec::new();
         let mut raw_scores = Vec::new();
         
+        let mut bytes_read: usize = 0;
+        
         // First pass: parse and score
-        for (idx, line_result) in reader.lines().enumerate() {
-            let raw_line = line_result?;
-            if raw_line.trim().is_empty() {
+        let mut line_buffer = String::new();
+        let mut idx = 0;
+        loop {
+            line_buffer.clear();
+            let bytes = match reader.read_line(&mut line_buffer) {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = tx.send(LoadMessage::Error(format!("Read error: {}", e)));
+                    return;
+                }
+            };
+            
+            if bytes == 0 {
+                break; // EOF
+            }
+            
+            bytes_read += bytes;
+            
+            if line_buffer.trim().is_empty() {
                 continue;
             }
             
-            let mut log_line = parse_line(raw_line, idx + 1);
+            let mut log_line = parse_line(line_buffer.clone(), idx + 1);
             
             // Score before updating (key requirement!)
             let score = scorer.score(&log_line);
@@ -72,15 +103,29 @@ impl LogOwlApp {
             scorer.update(&log_line);
             
             lines.push(log_line);
+            idx += 1;
             
-            // Update progress every 1000 lines
-            if idx % 1000 == 0 {
-                self.load_progress = 0.5 * (idx as f32 / lines.len().max(1) as f32);
+            // Update progress based on bytes read (first 80% of total progress)
+            if idx % 500 == 0 {
+                let progress = 0.8 * (bytes_read as f32 / file_size).min(1.0);
+                let _ = tx.send(LoadMessage::Progress(
+                    progress,
+                    format!("Loading {}... ({} lines)", path.display(), lines.len()),
+                ));
+                ctx.request_repaint();
             }
         }
         
+        let _ = tx.send(LoadMessage::Progress(0.8, format!("Normalizing scores for {}...", path.display())));
+        ctx.request_repaint();
+        let _ = tx.send(LoadMessage::Progress(0.8, format!("Normalizing scores for {}...", path.display())));
+        ctx.request_repaint();
+        
         // Second pass: normalize scores to 0-100
         let normalized_scores = normalize_scores(&raw_scores);
+        
+        let _ = tx.send(LoadMessage::Progress(0.9, format!("Finalizing {}...", path.display())));
+        ctx.request_repaint();
         
         // Debug: print score statistics
         if !raw_scores.is_empty() {
@@ -99,12 +144,45 @@ impl LogOwlApp {
             line.anomaly_score = norm_score;
         }
         
-        Ok(lines)
+        let _ = tx.send(LoadMessage::Complete(lines, path));
+        ctx.request_repaint();
     }
 }
 
 impl eframe::App for LogOwlApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check for messages from background thread
+        let mut should_clear_receiver = false;
+        if let Some(ref rx) = self.load_receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    LoadMessage::Progress(progress, status) => {
+                        self.load_progress = progress;
+                        self.status_message = status;
+                    }
+                    LoadMessage::Complete(lines, path) => {
+                        self.log_view.set_lines(lines);
+                        self.current_file = Some(path.clone());
+                        self.status_message = format!("Loaded {} successfully with {} lines", 
+                            path.display(), 
+                            self.log_view.lines.len());
+                        self.is_loading = false;
+                        self.load_progress = 1.0;
+                        should_clear_receiver = true;
+                    }
+                    LoadMessage::Error(err) => {
+                        self.status_message = err;
+                        self.is_loading = false;
+                        self.load_progress = 0.0;
+                        should_clear_receiver = true;
+                    }
+                }
+            }
+        }
+        if should_clear_receiver {
+            self.load_receiver = None;
+        }
+        
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -114,7 +192,7 @@ impl eframe::App for LogOwlApp {
                             .add_filter("All Files", &["*"])
                             .pick_file() 
                         {
-                            self.load_file(path);
+                            self.load_file(path, ctx.clone());
                         }
                         ui.close_menu();
                     }
@@ -161,7 +239,7 @@ impl eframe::App for LogOwlApp {
                             .add_filter("All Files", &["*"])
                             .pick_file() 
                         {
-                            self.load_file(path);
+                            self.load_file(path, ctx.clone());
                         }
                     }
                     
