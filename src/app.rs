@@ -247,13 +247,6 @@ impl eframe::App for LogOwlApp {
                             self.load_file(path, ctx.clone());
                         }
                     }
-                    
-                    ui.add_space(40.0);
-                    ui.label("Features:");
-                    ui.label("• Handles large log files (100-500 MB)");
-                    ui.label("• Color-coded anomaly visualization");
-                    ui.label("• Supports Android logcat and generic log formats");
-                    ui.label("• Real-time anomaly scoring");
                 });
             } else {
                 // Split into two panels: context view on left, filtered view on right
