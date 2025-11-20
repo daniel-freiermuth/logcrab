@@ -17,6 +17,9 @@ pub struct LogView {
     // Selected line tracking
     selected_line_index: Option<usize>,
     selected_timestamp: Option<DateTime<Local>>,
+    // Track last rendered selection to detect changes for each view
+    last_rendered_selection_context: Option<usize>,
+    last_rendered_selection_filtered: Option<usize>,
 }
 
 impl LogView {
@@ -32,6 +35,8 @@ impl LogView {
             filter_dirty: true,
             selected_line_index: None,
             selected_timestamp: None,
+            last_rendered_selection_context: None,
+            last_rendered_selection_filtered: None,
         }
     }
     
@@ -223,11 +228,23 @@ impl LogView {
         ui.separator();
         
         // Rebuild filtered indices if needed and get scroll target
-        let scroll_to_row = if self.filter_dirty {
+        let mut scroll_to_row = if self.filter_dirty {
             self.rebuild_filtered_indices()
         } else {
             None
         };
+        
+        // Check if selection changed since last render of filtered view
+        if scroll_to_row.is_none() && self.selected_line_index.is_some() {
+            if self.last_rendered_selection_filtered != self.selected_line_index {
+                // Selection changed, find it in filtered view
+                if let Some(selected_idx) = self.selected_line_index {
+                    if let Some(position) = self.filtered_indices.iter().position(|&idx| idx == selected_idx) {
+                        scroll_to_row = Some(position);
+                    }
+                }
+            }
+        }
         
         // Stats
         let total_lines = self.lines.len();
@@ -261,9 +278,10 @@ impl LogView {
             .min_scrolled_height(available_height)
             .max_scroll_height(available_height);
         
-        // Scroll to target row if filter just changed
+        // Scroll to target row if filter changed or selection changed from context view
         if let Some(row_idx) = scroll_to_row {
             table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
+            self.last_rendered_selection_filtered = self.selected_line_index;
         }
         
         table.header(20.0, |mut header| {
@@ -382,6 +400,162 @@ impl LogView {
                     }
                 });
             });
+    }
+    
+    /// Render context view - shows unfiltered lines around the selected line
+    pub fn render_context(&mut self, ui: &mut Ui) {
+        ui.heading("Context View");
+        ui.label("Unfiltered view centered on selected line");
+        ui.separator();
+        
+        // If no line is selected, show message
+        let Some(selected_idx) = self.selected_line_index else {
+            ui.vertical_centered(|ui| {
+                ui.add_space(100.0);
+                ui.label("No line selected");
+                ui.label("Click on a line in the main view to see context");
+            });
+            return;
+        };
+        
+        // Show context: 50 lines before and after selected line
+        const CONTEXT_LINES: usize = 50;
+        let start_idx = selected_idx.saturating_sub(CONTEXT_LINES);
+        let end_idx = (selected_idx + CONTEXT_LINES + 1).min(self.lines.len());
+        
+        // Calculate which index in the context view is the selected line
+        let selected_position = selected_idx - start_idx;
+        let context_line_count = end_idx - start_idx;
+        
+        ui.label(format!("Showing lines {} - {} (selected: {})", 
+            self.lines[start_idx].line_number,
+            self.lines[end_idx - 1].line_number,
+            self.lines[selected_idx].line_number
+        ));
+        ui.separator();
+        
+        // Virtual scrolling table for context
+        let available_height = ui.available_height();
+        
+        // Check if selection changed since last render
+        let selection_changed = self.last_rendered_selection_context != Some(selected_idx);
+        
+        let mut table = TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .sense(egui::Sense::click())
+            .id_salt("context_table")
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::initial(60.0).resizable(true).clip(true))   // Line number
+            .column(Column::initial(110.0).resizable(true).clip(true))  // Timestamp
+            .column(Column::remainder().clip(true))                      // Message
+            .column(Column::initial(70.0).resizable(true).clip(true))   // Score
+            .min_scrolled_height(available_height)
+            .max_scroll_height(available_height);
+        
+        // Only scroll to selected line when selection changes
+        if selection_changed {
+            table = table.scroll_to_row(selected_position, Some(egui::Align::Center));
+            self.last_rendered_selection_context = Some(selected_idx);
+        }
+        
+        table.header(20.0, |mut header| {
+            header.col(|ui| {
+                ui.strong("Line");
+            });
+            header.col(|ui| {
+                ui.strong("Timestamp");
+            });
+            header.col(|ui| {
+                ui.strong("Message");
+            });
+            header.col(|ui| {
+                ui.strong("Score");
+            });
+        })
+        .body(|body| {
+            body.rows(18.0, context_line_count, |mut row| {
+                let row_index = row.index();
+                let line_idx = start_idx + row_index;
+                let line = &self.lines[line_idx];
+                
+                let is_selected = line_idx == selected_idx;
+                let color = score_to_color(line.anomaly_score);
+                
+                // Line number
+                row.col(|ui| {
+                    if is_selected {
+                        let rect = ui.available_rect_before_wrap();
+                        ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                    }
+                    
+                    let text = if is_selected {
+                        RichText::new(format!("▶ {}", line.line_number)).color(color).strong()
+                    } else {
+                        RichText::new(format!("{}", line.line_number)).color(color)
+                    };
+                    ui.label(text);
+                    
+                    if ui.interact(ui.max_rect(), ui.id().with(line_idx), egui::Sense::click()).clicked() {
+                        self.selected_line_index = Some(line_idx);
+                        self.selected_timestamp = line.timestamp;
+                    }
+                });
+                
+                // Timestamp
+                row.col(|ui| {
+                    if is_selected {
+                        let rect = ui.available_rect_before_wrap();
+                        ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                    }
+                    
+                    let timestamp_str = if let Some(ts) = line.timestamp {
+                        ts.format("%H:%M:%S%.3f").to_string()
+                    } else {
+                        "-".to_string()
+                    };
+                    ui.label(RichText::new(timestamp_str).color(color));
+                    
+                    if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ts"), egui::Sense::click()).clicked() {
+                        self.selected_line_index = Some(line_idx);
+                        self.selected_timestamp = line.timestamp;
+                    }
+                });
+                
+                // Message
+                row.col(|ui| {
+                    if is_selected {
+                        let rect = ui.available_rect_before_wrap();
+                        ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                    }
+                    
+                    ui.label(RichText::new(&line.message).color(color));
+                    
+                    if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("msg"), egui::Sense::click()).clicked() {
+                        self.selected_line_index = Some(line_idx);
+                        self.selected_timestamp = line.timestamp;
+                    }
+                });
+                
+                // Anomaly score
+                row.col(|ui| {
+                    if is_selected {
+                        let rect = ui.available_rect_before_wrap();
+                        ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                    }
+                    
+                    let text = RichText::new(format!("{:.1}", line.anomaly_score))
+                        .strong()
+                        .color(color);
+                    ui.label(text);
+                    
+                    if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("score"), egui::Sense::click()).clicked() {
+                        self.selected_line_index = Some(line_idx);
+                        self.selected_timestamp = line.timestamp;
+                    }
+                });
+            });
+        });
     }
 }
 

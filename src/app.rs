@@ -256,7 +256,17 @@ impl eframe::App for LogOwlApp {
                     ui.label("• Real-time anomaly scoring");
                 });
             } else {
-                self.log_view.render(ui);
+                // Split into two panels: context view on left, filtered view on right
+                egui::SidePanel::left("context_panel")
+                    .resizable(true)
+                    .default_width(ui.available_width() * 0.4)
+                    .show_inside(ui, |ui| {
+                        self.log_view.render_context(ui);
+                    });
+                
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    self.log_view.render(ui);
+                });
             }
         });
     }
