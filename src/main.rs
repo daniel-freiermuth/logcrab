@@ -7,6 +7,10 @@ use app::LogOwlApp;
 use clap::Parser;
 use std::path::PathBuf;
 
+#[cfg(feature = "profiling")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 /// LogOwl - An intelligent log anomaly explorer
 #[derive(Parser, Debug)]
 #[command(name = "logowl")]
@@ -17,9 +21,22 @@ struct Args {
     /// Path to the log file to open
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
+    
+    /// Path for the DHAT profiling output (only used when built with --features profiling)
+    #[cfg(feature = "profiling")]
+    #[arg(long = "profile-output", value_name = "PROFILE_FILE", default_value = "dhat-heap.json")]
+    profile_output: PathBuf,
 }
 
 fn main() -> eframe::Result<()> {
+    #[cfg(feature = "profiling")]
+    let _profiler = {
+        let args_early = Args::parse();
+        dhat::Profiler::builder()
+            .file_name(args_early.profile_output.clone())
+            .build()
+    };
+    
     let args = Args::parse();
     
     let native_options = eframe::NativeOptions {

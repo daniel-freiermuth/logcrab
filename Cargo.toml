@@ -3,6 +3,10 @@ name = "logowl"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+profiling = ["dhat"]
+
 [dependencies]
 eframe = "0.29"
 egui = "0.29"
@@ -13,3 +17,4 @@ lazy_static = "1.4"
 ahash = "0.8"
 rfd = "0.14"
 clap = { version = "4.5", features = ["derive"] }
+dhat = { version = "0.3", optional = true }
