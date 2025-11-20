@@ -2,11 +2,13 @@ pub mod scorer;
 pub mod rarity;
 pub mod temporal;
 pub mod entropy;
+pub mod keyword;
 
 use scorer::CompositeScorer;
 use rarity::RarityScorer;
 use temporal::TemporalScorer;
-use entropy::{EntropyScorer, SeverityScorer};
+use entropy::EntropyScorer;
+use keyword::KeywordScorer;
 
 /// Create the default anomaly scoring pipeline
 pub fn create_default_scorer() -> CompositeScorer {
@@ -14,7 +16,7 @@ pub fn create_default_scorer() -> CompositeScorer {
         .add_scorer(Box::new(RarityScorer::new()), 3.0)          // Rarity is most important
         .add_scorer(Box::new(TemporalScorer::new(30)), 2.0)      // Temporal patterns
         .add_scorer(Box::new(EntropyScorer::new()), 1.5)         // Message entropy
-        .add_scorer(Box::new(SeverityScorer::new(100)), 2.5)     // Severity/transitions
+        .add_scorer(Box::new(KeywordScorer::new()), 2.5)         // Keyword detection (error/warning/fail)
 }
 
 /// Normalize anomaly scores to 0-100 range

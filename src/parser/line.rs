@@ -4,10 +4,6 @@ use chrono::{DateTime, Local};
 pub struct LogLine {
     pub raw: String,
     pub timestamp: Option<DateTime<Local>>,
-    pub level: LogLevel,
-    pub pid: Option<u32>,
-    pub tid: Option<u32>,
-    pub tag: Option<String>,
     pub message: String,
     pub line_number: usize,
     pub template_key: String,
@@ -80,10 +76,6 @@ impl LogLine {
         LogLine {
             raw,
             timestamp: None,
-            level: LogLevel::Unknown,
-            pid: None,
-            tid: None,
-            tag: None,
             message: String::new(),
             line_number,
             template_key: String::new(),

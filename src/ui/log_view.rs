@@ -53,9 +53,8 @@ impl LogView {
     
     fn matches_search(&self, line: &LogLine) -> bool {
         if let Some(ref regex) = self.search_regex {
-            // Search in message, tag, and raw line
+            // Search in message and raw line
             regex.is_match(&line.message) ||
-            line.tag.as_ref().map(|t| regex.is_match(t)).unwrap_or(false) ||
             regex.is_match(&line.raw)
         } else {
             true // No search active, everything matches
@@ -202,8 +201,6 @@ impl LogView {
             .column(Column::initial(60.0).resizable(true).clip(true))   // Line number
             .column(Column::initial(110.0).resizable(true).clip(true))  // Timestamp
             .column(Column::initial(40.0).resizable(true).clip(true))   // Level
-            .column(Column::initial(60.0).resizable(true).clip(true))   // PID
-            .column(Column::initial(120.0).resizable(true).clip(true))  // Tag
             .column(Column::remainder().clip(true))                      // Message (fills remaining space, clips overflow)
             .column(Column::initial(70.0).resizable(true).clip(true))   // Score
             .min_scrolled_height(available_height)
@@ -214,15 +211,6 @@ impl LogView {
                 });
                 header.col(|ui| {
                     ui.strong("Timestamp");
-                });
-                header.col(|ui| {
-                    ui.strong("Lvl");
-                });
-                header.col(|ui| {
-                    ui.strong("PID");
-                });
-                header.col(|ui| {
-                    ui.strong("Tag");
                 });
                 header.col(|ui| {
                     ui.strong("Message");
@@ -256,32 +244,9 @@ impl LogView {
                         ui.label(self.highlight_matches(&timestamp_str, color));
                     });
                     
-                    // Level
+                    // Message (don't truncate, let it clip)
                     row.col(|ui| {
-                        ui.label(RichText::new(line.level.to_str())
-                            .color(level_color(&line.level)));
-                    });
-                    
-                    // PID
-                    row.col(|ui| {
-                        let pid_str = line.pid.map(|p| p.to_string()).unwrap_or("-".to_string());
-                        ui.label(self.highlight_matches(&pid_str, color));
-                    });
-                    
-                    // Tag
-                    row.col(|ui| {
-                        let tag_str = line.tag.as_deref().unwrap_or("-");
-                        ui.label(self.highlight_matches(tag_str, color));
-                    });
-                    
-                    // Message (truncate if too long)
-                    row.col(|ui| {
-                        let message_display = if line.message.len() > 120 {
-                            &line.message[..120]
-                        } else {
-                            &line.message
-                        };
-                        ui.label(self.highlight_matches(message_display, color));
+                        ui.label(self.highlight_matches(&line.message, color));
                     });
                     
                     // Anomaly score
@@ -328,19 +293,5 @@ fn score_to_color(score: f64) -> Color32 {
             (165.0 - ratio * 165.0) as u8,
             (100.0 - ratio * 100.0) as u8,
         )
-    }
-}
-
-/// Get color for log level
-fn level_color(level: &crate::parser::line::LogLevel) -> Color32 {
-    use crate::parser::line::LogLevel;
-    match level {
-        LogLevel::Verbose => Color32::GRAY,
-        LogLevel::Debug => Color32::LIGHT_BLUE,
-        LogLevel::Info => Color32::GREEN,
-        LogLevel::Warning => Color32::YELLOW,
-        LogLevel::Error => Color32::LIGHT_RED,
-        LogLevel::Fatal => Color32::RED,
-        LogLevel::Unknown => Color32::GRAY,
     }
 }
