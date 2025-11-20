@@ -17,17 +17,27 @@ lazy_static! {
     static ref WHITESPACE_PATTERN: Regex = Regex::new(r"\s+").unwrap();
 }
 
-pub fn parse_line(raw: String, line_number: usize) -> LogLine {
+pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
     // Try logcat format first
     if let Some(mut line) = logcat::parse_logcat(raw.clone(), line_number) {
+        // Skip lines without timestamp
+        if line.timestamp.is_none() {
+            return None;
+        }
         line.template_key = normalize_message(&line.message);
-        return line;
+        return Some(line);
     }
     
     // Fall back to generic parser
     let mut line = generic::parse_generic(raw, line_number);
+    
+    // Skip lines without timestamp
+    if line.timestamp.is_none() {
+        return None;
+    }
+    
     line.template_key = normalize_message(&line.message);
-    line
+    Some(line)
 }
 
 /// Normalize a log message to create a template key

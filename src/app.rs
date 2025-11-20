@@ -71,7 +71,7 @@ impl LogOwlApp {
         
         // First pass: parse and score
         let mut line_buffer = String::new();
-        let mut idx = 0;
+        let mut file_line_number = 0;
         loop {
             line_buffer.clear();
             let bytes = match reader.read_line(&mut line_buffer) {
@@ -87,12 +87,18 @@ impl LogOwlApp {
             }
             
             bytes_read += bytes;
+            file_line_number += 1;
             
             if line_buffer.trim().is_empty() {
                 continue;
             }
             
-            let mut log_line = parse_line(line_buffer.clone(), idx + 1);
+            let log_line = match parse_line(line_buffer.clone(), file_line_number) {
+                Some(line) => line,
+                None => continue, // Skip lines without timestamp
+            };
+            
+            let mut log_line = log_line;
             
             // Score before updating (key requirement!)
             let score = scorer.score(&log_line);
@@ -103,10 +109,9 @@ impl LogOwlApp {
             scorer.update(&log_line);
             
             lines.push(log_line);
-            idx += 1;
             
             // Update progress based on bytes read (first 80% of total progress)
-            if idx % 500 == 0 {
+            if file_line_number % 500 == 0 {
                 let progress = 0.8 * (bytes_read as f32 / file_size).min(1.0);
                 let _ = tx.send(LoadMessage::Progress(
                     progress,
