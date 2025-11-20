@@ -200,7 +200,6 @@ impl LogView {
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::initial(60.0).resizable(true).clip(true))   // Line number
             .column(Column::initial(110.0).resizable(true).clip(true))  // Timestamp
-            .column(Column::initial(40.0).resizable(true).clip(true))   // Level
             .column(Column::remainder().clip(true))                      // Message (fills remaining space, clips overflow)
             .column(Column::initial(70.0).resizable(true).clip(true))   // Score
             .min_scrolled_height(available_height)
