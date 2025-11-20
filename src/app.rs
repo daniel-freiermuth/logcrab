@@ -81,6 +81,20 @@ impl LogOwlApp {
         
         // Second pass: normalize scores to 0-100
         let normalized_scores = normalize_scores(&raw_scores);
+        
+        // Debug: print score statistics
+        if !raw_scores.is_empty() {
+            let min_raw = raw_scores.iter().copied().fold(f64::INFINITY, f64::min);
+            let max_raw = raw_scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let avg_raw: f64 = raw_scores.iter().sum::<f64>() / raw_scores.len() as f64;
+            eprintln!("Score stats - Raw: min={:.3}, max={:.3}, avg={:.3}", min_raw, max_raw, avg_raw);
+            
+            let min_norm = normalized_scores.iter().copied().fold(f64::INFINITY, f64::min);
+            let max_norm = normalized_scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let avg_norm: f64 = normalized_scores.iter().sum::<f64>() / normalized_scores.len() as f64;
+            eprintln!("Score stats - Normalized: min={:.3}, max={:.3}, avg={:.3}", min_norm, max_norm, avg_norm);
+        }
+        
         for (line, &norm_score) in lines.iter_mut().zip(normalized_scores.iter()) {
             line.anomaly_score = norm_score;
         }
