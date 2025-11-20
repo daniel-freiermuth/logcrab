@@ -1,5 +1,6 @@
 use crate::parser::line::LogLine;
-use egui::{Color32, RichText, ScrollArea, Ui, text::LayoutJob, TextFormat, FontId};
+use egui::{Color32, RichText, Ui, text::LayoutJob, TextFormat};
+use egui_extras::{TableBuilder, Column};
 use regex::Regex;
 
 pub struct LogView {
@@ -8,6 +9,9 @@ pub struct LogView {
     pub search_text: String,
     pub search_regex: Option<Regex>,
     pub regex_error: Option<String>,
+    // Cache for filtered/visible lines - only rebuild when search/filter changes
+    filtered_indices: Vec<usize>,
+    filter_dirty: bool,
 }
 
 impl LogView {
@@ -18,11 +22,14 @@ impl LogView {
             search_text: String::new(),
             search_regex: None,
             regex_error: None,
+            filtered_indices: Vec::new(),
+            filter_dirty: true,
         }
     }
     
     pub fn set_lines(&mut self, lines: Vec<LogLine>) {
         self.lines = lines;
+        self.filter_dirty = true;
     }
     
     fn update_search_regex(&mut self) {
@@ -41,6 +48,7 @@ impl LogView {
                 }
             }
         }
+        self.filter_dirty = true;
     }
     
     fn matches_search(&self, line: &LogLine) -> bool {
@@ -52,6 +60,19 @@ impl LogView {
         } else {
             true // No search active, everything matches
         }
+    }
+    
+    /// Rebuild the filtered indices cache when filter/search changes
+    fn rebuild_filtered_indices(&mut self) {
+        self.filtered_indices.clear();
+        self.filtered_indices.reserve(self.lines.len() / 10); // Rough estimate
+        
+        for (idx, line) in self.lines.iter().enumerate() {
+            if line.anomaly_score >= self.min_score_filter && self.matches_search(line) {
+                self.filtered_indices.push(idx);
+            }
+        }
+        self.filter_dirty = false;
     }
     
     /// Create a LayoutJob with highlighted matches
@@ -148,11 +169,14 @@ impl LogView {
         
         ui.separator();
         
+        // Rebuild filtered indices if needed
+        if self.filter_dirty {
+            self.rebuild_filtered_indices();
+        }
+        
         // Stats
         let total_lines = self.lines.len();
-        let visible_lines = self.lines.iter()
-            .filter(|line| line.anomaly_score >= self.min_score_filter && self.matches_search(line))
-            .count();
+        let visible_lines = self.filtered_indices.len();
         
         ui.horizontal(|ui| {
             ui.label(format!("Total lines: {}", total_lines));
@@ -166,77 +190,105 @@ impl LogView {
         
         ui.separator();
         
-        // Scrollable log view
-        ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .show(ui, |ui| {
-                egui::Grid::new("log_grid")
-                    .striped(true)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        // Header
-                        ui.label(RichText::new("Line").strong());
-                        ui.label(RichText::new("Timestamp").strong());
-                        ui.label(RichText::new("Lvl").strong());
-                        ui.label(RichText::new("PID").strong());
-                        ui.label(RichText::new("Tag").strong());
-                        ui.label(RichText::new("Message").strong());
-                        ui.label(RichText::new("Score").strong());
-                        ui.end_row();
-                        
-                        // Log lines
-                        for line in &self.lines {
-                            if line.anomaly_score < self.min_score_filter {
-                                continue;
-                            }
-                            
-                            // Check if line matches search
-                            let matches_search = self.matches_search(line);
-                            if !matches_search {
-                                continue;
-                            }
-                            
-                            let color = score_to_color(line.anomaly_score);
-                            
-                            // Line number
-                            ui.label(RichText::new(format!("{}", line.line_number)).color(color));
-                            
-                            // Timestamp
-                            let timestamp_str = if let Some(ts) = line.timestamp {
-                                ts.format("%H:%M:%S%.3f").to_string()
-                            } else {
-                                "-".to_string()
-                            };
-                            ui.label(self.highlight_matches(&timestamp_str, color));
-                            
-                            // Level
-                            ui.label(RichText::new(line.level.to_str())
-                                .color(level_color(&line.level)));
-                            
-                            // PID
-                            let pid_str = line.pid.map(|p| p.to_string()).unwrap_or("-".to_string());
-                            ui.label(self.highlight_matches(&pid_str, color));
-                            
-                            // Tag
-                            let tag_str = line.tag.as_deref().unwrap_or("-");
-                            ui.label(self.highlight_matches(tag_str, color));
-                            
-                            // Message (truncate if too long, but highlight matches)
-                            let message = if line.message.len() > 120 {
-                                format!("{}...", &line.message[..120])
-                            } else {
-                                line.message.clone()
-                            };
-                            ui.label(self.highlight_matches(&message, color));
-                            
-                            // Anomaly score
-                            ui.label(RichText::new(format!("{:.1}", line.anomaly_score))
-                                .strong()
-                                .color(color));
-                            
-                            ui.end_row();
-                        }
+        // Virtual scrolling table - only renders visible rows!
+        let available_height = ui.available_height();
+        
+        TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto().at_least(50.0).resizable(true))  // Line number
+            .column(Column::auto().at_least(100.0).resizable(true)) // Timestamp
+            .column(Column::auto().at_least(30.0).resizable(true))  // Level
+            .column(Column::auto().at_least(50.0).resizable(true))  // PID
+            .column(Column::auto().at_least(100.0).resizable(true)) // Tag
+            .column(Column::remainder().at_least(300.0))            // Message (fills remaining space)
+            .column(Column::auto().at_least(60.0).resizable(true))  // Score
+            .min_scrolled_height(available_height)
+            .max_scroll_height(available_height)
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Line");
+                });
+                header.col(|ui| {
+                    ui.strong("Timestamp");
+                });
+                header.col(|ui| {
+                    ui.strong("Lvl");
+                });
+                header.col(|ui| {
+                    ui.strong("PID");
+                });
+                header.col(|ui| {
+                    ui.strong("Tag");
+                });
+                header.col(|ui| {
+                    ui.strong("Message");
+                });
+                header.col(|ui| {
+                    ui.strong("Score");
+                });
+            })
+            .body(|body| {
+                // CRITICAL: Only renders visible rows!
+                // egui_extras handles virtualization automatically
+                body.rows(18.0, visible_lines, |mut row| {
+                    let row_index = row.index();
+                    let line_idx = self.filtered_indices[row_index];
+                    let line = &self.lines[line_idx];
+                    
+                    let color = score_to_color(line.anomaly_score);
+                    
+                    // Line number
+                    row.col(|ui| {
+                        ui.label(RichText::new(format!("{}", line.line_number)).color(color));
                     });
+                    
+                    // Timestamp
+                    row.col(|ui| {
+                        let timestamp_str = if let Some(ts) = line.timestamp {
+                            ts.format("%H:%M:%S%.3f").to_string()
+                        } else {
+                            "-".to_string()
+                        };
+                        ui.label(self.highlight_matches(&timestamp_str, color));
+                    });
+                    
+                    // Level
+                    row.col(|ui| {
+                        ui.label(RichText::new(line.level.to_str())
+                            .color(level_color(&line.level)));
+                    });
+                    
+                    // PID
+                    row.col(|ui| {
+                        let pid_str = line.pid.map(|p| p.to_string()).unwrap_or("-".to_string());
+                        ui.label(self.highlight_matches(&pid_str, color));
+                    });
+                    
+                    // Tag
+                    row.col(|ui| {
+                        let tag_str = line.tag.as_deref().unwrap_or("-");
+                        ui.label(self.highlight_matches(tag_str, color));
+                    });
+                    
+                    // Message (truncate if too long)
+                    row.col(|ui| {
+                        let message_display = if line.message.len() > 120 {
+                            &line.message[..120]
+                        } else {
+                            &line.message
+                        };
+                        ui.label(self.highlight_matches(message_display, color));
+                    });
+                    
+                    // Anomaly score
+                    row.col(|ui| {
+                        ui.label(RichText::new(format!("{:.1}", line.anomaly_score))
+                            .strong()
+                            .color(color));
+                    });
+                });
             });
     }
 }
