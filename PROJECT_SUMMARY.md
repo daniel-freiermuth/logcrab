@@ -220,7 +220,7 @@ Always normalize to template key
 
 ---
 
-## 🎁 Bonus Features (Beyond Spec)
+### Bonus Features (Beyond Spec)
 
 ### Enhanced Scoring
 - Severity transition detection
@@ -229,11 +229,13 @@ Always normalize to template key
 - Statistical normalization
 
 ### Better UX
+- **Live regex search** with real-time highlighting
 - Welcome screen
 - File open dialog (rfd)
 - Status bar with progress
 - Color-coded log levels
 - Clean table layout
+- Match counter for search results
 
 ### Developer Experience
 - Modular architecture

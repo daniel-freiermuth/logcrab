@@ -6,7 +6,8 @@ An intelligent log anomaly explorer built with Rust and egui. LogOwl helps devel
 
 - 🚀 **High Performance**: Handles 100-500 MB log files efficiently
 - 🎨 **Visual Anomaly Detection**: Color-coded visualization (white → pink → orange → red)
-- 🔍 **Multi-Format Support**: Supports Android logcat and generic log formats
+- 🔍 **Live Regex Search**: Real-time search with regex support and match highlighting
+- 🧵 **Multi-Format Support**: Supports Android logcat and generic log formats
 - 🧠 **Smart Scoring**: Multi-dimensional anomaly detection including:
   - Template rarity (structural uniqueness)
   - Temporal patterns (time-based analysis)
@@ -72,11 +73,27 @@ The binary will be available at `target/release/logowl`
 
 2. Click "Open Log File" or use the File menu to load a log file
 
-3. View color-coded anomaly scores:
+3. Use the search bar to filter logs:
+   - Enter any regex pattern (e.g., `ERROR|FATAL`, `\d+\.\d+\.\d+\.\d+` for IPs)
+   - Matching text is highlighted in **yellow** within each line
+   - Only matching lines are shown
+   - Invalid regex shows an error message
+   - Click "Clear" to reset the search
+
+4. View color-coded anomaly scores:
    - **White** (0-30): Normal, expected log lines
    - **Pink** (30-60): Slightly unusual
    - **Orange** (60-80): Suspicious, worth investigating
    - **Red** (80-100): Highly anomalous, likely important
+
+## Search Examples
+
+- `ERROR|FATAL` - Find all errors and fatal messages
+- `\d+\.\d+\.\d+\.\d+` - Find IP addresses
+- `timeout|failed|exception` - Find common error patterns (case-insensitive)
+- `PID:\s*\d+` - Find lines with PID information
+- `^11-20 08:15` - Find logs from specific time
+- `(connect|disconnect)ion` - Find connection-related events
 
 ## Example
 

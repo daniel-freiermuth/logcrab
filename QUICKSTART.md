@@ -28,6 +28,34 @@ cargo run --release
    - Scroll through the color-coded log entries
    - Red/orange lines are anomalous and worth investigating
    - White/pink lines are normal operations
+   - Use the search bar to filter specific patterns
+
+## Using the Search Feature
+
+The search bar accepts regex patterns and highlights matching lines:
+
+### Quick Examples
+```
+ERROR|FATAL              → Find errors and fatal messages
+\d+\.\d+\.\d+\.\d+       → Find IP addresses
+timeout|failed           → Find timeout or failed operations
+DatabaseManager          → Find specific component logs
+11-20 08:15              → Find logs from specific time
+```
+
+### Search Tips
+1. **Start simple**: Try plain text first (e.g., `error`)
+2. **Case matters**: Regex is case-sensitive by default
+3. **Use OR**: `pattern1|pattern2|pattern3`
+4. **Escape special chars**: Use `\.` for literal dots
+5. **Real-time validation**: Green ✓ = valid, Red ❌ = invalid regex
+
+### Search Workflow
+1. Type your regex pattern in the search bar
+2. Press Enter or just start typing (live update)
+3. Matching text highlighted in **yellow** within each line
+4. See match count in the stats: "🔍 X matches"
+5. Click "Clear" to reset and see all lines again
 
 ## Understanding the Display
 
