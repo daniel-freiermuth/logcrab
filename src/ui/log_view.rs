@@ -2,6 +2,7 @@ use crate::parser::line::LogLine;
 use egui::{Color32, RichText, Ui, text::LayoutJob, TextFormat};
 use egui_extras::{TableBuilder, Column};
 use regex::{Regex, RegexBuilder};
+use chrono::{DateTime, Local};
 
 pub struct LogView {
     pub lines: Vec<LogLine>,
@@ -13,6 +14,9 @@ pub struct LogView {
     // Cache for filtered/visible lines - only rebuild when search/filter changes
     filtered_indices: Vec<usize>,
     filter_dirty: bool,
+    // Selected line tracking
+    selected_line_index: Option<usize>,
+    selected_timestamp: Option<DateTime<Local>>,
 }
 
 impl LogView {
@@ -26,6 +30,8 @@ impl LogView {
             case_insensitive: false,
             filtered_indices: Vec::new(),
             filter_dirty: true,
+            selected_line_index: None,
+            selected_timestamp: None,
         }
     }
     
@@ -67,7 +73,7 @@ impl LogView {
     }
     
     /// Rebuild the filtered indices cache when filter/search changes
-    fn rebuild_filtered_indices(&mut self) {
+    fn rebuild_filtered_indices(&mut self) -> Option<usize> {
         self.filtered_indices.clear();
         self.filtered_indices.reserve(self.lines.len() / 10); // Rough estimate
         
@@ -77,6 +83,43 @@ impl LogView {
             }
         }
         self.filter_dirty = false;
+        
+        // If we had a selected line, try to find it in the new filtered set
+        if let Some(selected_line_idx) = self.selected_line_index {
+            // First, try to find the exact same line in the filtered results
+            if let Some(position) = self.filtered_indices.iter().position(|&idx| idx == selected_line_idx) {
+                return Some(position);
+            }
+            
+            // If the exact line is not in the filtered results, find closest by timestamp
+            if let Some(selected_ts) = self.selected_timestamp {
+                return self.find_closest_timestamp_index(selected_ts);
+            }
+        }
+        
+        None
+    }
+    
+    /// Find the index in filtered_indices that is closest to the given timestamp
+    fn find_closest_timestamp_index(&self, target_ts: DateTime<Local>) -> Option<usize> {
+        if self.filtered_indices.is_empty() {
+            return None;
+        }
+        
+        let mut closest_idx = 0;
+        let mut min_diff = i64::MAX;
+        
+        for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
+            if let Some(line_ts) = self.lines[line_idx].timestamp {
+                let diff = (line_ts.timestamp() - target_ts.timestamp()).abs();
+                if diff < min_diff {
+                    min_diff = diff;
+                    closest_idx = filtered_idx;
+                }
+            }
+        }
+        
+        Some(closest_idx)
     }
     
     /// Create a LayoutJob with highlighted matches
@@ -179,10 +222,12 @@ impl LogView {
         
         ui.separator();
         
-        // Rebuild filtered indices if needed
-        if self.filter_dirty {
-            self.rebuild_filtered_indices();
-        }
+        // Rebuild filtered indices if needed and get scroll target
+        let scroll_to_row = if self.filter_dirty {
+            self.rebuild_filtered_indices()
+        } else {
+            None
+        };
         
         // Stats
         let total_lines = self.lines.len();
@@ -203,7 +248,7 @@ impl LogView {
         // Virtual scrolling table - only renders visible rows!
         let available_height = ui.available_height();
         
-        TableBuilder::new(ui)
+        let mut table = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
             .sense(egui::Sense::click())
@@ -214,8 +259,14 @@ impl LogView {
             .column(Column::remainder().clip(true))                      // Message (fills remaining space, clips overflow)
             .column(Column::initial(70.0).resizable(true).clip(true))   // Score
             .min_scrolled_height(available_height)
-            .max_scroll_height(available_height)
-            .header(20.0, |mut header| {
+            .max_scroll_height(available_height);
+        
+        // Scroll to target row if filter just changed
+        if let Some(row_idx) = scroll_to_row {
+            table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
+        }
+        
+        table.header(20.0, |mut header| {
                 header.col(|ui| {
                     ui.strong("Line");
                 });
@@ -237,34 +288,98 @@ impl LogView {
                     let line_idx = self.filtered_indices[row_index];
                     let line = &self.lines[line_idx];
                     
+                    // Extract all needed data before entering closures to avoid borrow checker issues
+                    let is_selected = self.selected_line_index == Some(line_idx);
                     let color = score_to_color(line.anomaly_score);
+                    let line_number = line.line_number;
+                    let timestamp_str = if let Some(ts) = line.timestamp {
+                        ts.format("%H:%M:%S%.3f").to_string()
+                    } else {
+                        "-".to_string()
+                    };
+                    let message = line.message.clone();
+                    let anomaly_score = line.anomaly_score;
+                    let timestamp = line.timestamp;
+                    
+                    // Track if row was clicked in any column
+                    let mut row_clicked = false;
                     
                     // Line number
                     row.col(|ui| {
-                        ui.label(RichText::new(format!("{}", line.line_number)).color(color));
+                        // Highlight background if selected
+                        if is_selected {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                        }
+                        
+                        let text = RichText::new(format!("▶ {}", line_number)).color(color);
+                        let text = if is_selected { text.strong() } else { RichText::new(format!("{}", line_number)).color(color) };
+                        ui.label(text);
+                        
+                        // Add invisible button covering entire cell
+                        if ui.interact(ui.max_rect(), ui.id().with(line_idx), egui::Sense::click()).clicked() {
+                            row_clicked = true;
+                        }
                     });
                     
                     // Timestamp
                     row.col(|ui| {
-                        let timestamp_str = if let Some(ts) = line.timestamp {
-                            ts.format("%H:%M:%S%.3f").to_string()
-                        } else {
-                            "-".to_string()
-                        };
-                        ui.label(self.highlight_matches(&timestamp_str, color));
+                        // Highlight background if selected
+                        if is_selected {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                        }
+                        
+                        let job = self.highlight_matches(&timestamp_str, color);
+                        ui.label(job);
+                        
+                        // Add invisible button covering entire cell
+                        if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ts"), egui::Sense::click()).clicked() {
+                            row_clicked = true;
+                        }
                     });
                     
                     // Message (don't truncate, let it clip)
                     row.col(|ui| {
-                        ui.label(self.highlight_matches(&line.message, color));
+                        // Highlight background if selected
+                        if is_selected {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                        }
+                        
+                        let job = self.highlight_matches(&message, color);
+                        ui.label(job);
+                        
+                        // Add invisible button covering entire cell
+                        if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("msg"), egui::Sense::click()).clicked() {
+                            row_clicked = true;
+                        }
                     });
                     
                     // Anomaly score
                     row.col(|ui| {
-                        ui.label(RichText::new(format!("{:.1}", line.anomaly_score))
+                        // Highlight background if selected
+                        if is_selected {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
+                        }
+                        
+                        let text = RichText::new(format!("{:.1}", anomaly_score))
                             .strong()
-                            .color(color));
+                            .color(color);
+                        ui.label(text);
+                        
+                        // Add invisible button covering entire cell
+                        if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("score"), egui::Sense::click()).clicked() {
+                            row_clicked = true;
+                        }
                     });
+                    
+                    // Update selection after all columns processed
+                    if row_clicked {
+                        self.selected_line_index = Some(line_idx);
+                        self.selected_timestamp = timestamp;
+                    }
                 });
             });
     }
