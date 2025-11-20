@@ -196,14 +196,16 @@ impl LogView {
         TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
+            .sense(egui::Sense::click())
+            .id_salt("log_table") // Add ID so egui persists column widths
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().at_least(50.0).resizable(true))  // Line number
-            .column(Column::auto().at_least(100.0).resizable(true)) // Timestamp
-            .column(Column::auto().at_least(30.0).resizable(true))  // Level
-            .column(Column::auto().at_least(50.0).resizable(true))  // PID
-            .column(Column::auto().at_least(100.0).resizable(true)) // Tag
-            .column(Column::remainder().at_least(300.0))            // Message (fills remaining space)
-            .column(Column::auto().at_least(60.0).resizable(true))  // Score
+            .column(Column::initial(60.0).resizable(true).clip(true))   // Line number
+            .column(Column::initial(110.0).resizable(true).clip(true))  // Timestamp
+            .column(Column::initial(40.0).resizable(true).clip(true))   // Level
+            .column(Column::initial(60.0).resizable(true).clip(true))   // PID
+            .column(Column::initial(120.0).resizable(true).clip(true))  // Tag
+            .column(Column::remainder().clip(true))                      // Message (fills remaining space, clips overflow)
+            .column(Column::initial(70.0).resizable(true).clip(true))   // Score
             .min_scrolled_height(available_height)
             .max_scroll_height(available_height)
             .header(20.0, |mut header| {
