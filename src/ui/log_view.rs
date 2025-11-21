@@ -472,24 +472,17 @@ impl LogView {
             None
         };
         
-        // Check if selection changed (only need to find scroll position if rebuild didn't already do it)
+        // Check if selection changed
         if scroll_to_row.is_none() && self.selected_line_index.is_some() {
             if self.filters[filter_index].last_rendered_selection != self.selected_line_index {
                 if let Some(selected_idx) = self.selected_line_index {
-                    if let Some(position) = self.filters[filter_index]
-                        .filtered_indices
-                        .iter()
-                        .position(|&idx| idx == selected_idx)
-                    {
+                    if let Some(position) = self.filters[filter_index].filtered_indices.iter().position(|&idx| idx == selected_idx) {
                         scroll_to_row = Some(position);
                     }
                 }
-                // Update tracking so we know we've processed this selection
+                // Always update the tracking, even if the line isn't visible in this filter
                 self.filters[filter_index].last_rendered_selection = self.selected_line_index;
             }
-        } else if scroll_to_row.is_some() && self.selected_line_index.is_some() {
-            // rebuild_filtered_indices found the scroll position, update tracking
-            self.filters[filter_index].last_rendered_selection = self.selected_line_index;
         }
         
         // Stats
@@ -768,7 +761,8 @@ impl LogView {
                         if row_right_clicked {
                             self.toggle_bookmark(line_idx);
                         } else if row_clicked {
-                            self.set_selection(Some(line_idx), timestamp);
+                            self.selected_line_index = Some(line_idx);
+                            self.selected_timestamp = timestamp;
                         }
                     });
                 });
@@ -1086,7 +1080,8 @@ impl LogView {
                     }
                     
                     if let Some(idx) = closest_idx {
-                        self.set_selection(Some(idx), self.lines[idx].timestamp);
+                        self.selected_line_index = Some(idx);
+                        self.selected_timestamp = self.lines[idx].timestamp;
                     }
                 }
             }
