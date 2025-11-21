@@ -3,7 +3,7 @@ use crate::anomaly::{create_default_scorer, normalize_scores};
 use crate::ui::LogView;
 use std::path::PathBuf;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::Read;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
@@ -114,7 +114,17 @@ impl LogCrabApp {
             let _ = tx.send(LoadMessage::Error(format!("Cannot open file: {}", e)));
             return;
         }
-        let mut reader = BufReader::new(file.unwrap());
+        
+        // Read file with lossy UTF-8 conversion to handle non-UTF8 characters
+        let mut file = file.unwrap();
+        let mut buffer = Vec::new();
+        if let Err(e) = file.read_to_end(&mut buffer) {
+            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {}", e)));
+            return;
+        }
+        
+        // Convert to UTF-8 with lossy conversion (replaces invalid UTF-8 with � character)
+        let content = String::from_utf8_lossy(&buffer);
         
         let mut scorer = create_default_scorer();
         let mut lines = Vec::new();
@@ -126,24 +136,10 @@ impl LogCrabApp {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("parse_and_score");
         
-        let mut line_buffer = String::new();
         let mut file_line_number = 0;
-        loop {
-            line_buffer.clear();
-            let bytes = match reader.read_line(&mut line_buffer) {
-                Ok(b) => b,
-                Err(e) => {
-                    let _ = tx.send(LoadMessage::Error(format!("Read error: {}", e)));
-                    return;
-                }
-            };
-            
-            if bytes == 0 {
-                break; // EOF
-            }
-            
-            bytes_read += bytes;
+        for line_buffer in content.lines() {
             file_line_number += 1;
+            bytes_read += line_buffer.len() + 1; // +1 for newline
             
             // Update progress based on bytes read (first 80% of total progress)
             if file_line_number % 500 == 0 {
@@ -159,7 +155,7 @@ impl LogCrabApp {
                 continue;
             }
             
-            let log_line = match parse_line(line_buffer.clone(), file_line_number) {
+            let log_line = match parse_line(line_buffer.to_string(), file_line_number) {
                 Some(line) => line,
                 None => continue, // Skip lines without timestamp
             };
