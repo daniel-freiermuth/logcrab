@@ -6,11 +6,24 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 enum LoadMessage {
     Progress(f32, String),
     Complete(Vec<LogLine>, PathBuf),
     Error(String),
+}
+
+#[derive(Debug, Clone)]
+enum TabType {
+    Context,
+    Filter(usize),
+    Bookmarks,
+}
+
+struct TabContent {
+    tab_type: TabType,
+    title: String,
 }
 
 pub struct LogCrabApp {
@@ -21,12 +34,37 @@ pub struct LogCrabApp {
     load_progress: f32,
     load_receiver: Option<Receiver<LoadMessage>>,
     initial_file: Option<PathBuf>,
+    dock_state: DockState<TabContent>,
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
 }
 
 impl LogCrabApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
+        // Initialize dock state with default layout
+        let mut dock_state = DockState::new(vec![
+            TabContent {
+                tab_type: TabType::Context,
+                title: "Context View".to_string(),
+            }
+        ]);
+        
+        // Add two filter tabs by default
+        let [_context, _filters] = dock_state.main_surface_mut().split_right(
+            NodeIndex::root(),
+            0.3,
+            vec![
+                TabContent {
+                    tab_type: TabType::Filter(0),
+                    title: "Filter 1".to_string(),
+                },
+                TabContent {
+                    tab_type: TabType::Filter(1),
+                    title: "Filter 2".to_string(),
+                },
+            ],
+        );
+        
         LogCrabApp {
             log_view: LogView::new(),
             current_file: None,
@@ -39,6 +77,7 @@ impl LogCrabApp {
             load_progress: 0.0,
             load_receiver: None,
             initial_file: file,
+            dock_state,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
@@ -170,6 +209,33 @@ impl LogCrabApp {
     }
 }
 
+// TabViewer implementation for dock system
+struct LogCrabTabViewer<'a> {
+    log_view: &'a mut LogView,
+}
+
+impl<'a> TabViewer for LogCrabTabViewer<'a> {
+    type Tab = TabContent;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        (&tab.title).into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        match &tab.tab_type {
+            TabType::Context => {
+                self.log_view.render_context(ui);
+            }
+            TabType::Filter(index) => {
+                self.log_view.render_filter(ui, *index);
+            }
+            TabType::Bookmarks => {
+                self.log_view.render_bookmarks(ui);
+            }
+        }
+    }
+}
+
 impl eframe::App for LogCrabApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(feature = "cpu-profiling")]
@@ -237,8 +303,29 @@ impl eframe::App for LogCrabApp {
                 });
                 
                 ui.menu_button("View", |ui| {
-                    if ui.button("Toggle Bookmarks Panel").clicked() {
-                        self.log_view.toggle_bookmarks_panel();
+                    if ui.button("Add Filter Tab").clicked() {
+                        let filter_index = self.log_view.filter_count();
+                        self.log_view.add_filter();
+                        self.dock_state.push_to_focused_leaf(TabContent {
+                            tab_type: TabType::Filter(filter_index),
+                            title: format!("Filter {}", filter_index + 1),
+                        });
+                        ui.close_menu();
+                    }
+                    
+                    if ui.button("Add Bookmarks Tab").clicked() {
+                        self.dock_state.push_to_focused_leaf(TabContent {
+                            tab_type: TabType::Bookmarks,
+                            title: "Bookmarks".to_string(),
+                        });
+                        ui.close_menu();
+                    }
+                    
+                    if ui.button("Add Context Tab").clicked() {
+                        self.dock_state.push_to_focused_leaf(TabContent {
+                            tab_type: TabType::Context,
+                            title: "Context View".to_string(),
+                        });
                         ui.close_menu();
                     }
                 });
@@ -292,102 +379,11 @@ impl eframe::App for LogCrabApp {
                     }
                 });
             } else {
-                // Optional bookmarks panel on the left
-                if self.log_view.is_bookmarks_panel_visible() {
-                    egui::SidePanel::left("bookmarks_panel")
-                        .resizable(true)
-                        .default_width(ui.available_width() * 0.2)
-                        .show_inside(ui, |ui| {
-                            self.log_view.render_bookmarks(ui);
-                        });
-                }
-                
-                // Dynamic layout: context view on left, N filtered views on right
-                egui::SidePanel::left("context_panel")
-                    .resizable(true)
-                    .default_width(ui.available_width() * 0.3)
-                    .show_inside(ui, |ui| {
-                        self.log_view.render_context(ui);
+                // Use dock area for VS Code-like draggable/tiling layout
+                DockArea::new(&mut self.dock_state)
+                    .show_inside(ui, &mut LogCrabTabViewer {
+                        log_view: &mut self.log_view,
                     });
-                
-                // Split remaining space into N vertical panels for filters
-                let filter_count = self.log_view.filter_count();
-                
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    // Add controls for managing filters
-                    ui.horizontal(|ui| {
-                        if ui.button("➕ Add Filter").clicked() {
-                            self.log_view.add_filter();
-                        }
-                        
-                        if filter_count > 1 {
-                            ui.separator();
-                            ui.label(format!("{} filter views active", filter_count));
-                        }
-                    });
-                    ui.separator();
-                    
-                    // Render filters dynamically
-                    if filter_count == 1 {
-                        // Single filter takes full height
-                        self.log_view.render_filter(ui, 0);
-                    } else if filter_count == 2 {
-                        // Two filters split vertically
-                        egui::TopBottomPanel::top("filter_0_panel")
-                            .resizable(true)
-                            .default_height(ui.available_height() * 0.5)
-                            .show_inside(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    if ui.button("✖").clicked() {
-                                        self.log_view.remove_filter(0);
-                                    }
-                                    ui.separator();
-                                });
-                                self.log_view.render_filter(ui, 0);
-                            });
-                        
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                if ui.button("✖").clicked() {
-                                    self.log_view.remove_filter(1);
-                                }
-                                ui.separator();
-                            });
-                            self.log_view.render_filter(ui, 1);
-                        });
-                    } else {
-                        // 3+ filters - split into equal parts
-                        let filter_height = ui.available_height() / filter_count as f32;
-                        
-                        for i in 0..filter_count {
-                            if i < filter_count - 1 {
-                                egui::TopBottomPanel::top(format!("filter_{}_panel", i))
-                                    .resizable(true)
-                                    .default_height(filter_height)
-                                    .show_inside(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            if ui.button("✖").clicked() {
-                                                self.log_view.remove_filter(i);
-                                            }
-                                            ui.separator();
-                                        });
-                                        self.log_view.render_filter(ui, i);
-                                    });
-                            } else {
-                                // Last filter uses remaining space
-                                egui::CentralPanel::default().show_inside(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        if ui.button("✖").clicked() {
-                                            self.log_view.remove_filter(i);
-                                        }
-                                        ui.separator();
-                                    });
-                                    self.log_view.render_filter(ui, i);
-                                });
-                            }
-                        }
-                    }
-                });
             }
         });
         
