@@ -102,6 +102,16 @@ impl LogCrabApp {
             bytes_read += bytes;
             file_line_number += 1;
             
+            // Update progress based on bytes read (first 80% of total progress)
+            if file_line_number % 500 == 0 {
+                let progress = 0.8 * (bytes_read as f32 / file_size).min(1.0);
+                let _ = tx.send(LoadMessage::Progress(
+                    progress,
+                    format!("Loading {}... ({} lines)", path.display(), lines.len()),
+                ));
+                ctx.request_repaint();
+            }
+            
             if line_buffer.trim().is_empty() {
                 continue;
             }
@@ -122,16 +132,6 @@ impl LogCrabApp {
             scorer.update(&log_line);
             
             lines.push(log_line);
-            
-            // Update progress based on bytes read (first 80% of total progress)
-            if file_line_number % 500 == 0 {
-                let progress = 0.8 * (bytes_read as f32 / file_size).min(1.0);
-                let _ = tx.send(LoadMessage::Progress(
-                    progress,
-                    format!("Loading {}... ({} lines)", path.display(), lines.len()),
-                ));
-                ctx.request_repaint();
-            }
         }
         
         let _ = tx.send(LoadMessage::Progress(0.8, format!("Normalizing scores for {}...", path.display())));
