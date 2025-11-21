@@ -388,13 +388,36 @@ impl LogView {
         
         ui.separator();
         
-        // Search bar
+        // Search bar with favorite filters dropdown
         ui.horizontal(|ui| {
             ui.label("🔍 Search (regex):");
+            
+            // Collect favorite filters
+            let favorites: Vec<(String, bool)> = self.filters.iter()
+                .filter(|f| f.is_favorite && !f.search_text.is_empty())
+                .map(|f| (f.search_text.clone(), f.case_insensitive))
+                .collect();
+            
+            // Dropdown menu for favorites
+            if !favorites.is_empty() {
+                egui::ComboBox::from_id_source(format!("favorites_{}", filter_index))
+                    .selected_text("⭐ Favorites")
+                    .width(100.0)
+                    .show_ui(ui, |ui| {
+                        for (fav_text, fav_case) in favorites {
+                            if ui.selectable_label(false, &fav_text).clicked() {
+                                self.filters[filter_index].search_text = fav_text;
+                                self.filters[filter_index].case_insensitive = fav_case;
+                                self.filters[filter_index].update_search_regex();
+                            }
+                        }
+                    });
+            }
+            
             let search_response = ui.add(
                 egui::TextEdit::singleline(&mut self.filters[filter_index].search_text)
                     .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
-                    .desired_width(400.0)
+                    .desired_width(300.0)
             );
             
             if search_response.changed() {
