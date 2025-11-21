@@ -36,6 +36,7 @@ pub struct LogCrabApp {
     initial_file: Option<PathBuf>,
     dock_state: DockState<TabContent>,
     show_anomaly_explanation: bool,
+    add_tab_after: Option<egui_dock::NodeIndex>,
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
 }
@@ -80,6 +81,7 @@ impl LogCrabApp {
             initial_file: file,
             dock_state,
             show_anomaly_explanation: false,
+            add_tab_after: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
@@ -214,6 +216,7 @@ impl LogCrabApp {
 // TabViewer implementation for dock system
 struct LogCrabTabViewer<'a> {
     log_view: &'a mut LogView,
+    add_tab_after: &'a mut Option<egui_dock::NodeIndex>,
 }
 
 impl<'a> TabViewer for LogCrabTabViewer<'a> {
@@ -221,6 +224,14 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
         (&tab.title).into()
+    }
+
+    fn add_popup(&mut self, ui: &mut egui::Ui, _surface: egui_dock::SurfaceIndex, node: egui_dock::NodeIndex) {
+        ui.set_min_width(120.0);
+        if ui.button("➕ Filter Tab").clicked() {
+            *self.add_tab_after = Some(node);
+            ui.close_menu();
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -390,9 +401,21 @@ impl eframe::App for LogCrabApp {
                 DockArea::new(&mut self.dock_state)
                     .show_inside(ui, &mut LogCrabTabViewer {
                         log_view: &mut self.log_view,
+                        add_tab_after: &mut self.add_tab_after,
                     });
             }
         });
+        
+        // Handle add tab request
+        if let Some(node) = self.add_tab_after.take() {
+            let filter_index = self.log_view.filter_count();
+            self.log_view.add_filter();
+            self.dock_state.set_focused_node_and_surface((egui_dock::SurfaceIndex::main(), node));
+            self.dock_state.push_to_focused_leaf(TabContent {
+                tab_type: TabType::Filter(filter_index),
+                title: format!("Filter {}", filter_index + 1),
+            });
+        }
         
         // Anomaly score explanation window
         if self.show_anomaly_explanation {
