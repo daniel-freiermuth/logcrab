@@ -1129,79 +1129,167 @@ impl LogView {
         
         let mut to_delete = None;
         let mut to_jump = None;
+        let mut to_rename = None;
         let mut should_save = false;
         
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for bookmark in &bookmarks {
-                ui.group(|ui| {
-                    ui.horizontal(|ui| {
-                        // Click to jump to bookmark
-                        if ui.button("→").on_hover_text("Jump to line").clicked() {
-                            to_jump = Some((bookmark.line_index, bookmark.timestamp));
-                        }
-                        
-                        // Show line number and timestamp
-                        let line_text = if bookmark.line_index < self.lines.len() {
-                            format!("Line {} ({})", 
-                                self.lines[bookmark.line_index].line_number,
-                                if let Some(ts) = bookmark.timestamp {
-                                    ts.format("%H:%M:%S").to_string()
-                                } else {
-                                    "-".to_string()
-                                }
-                            )
-                        } else {
-                            format!("Line {}", bookmark.line_index)
-                        };
-                        ui.label(RichText::new(line_text).strong());
-                    });
-                    
-                    ui.horizontal(|ui| {
-                        // Editable name
-                        if self.editing_bookmark == Some(bookmark.line_index) {
-                            let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
-                            if response.lost_focus() || ui.button("✓").clicked() {
-                                if !self.bookmark_name_input.is_empty() {
-                                    if let Some(b) = self.bookmarks.get_mut(&bookmark.line_index) {
-                                        b.name = self.bookmark_name_input.clone();
-                                        should_save = true;
-                                    }
-                                }
-                                self.editing_bookmark = None;
-                                self.bookmark_name_input.clear();
-                            }
-                            if ui.button("✖").clicked() {
-                                self.editing_bookmark = None;
-                                self.bookmark_name_input.clear();
-                            }
-                        } else {
-                            ui.label(format!("📝 {}", bookmark.name));
-                            if ui.small_button("✏").on_hover_text("Rename").clicked() {
-                                self.editing_bookmark = Some(bookmark.line_index);
-                                self.bookmark_name_input = bookmark.name.clone();
-                            }
-                            if ui.small_button("🗑").on_hover_text("Delete bookmark").clicked() {
-                                to_delete = Some(bookmark.line_index);
-                            }
-                        }
-                    });
-                    
-                    // Show message preview
-                    if bookmark.line_index < self.lines.len() {
-                        let message = &self.lines[bookmark.line_index].message;
-                        let preview = if message.len() > 100 {
-                            format!("{}...", &message[..100])
-                        } else {
-                            message.clone()
-                        };
-                        ui.label(RichText::new(preview).italics().color(Color32::GRAY));
-                    }
-                });
-                ui.add_space(5.0);
-            }
-        });
+        ui.label(format!("Total bookmarks: {}", bookmarks.len()));
+        ui.separator();
         
-        // Apply actions after the scroll area
+        egui::ScrollArea::horizontal()
+            .id_source("bookmarks_scroll")
+            .show(ui, |ui| {
+                let mut table = TableBuilder::new(ui)
+                    .striped(true)
+                    .resizable(false)
+                    .sense(egui::Sense::click())
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .vscroll(true)
+                    .max_scroll_height(f32::INFINITY)
+                    .column(Column::initial(60.0).resizable(true).clip(true))
+                    .column(Column::initial(110.0).resizable(true).clip(true))
+                    .column(Column::initial(200.0).resizable(true).clip(true))
+                    .column(Column::remainder().resizable(true).clip(true))
+                    .column(Column::initial(80.0).resizable(true).clip(true));
+                
+                table.header(20.0, |mut header| {
+                    header.col(|ui| { ui.strong("Line"); });
+                    header.col(|ui| { ui.strong("Timestamp"); });
+                    header.col(|ui| { ui.strong("Name"); });
+                    header.col(|ui| { ui.strong("Message"); });
+                    header.col(|ui| { ui.strong("Actions"); });
+                })
+                .body(|body| {
+                    body.rows(18.0, bookmarks.len(), |mut row| {
+                        let row_index = row.index();
+                        let bookmark = &bookmarks[row_index];
+                        let line_idx = bookmark.line_index;
+                        
+                        let is_selected = self.selected_line_index == Some(line_idx);
+                        let color = if line_idx < self.lines.len() {
+                            score_to_color(self.lines[line_idx].anomaly_score)
+                        } else {
+                            Color32::WHITE
+                        };
+                        
+                        let line_number = if line_idx < self.lines.len() {
+                            self.lines[line_idx].line_number
+                        } else {
+                            line_idx
+                        };
+                        
+                        let timestamp_str = if let Some(ts) = bookmark.timestamp {
+                            ts.format("%H:%M:%S%.3f").to_string()
+                        } else {
+                            "-".to_string()
+                        };
+                        
+                        let message = if line_idx < self.lines.len() {
+                            self.lines[line_idx].message.clone()
+                        } else {
+                            String::new()
+                        };
+                        
+                        let mut row_clicked = false;
+                        
+                        // Line number
+                        row.col(|ui| {
+                            if is_selected {
+                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            let text = if is_selected {
+                                RichText::new(format!("★ ▶ {}", line_number)).color(color).strong()
+                            } else {
+                                RichText::new(format!("★ {}", line_number)).color(color)
+                            };
+                            ui.label(text);
+                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_line"), egui::Sense::click());
+                            if response.clicked() { row_clicked = true; }
+                        });
+                        
+                        // Timestamp
+                        row.col(|ui| {
+                            if is_selected {
+                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            ui.label(RichText::new(&timestamp_str).color(color));
+                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_ts"), egui::Sense::click());
+                            if response.clicked() { row_clicked = true; }
+                        });
+                        
+                        // Name
+                        row.col(|ui| {
+                            if is_selected {
+                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            
+                            // Editable name field
+                            if self.editing_bookmark == Some(line_idx) {
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.bookmark_name_input)
+                                        .desired_width(ui.available_width() - 50.0)
+                                );
+                                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                    if !self.bookmark_name_input.is_empty() {
+                                        if let Some(b) = self.bookmarks.get_mut(&line_idx) {
+                                            b.name = self.bookmark_name_input.clone();
+                                            should_save = true;
+                                        }
+                                    }
+                                    self.editing_bookmark = None;
+                                    self.bookmark_name_input.clear();
+                                }
+                                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                    self.editing_bookmark = None;
+                                    self.bookmark_name_input.clear();
+                                }
+                            } else {
+                                ui.label(RichText::new(&bookmark.name).color(color).strong());
+                                let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_name"), egui::Sense::click());
+                                if response.clicked() { row_clicked = true; }
+                            }
+                        });
+                        
+                        // Message
+                        row.col(|ui| {
+                            if is_selected {
+                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            ui.label(RichText::new(&message).color(color));
+                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_msg"), egui::Sense::click());
+                            if response.clicked() { row_clicked = true; }
+                        });
+                        
+                        // Actions
+                        row.col(|ui| {
+                            if is_selected {
+                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            ui.horizontal(|ui| {
+                                if ui.small_button("✏").on_hover_text("Rename").clicked() {
+                                    to_rename = Some(line_idx);
+                                }
+                                if ui.small_button("🗑").on_hover_text("Delete").clicked() {
+                                    to_delete = Some(line_idx);
+                                }
+                            });
+                        });
+                        
+                        if row_clicked {
+                            to_jump = Some((line_idx, bookmark.timestamp));
+                        }
+                    });
+                });
+            });
+        
+        // Handle rename action
+        if let Some(line_idx) = to_rename {
+            self.editing_bookmark = Some(line_idx);
+            if let Some(bookmark) = self.bookmarks.get(&line_idx) {
+                self.bookmark_name_input = bookmark.name.clone();
+            }
+        }
+        
+        // Apply actions
         if let Some(line_idx) = to_delete {
             self.bookmarks.remove(&line_idx);
             should_save = true;
