@@ -37,7 +37,7 @@ use crate::anomaly::scorer::AnomalyScorer;
 use ndarray::{Array1, Array2};
 use std::collections::VecDeque;
 
-pub struct EmbeddingScorer {
+    pub struct EmbeddingScorer {
     model: EmbeddingModel,              // Your embedding model
     embedding_cache: Vec<Array1<f32>>,  // Past embeddings
     window_size: usize,
@@ -139,14 +139,14 @@ pub fn create_embedding_scorer(model_path: &str) -> Result<CompositeScorer, Box<
 ```rust
 // src/app.rs
 
-pub struct LogOwlApp {
+pub struct LogCrabApp {
     log_view: LogView,
     use_embeddings: bool,
     model_path: Option<PathBuf>,
     // ... rest of fields
 }
 
-impl LogOwlApp {
+impl LogCrabApp {
     fn process_file(&mut self, path: &PathBuf) -> Result<Vec<LogLine>, std::io::Error> {
         // ... existing code ...
         

@@ -1,11 +1,11 @@
 # Quick Start Guide
 
-## Running LogOwl
+## Running LogCrab
 
 ### Option 1: Direct Execution
 ```bash
 cd /home/daniel/logowl
-./target/release/logowl
+./target/release/logcrab
 ```
 
 ### Option 2: Using Cargo
@@ -95,7 +95,7 @@ Log levels have their own colors regardless of anomaly score:
 
 ## What Makes a Line Anomalous?
 
-LogOwl considers multiple factors:
+LogCrab considers multiple factors:
 
 1. **Structural Rarity** (30% weight)
    - Is this message pattern rare in the file?
@@ -164,14 +164,14 @@ When you open `sample_log.txt`, look for:
 ```bash
 adb logcat > myapp.log
 # Let it run for a while, then Ctrl+C
-./target/release/logowl
+   ./target/release/logcrab
 # Open myapp.log
 ```
 
 ### System Logs
 ```bash
 journalctl -u myservice > service.log
-./target/release/logowl
+./target/release/logcrab
 # Open service.log
 ```
 
@@ -205,7 +205,7 @@ Any text file with log-like content works:
 ### Application Won't Start
 ```bash
 # Check if binary exists
-ls -l target/release/logowl
+   ls -l target/release/logcrab
 
 # If not, rebuild
 cargo build --release
@@ -242,4 +242,4 @@ Found a bug? Have an idea?
 - Follow the trait-based pattern for new scorers
 - See ARCHITECTURE.md for adding embeddings
 
-Happy debugging! 🦉
+Happy debugging! �

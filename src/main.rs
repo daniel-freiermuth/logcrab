@@ -3,7 +3,7 @@ mod anomaly;
 mod ui;
 mod app;
 
-use app::LogOwlApp;
+use app::LogCrabApp;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -11,10 +11,10 @@ use std::path::PathBuf;
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-/// DecentLog - An intelligent log anomaly explorer
+/// LogCrab - An intelligent log anomaly explorer
 #[derive(Parser, Debug)]
-#[command(name = "decentlog")]
-#[command(author = "DecentLog Team")]
+#[command(name = "logcrab")]
+#[command(author = "LogCrab Team")]
 #[command(version = "0.1.0")]
 #[command(about = "Analyze log files with anomaly detection and pattern matching", long_about = None)]
 struct Args {
@@ -54,8 +54,8 @@ fn main() -> eframe::Result<()> {
     };
     
     eframe::run_native(
-        "DecentLog - Log Anomaly Explorer",
+        "LogCrab - Log Anomaly Explorer",
         native_options,
-        Box::new(move |cc| Ok(Box::new(LogOwlApp::new(cc, args.file)))),
+        Box::new(move |cc| Ok(Box::new(LogCrabApp::new(cc, args.file)))),
     )
 }

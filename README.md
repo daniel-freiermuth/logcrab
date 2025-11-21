@@ -1,6 +1,6 @@
-# DecentLog 🔍
+# LogCrab 🦀
 
-An intelligent log anomaly explorer built with Rust and egui. DecentLog helps developers and system administrators debug by automatically highlighting unusual, novel, or interesting log lines in large log files.
+An intelligent log anomaly explorer built with Rust and egui. LogCrab helps developers and system administrators debug by automatically highlighting unusual, novel, or interesting log lines in large log files.
 
 ## Features
 
@@ -21,7 +21,7 @@ An intelligent log anomaly explorer built with Rust and egui. DecentLog helps de
 
 ## Architecture
 
-DecentLog uses a sophisticated multi-component anomaly scoring system:
+LogCrab uses a sophisticated multi-component anomaly scoring system:
 
 ### Anomaly Scoring Components
 
@@ -66,7 +66,7 @@ DecentLog uses a sophisticated multi-component anomaly scoring system:
 cargo build --release
 ```
 
-The binary will be available at `target/release/decentlog`
+The binary will be available at `target/release/logcrab`
 
 ### Build with Profiling
 ```bash
@@ -121,16 +121,16 @@ See [PROFILING.md](PROFILING.md) for detailed profiling instructions.
 
 ### Command-Line Options
 
-```bash
-# Open a specific file
-decentlog logfile.txt
+   ```bash
+   # Open a specific file
+   logcrab logfile.txt
 
-# Custom DHAT output location (with ram-profiling feature)
-decentlog logfile.txt --profile-output=custom-profile.json
+   # Custom DHAT output location (with ram-profiling feature)
+   logcrab logfile.txt --profile-output=custom-profile.json
 
-# Show help
-decentlog --help
-```
+   # Show help
+   logcrab --help
+   ```
 
 ## Search Examples
 
@@ -210,7 +210,7 @@ src/
 
 ## Profiling
 
-DecentLog includes optional profiling support:
+LogCrab includes optional profiling support:
 
 - **CPU Profiling**: Interactive puffin flamegraph viewer (Menu → Profiling → Show CPU Profiler)
 - **RAM Profiling**: DHAT heap profiling with detailed allocation tracking

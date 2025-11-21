@@ -1,8 +1,8 @@
-# 🎉 LogOwl Implementation - Final Summary
+# 🎉 LogCrab Implementation - Final Summary
 
 ## Project Delivered Successfully! ✅
 
-I've built **LogOwl**, a complete log anomaly explorer application exactly to your specifications.
+I've built **LogCrab**, a complete log anomaly explorer application exactly to your specifications.
 
 ---
 
@@ -74,8 +74,8 @@ I've built **LogOwl**, a complete log anomaly explorer application exactly to yo
 │       └── log_view.rs         # Scrollable log display (136 lines)
 │
 └── target/
-    └── release/
-        └── logowl              # Compiled binary (18 MB)
+   └── release/
+      └── logcrab              # Compiled binary (18 MB)
 ```
 
 ---
@@ -274,7 +274,7 @@ See `ARCHITECTURE.md` for complete implementation guide.
 cd /home/daniel/logowl
 
 # Run the application
-./target/release/logowl
+./target/release/logcrab
 
 # Open the sample log
 # Click "Open Log File" → select "sample_log.txt"
@@ -316,7 +316,7 @@ When you load `sample_log.txt`, you'll see:
 
 ## 🎓 What You Can Do Next
 
-1. **Test it**: `./target/release/logowl` and open `sample_log.txt`
+1. **Test it**: `./target/release/logcrab` and open `sample_log.txt`
 2. **Use it**: Load your own Android logcat or system logs
 3. **Extend it**: Add new `AnomalyScorer` implementations
 4. **Tune it**: Adjust weights in `src/anomaly/mod.rs`
@@ -354,11 +354,11 @@ The specification was excellent - clear goals, smart constraints, and room for i
 - Provides immediate value
 - Leaves room for growth
 
-Enjoy your new log anomaly explorer! 🦉
+Enjoy your new log anomaly explorer! �
 
 ---
 
-**Project**: LogOwl v0.1.0  
+**Project**: LogCrab v0.1.0  
 **Build Date**: November 20, 2025  
 **Status**: ✅ Complete and Ready to Use  
-**Binary**: `/home/daniel/logowl/target/release/logowl`  
+**Binary**: `/home/daniel/logowl/target/release/logcrab`  

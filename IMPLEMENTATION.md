@@ -1,8 +1,8 @@
-# LogOwl - Implementation Summary
+# LogCrab - Implementation Summary
 
 ## ✅ Implementation Complete!
 
-I've successfully built **LogOwl**, a high-performance log anomaly explorer in Rust with egui, exactly according to your specifications.
+I've successfully built **LogCrab**, a high-performance log anomaly explorer in Rust with egui, exactly according to your specifications.
 
 ## What Was Built
 
@@ -66,14 +66,14 @@ I've successfully built **LogOwl**, a high-performance log anomaly explorer in R
 │       └── log_view.rs     # Scrollable log display widget
 └── target/
     └── release/
-        └── logowl          # Compiled binary (ready to run!)
+   └── logcrab          # Compiled binary (ready to run!)
 ```
 
 ## How to Run
 
 ```bash
 cd /home/daniel/logowl
-./target/release/logowl
+./target/release/logcrab
 ```
 
 Then:
@@ -164,4 +164,4 @@ The trait-based system makes it easy to add:
 3. **Tune weights**: Adjust scoring weights in `src/anomaly/mod.rs` if needed
 4. **Add scorers**: Implement new `AnomalyScorer` traits for custom detection
 
-Enjoy your new log anomaly explorer! 🦉
+Enjoy your new log anomaly explorer! �

@@ -13,7 +13,7 @@ enum LoadMessage {
     Error(String),
 }
 
-pub struct LogOwlApp {
+pub struct LogCrabApp {
     log_view: LogView,
     current_file: Option<PathBuf>,
     status_message: String,
@@ -25,9 +25,9 @@ pub struct LogOwlApp {
     show_profiler: bool,
 }
 
-impl LogOwlApp {
+impl LogCrabApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
-        LogOwlApp {
+        LogCrabApp {
             log_view: LogView::new(),
             current_file: None,
             status_message: if file.is_some() {
@@ -170,7 +170,7 @@ impl LogOwlApp {
     }
 }
 
-impl eframe::App for LogOwlApp {
+impl eframe::App for LogCrabApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
@@ -238,7 +238,7 @@ impl eframe::App for LogOwlApp {
                 
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
-                        self.status_message = "DecentLog - Log Anomaly Explorer v0.1.0".to_string();
+                        self.status_message = "LogCrab - Log Anomaly Explorer v0.1.0".to_string();
                         ui.close_menu();
                     }
                 });
@@ -267,10 +267,10 @@ impl eframe::App for LogOwlApp {
             #[cfg(feature = "cpu-profiling")]
             puffin::profile_scope!("central_panel");
             
-            if self.log_view.lines.is_empty() {
+                    if self.log_view.lines.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
-                    ui.heading("Welcome to DecentLog 🔍");
+                    ui.heading("Welcome to LogCrab 🦀");
                     ui.add_space(20.0);
                     ui.add_space(40.0);
                     
