@@ -5,7 +5,9 @@ edition = "2021"
 
 [features]
 default = []
-profiling = ["dhat"]
+profiling = ["ram-profiling", "cpu-profiling"]
+ram-profiling = ["dhat"]
+cpu-profiling = ["puffin", "puffin_egui"]
 
 [dependencies]
 eframe = "0.29"

@@ -7,7 +7,7 @@ use app::LogOwlApp;
 use clap::Parser;
 use std::path::PathBuf;
 
-#[cfg(feature = "profiling")]
+#[cfg(feature = "ram-profiling")]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -22,14 +22,14 @@ struct Args {
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
     
-    /// Path for the DHAT profiling output (only used when built with --features profiling)
-    #[cfg(feature = "profiling")]
+    /// Path for the DHAT heap profiling output (only used when built with --features ram-profiling)
+    #[cfg(feature = "ram-profiling")]
     #[arg(long = "profile-output", value_name = "PROFILE_FILE", default_value = "dhat-heap.json")]
     profile_output: PathBuf,
 }
 
 fn main() -> eframe::Result<()> {
-    #[cfg(feature = "profiling")]
+    #[cfg(feature = "ram-profiling")]
     let _profiler = {
         let args_early = Args::parse();
         dhat::Profiler::builder()
