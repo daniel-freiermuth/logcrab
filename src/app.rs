@@ -285,16 +285,91 @@ impl eframe::App for LogCrabApp {
                     }
                 });
             } else {
-                // Split into two panels: context view on left, filtered view on right
+                // Dynamic layout: context view on left, N filtered views on right
                 egui::SidePanel::left("context_panel")
                     .resizable(true)
-                    .default_width(ui.available_width() * 0.4)
+                    .default_width(ui.available_width() * 0.3)
                     .show_inside(ui, |ui| {
                         self.log_view.render_context(ui);
                     });
                 
+                // Split remaining space into N vertical panels for filters
+                let filter_count = self.log_view.filter_count();
+                
                 egui::CentralPanel::default().show_inside(ui, |ui| {
-                    self.log_view.render(ui);
+                    // Add controls for managing filters
+                    ui.horizontal(|ui| {
+                        if ui.button("➕ Add Filter").clicked() {
+                            self.log_view.add_filter();
+                        }
+                        
+                        if filter_count > 1 {
+                            ui.separator();
+                            ui.label(format!("{} filter views active", filter_count));
+                        }
+                    });
+                    ui.separator();
+                    
+                    // Render filters dynamically
+                    if filter_count == 1 {
+                        // Single filter takes full height
+                        self.log_view.render_filter(ui, 0);
+                    } else if filter_count == 2 {
+                        // Two filters split vertically
+                        egui::TopBottomPanel::top("filter_0_panel")
+                            .resizable(true)
+                            .default_height(ui.available_height() * 0.5)
+                            .show_inside(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    if ui.button("✖").clicked() {
+                                        self.log_view.remove_filter(0);
+                                    }
+                                    ui.separator();
+                                });
+                                self.log_view.render_filter(ui, 0);
+                            });
+                        
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.button("✖").clicked() {
+                                    self.log_view.remove_filter(1);
+                                }
+                                ui.separator();
+                            });
+                            self.log_view.render_filter(ui, 1);
+                        });
+                    } else {
+                        // 3+ filters - split into equal parts
+                        let filter_height = ui.available_height() / filter_count as f32;
+                        
+                        for i in 0..filter_count {
+                            if i < filter_count - 1 {
+                                egui::TopBottomPanel::top(format!("filter_{}_panel", i))
+                                    .resizable(true)
+                                    .default_height(filter_height)
+                                    .show_inside(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            if ui.button("✖").clicked() {
+                                                self.log_view.remove_filter(i);
+                                            }
+                                            ui.separator();
+                                        });
+                                        self.log_view.render_filter(ui, i);
+                                    });
+                            } else {
+                                // Last filter uses remaining space
+                                egui::CentralPanel::default().show_inside(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("✖").clicked() {
+                                            self.log_view.remove_filter(i);
+                                        }
+                                        ui.separator();
+                                    });
+                                    self.log_view.render_filter(ui, i);
+                                });
+                            }
+                        }
+                    }
                 });
             }
         });
