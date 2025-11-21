@@ -21,6 +21,8 @@ pub struct LogOwlApp {
     load_progress: f32,
     load_receiver: Option<Receiver<LoadMessage>>,
     initial_file: Option<PathBuf>,
+    #[cfg(feature = "cpu-profiling")]
+    show_profiler: bool,
 }
 
 impl LogOwlApp {
@@ -37,6 +39,8 @@ impl LogOwlApp {
             load_progress: 0.0,
             load_receiver: None,
             initial_file: file,
+            #[cfg(feature = "cpu-profiling")]
+            show_profiler: false,
         }
     }
     
@@ -76,6 +80,9 @@ impl LogOwlApp {
         let mut bytes_read: usize = 0;
         
         // First pass: parse and score
+        #[cfg(feature = "cpu-profiling")]
+        puffin::profile_scope!("parse_and_score");
+        
         let mut line_buffer = String::new();
         let mut file_line_number = 0;
         loop {
@@ -133,6 +140,9 @@ impl LogOwlApp {
         ctx.request_repaint();
         
         // Second pass: normalize scores to 0-100
+        #[cfg(feature = "cpu-profiling")]
+        puffin::profile_scope!("normalize_scores");
+        
         let normalized_scores = normalize_scores(&raw_scores);
         
         let _ = tx.send(LoadMessage::Progress(0.9, format!("Finalizing {}...", path.display())));
@@ -162,6 +172,9 @@ impl LogOwlApp {
 
 impl eframe::App for LogOwlApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "cpu-profiling")]
+        puffin::profile_function!();
+        
         // Load initial file if provided via command line
         if let Some(file) = self.initial_file.take() {
             if file.exists() {
@@ -228,6 +241,11 @@ impl eframe::App for LogOwlApp {
                         ui.close_menu();
                     }
                 });
+                
+                #[cfg(feature = "cpu-profiling")]
+                ui.menu_button("Profiling", |ui| {
+                    ui.checkbox(&mut self.show_profiler, "Show CPU Profiler");
+                });
             });
         });
         
@@ -245,6 +263,9 @@ impl eframe::App for LogOwlApp {
         });
         
         egui::CentralPanel::default().show(ctx, |ui| {
+            #[cfg(feature = "cpu-profiling")]
+            puffin::profile_scope!("central_panel");
+            
             if self.log_view.lines.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
@@ -277,5 +298,14 @@ impl eframe::App for LogOwlApp {
                 });
             }
         });
+        
+        #[cfg(feature = "cpu-profiling")]
+        {
+            puffin::GlobalProfiler::lock().new_frame();
+            
+            if self.show_profiler {
+                puffin_egui::profiler_window(ctx);
+            }
+        }
     }
 }

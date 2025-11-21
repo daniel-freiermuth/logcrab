@@ -37,6 +37,9 @@ fn main() -> eframe::Result<()> {
             .build()
     };
     
+    #[cfg(feature = "cpu-profiling")]
+    puffin::set_scopes_on(true);
+    
     let args = Args::parse();
     
     let native_options = eframe::NativeOptions {

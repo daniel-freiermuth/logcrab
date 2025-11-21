@@ -79,6 +79,9 @@ impl LogView {
     
     /// Rebuild the filtered indices cache when filter/search changes
     fn rebuild_filtered_indices(&mut self) -> Option<usize> {
+        #[cfg(feature = "cpu-profiling")]
+        puffin::profile_function!();
+        
         self.filtered_indices.clear();
         self.filtered_indices.reserve(self.lines.len() / 10); // Rough estimate
         
@@ -264,14 +267,16 @@ impl LogView {
         
         // Wrap table in horizontal scroll area
         egui::ScrollArea::horizontal()
-            .id_salt("filtered_scroll")
+            .id_source("filtered_scroll")
             .show(ui, |ui| {
+                #[cfg(feature = "cpu-profiling")]
+                puffin::profile_scope!("filtered_table");
+                
                 // Virtual scrolling table - only renders visible rows!
                 let mut table = TableBuilder::new(ui)
                     .striped(true)
                     .resizable(false)
                     .sense(egui::Sense::click())
-                    .id_salt("log_table") // Add ID so egui persists column widths
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::initial(60.0).resizable(true).clip(true))   // Line number
                     .column(Column::initial(110.0).resizable(true).clip(true))  // Timestamp
@@ -405,6 +410,9 @@ impl LogView {
     
     /// Render context view - shows unfiltered lines around the selected line
     pub fn render_context(&mut self, ui: &mut Ui) {
+        #[cfg(feature = "cpu-profiling")]
+        puffin::profile_function!();
+        
         ui.heading("Context View");
         ui.label("Unfiltered view centered on selected line");
         ui.separator();
@@ -437,8 +445,11 @@ impl LogView {
         
         // Wrap table in horizontal scroll area
         egui::ScrollArea::horizontal()
-            .id_salt("context_scroll")
+            .id_source("context_scroll")
             .show(ui, |ui| {
+                #[cfg(feature = "cpu-profiling")]
+                puffin::profile_scope!("context_table");
+                
                 // Virtual scrolling table for context
                 // Check if selection changed since last render
                 let selection_changed = self.last_rendered_selection_context != Some(selected_idx);
@@ -447,7 +458,6 @@ impl LogView {
                     .striped(true)
                     .resizable(false)
                     .sense(egui::Sense::click())
-                    .id_salt("context_table")
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::initial(60.0).resizable(true).clip(true))   // Line number
                     .column(Column::initial(110.0).resizable(true).clip(true))  // Timestamp
