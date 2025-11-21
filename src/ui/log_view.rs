@@ -22,6 +22,8 @@ struct SavedFilter {
     search_text: String,
     case_insensitive: bool,
     is_favorite: bool,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// .crab file format - stores all session data
@@ -51,6 +53,7 @@ struct FilterView {
     last_rendered_selection: Option<usize>,
     highlight_color: Color32,
     is_favorite: bool,
+    name: Option<String>,
 }
 
 impl FilterView {
@@ -65,6 +68,7 @@ impl FilterView {
             last_rendered_selection: None,
             highlight_color,
             is_favorite: false,
+            name: None,
         }
     }
     
@@ -275,6 +279,17 @@ impl LogView {
         self.filters.len()
     }
     
+    pub fn get_filter_name(&self, index: usize) -> Option<String> {
+        self.filters.get(index).and_then(|f| f.name.clone())
+    }
+    
+    pub fn set_filter_name(&mut self, index: usize, name: Option<String>) {
+        if let Some(filter) = self.filters.get_mut(index) {
+            filter.name = name;
+            self.save_crab_file();
+        }
+    }
+    
     pub fn is_bookmarks_panel_visible(&self) -> bool {
         self.show_bookmarks_panel
     }
@@ -317,6 +332,7 @@ impl LogView {
                         self.filters[i].search_text = saved_filter.search_text.clone();
                         self.filters[i].case_insensitive = saved_filter.case_insensitive;
                         self.filters[i].is_favorite = saved_filter.is_favorite;
+                        self.filters[i].name = saved_filter.name.clone();
                         self.filters[i].update_search_regex();
                     }
                 }
@@ -332,6 +348,7 @@ impl LogView {
                     search_text: f.search_text.clone(),
                     case_insensitive: f.case_insensitive,
                     is_favorite: f.is_favorite,
+                    name: f.name.clone(),
                 }).collect(),
             };
             
@@ -382,10 +399,24 @@ impl LogView {
             return;
         }
         
-        ui.heading(format!("Filter View {}", filter_index + 1));
+        // Display custom name if set, otherwise default
+        let display_name = self.filters[filter_index].name.clone()
+            .unwrap_or_else(|| format!("Filter View {}", filter_index + 1));
+        ui.heading(&display_name);
         
-        // Star/Unstar button
+        // Name and Star buttons
         ui.horizontal(|ui| {
+            // Edit name button
+            if ui.small_button("✏").on_hover_text("Edit filter name").clicked() {
+                // Prompt for new name
+                if let Some(current_name) = &self.filters[filter_index].name {
+                    self.bookmark_name_input = current_name.clone();
+                } else {
+                    self.bookmark_name_input = format!("Filter {}", filter_index + 1);
+                }
+                self.editing_bookmark = Some(filter_index + 10000); // Use high number to distinguish from bookmarks
+            }
+            
             let star_text = if self.filters[filter_index].is_favorite { "⭐" } else { "☆" };
             if ui.button(star_text).on_hover_text("Toggle favorite filter").clicked() {
                 self.filters[filter_index].is_favorite = !self.filters[filter_index].is_favorite;
@@ -518,6 +549,40 @@ impl LogView {
         ui.separator();
         
         self.render_filter_table(ui, filter_index, scroll_to_row);
+        
+        // Handle filter name editing dialog
+        if let Some(editing_id) = self.editing_bookmark {
+            if editing_id >= 10000 {
+                let actual_filter_index = editing_id - 10000;
+                if actual_filter_index == filter_index {
+                    egui::Window::new("Rename Filter")
+                        .collapsible(false)
+                        .resizable(false)
+                        .show(ui.ctx(), |ui| {
+                            ui.label("Enter filter name:");
+                            let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
+                            response.request_focus();
+                            
+                            ui.horizontal(|ui| {
+                                if ui.button("Save").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                                    let new_name = if self.bookmark_name_input.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(self.bookmark_name_input.clone())
+                                    };
+                                    self.set_filter_name(filter_index, new_name);
+                                    self.editing_bookmark = None;
+                                    self.bookmark_name_input.clear();
+                                }
+                                if ui.button("Cancel").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
+                                    self.editing_bookmark = None;
+                                    self.bookmark_name_input.clear();
+                                }
+                            });
+                        });
+                }
+            }
+        }
     }
     
     fn render_histogram(&mut self, ui: &mut Ui, filter_index: usize) {

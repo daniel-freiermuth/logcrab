@@ -223,7 +223,31 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
     type Tab = TabContent;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        // For filter tabs, check if there's a custom name
+        if let TabType::Filter(index) = &tab.tab_type {
+            if let Some(custom_name) = self.log_view.get_filter_name(*index) {
+                return custom_name.into();
+            }
+        }
         (&tab.title).into()
+    }
+    
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab, _surface: egui_dock::SurfaceIndex, _node: egui_dock::NodeIndex) {
+        // Only allow renaming filter tabs
+        if let TabType::Filter(index) = &tab.tab_type {
+            ui.label("Filter Tab");
+            ui.separator();
+            
+            if ui.button("✏ Rename").clicked() {
+                // Will be handled in the main UI
+                ui.close_menu();
+            }
+            
+            if ui.button("🗑 Clear Name").clicked() {
+                self.log_view.set_filter_name(*index, None);
+                ui.close_menu();
+            }
+        }
     }
 
     fn add_popup(&mut self, ui: &mut egui::Ui, _surface: egui_dock::SurfaceIndex, node: egui_dock::NodeIndex) {
