@@ -482,7 +482,149 @@ impl LogView {
         
         ui.separator();
         
+        // Render histogram
+        self.render_histogram(ui, filter_index);
+        
+        ui.separator();
+        
         self.render_filter_table(ui, filter_index, scroll_to_row);
+    }
+    
+    fn render_histogram(&mut self, ui: &mut Ui, filter_index: usize) {
+        if self.lines.is_empty() {
+            return;
+        }
+        
+        // Get time range
+        let first_ts = self.lines.iter().find_map(|l| l.timestamp);
+        let last_ts = self.lines.iter().rev().find_map(|l| l.timestamp);
+        
+        if first_ts.is_none() || last_ts.is_none() {
+            ui.label("No timestamps available for histogram");
+            return;
+        }
+        
+        let start_time = first_ts.unwrap();
+        let end_time = last_ts.unwrap();
+        let time_range = (end_time.timestamp() - start_time.timestamp()).max(1);
+        
+        const NUM_BUCKETS: usize = 100;
+        let bucket_size = time_range as f64 / NUM_BUCKETS as f64;
+        
+        // Count lines per bucket (only filtered lines)
+        let mut buckets = vec![0usize; NUM_BUCKETS];
+        for &line_idx in &self.filters[filter_index].filtered_indices {
+            if let Some(ts) = self.lines[line_idx].timestamp {
+                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+                let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
+                buckets[bucket_idx] += 1;
+            }
+        }
+        
+        let max_count = *buckets.iter().max().unwrap_or(&1);
+        
+        // Calculate selected line position if present
+        let selected_bucket = if let Some(sel_idx) = self.selected_line_index {
+            if sel_idx < self.lines.len() {
+                if let Some(sel_ts) = self.lines[sel_idx].timestamp {
+                    let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
+                    Some(((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // Render histogram
+        let desired_size = egui::vec2(ui.available_width(), 60.0);
+        let (response, painter) = ui.allocate_painter(desired_size, egui::Sense::click());
+        let rect = response.rect;
+        
+        // Draw background
+        painter.rect_filled(rect, 0.0, Color32::from_gray(20));
+        
+        let bar_width = rect.width() / NUM_BUCKETS as f32;
+        
+        // Draw bars
+        for (i, &count) in buckets.iter().enumerate() {
+            if count > 0 {
+                let x = rect.min.x + i as f32 * bar_width;
+                let height = (count as f32 / max_count as f32) * rect.height();
+                let y = rect.max.y - height;
+                
+                let bar_rect = egui::Rect::from_min_size(
+                    egui::pos2(x, y),
+                    egui::vec2(bar_width.max(1.0), height),
+                );
+                
+                // Color based on whether this bucket is selected
+                let color = if Some(i) == selected_bucket {
+                    Color32::from_rgb(255, 200, 100) // Orange for selected
+                } else {
+                    Color32::from_rgb(100, 150, 255) // Blue for normal
+                };
+                
+                painter.rect_filled(bar_rect, 0.0, color);
+            }
+        }
+        
+        // Draw selected line indicator
+        if let Some(bucket_idx) = selected_bucket {
+            let x = rect.min.x + bucket_idx as f32 * bar_width + bar_width / 2.0;
+            painter.vline(x, rect.y_range(), (2.0, Color32::RED));
+        }
+        
+        // Handle clicks to jump to time
+        if response.clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let rel_x = (pos.x - rect.min.x) / rect.width();
+                let bucket_idx = (rel_x * NUM_BUCKETS as f32) as usize;
+                
+                if bucket_idx < NUM_BUCKETS {
+                    // Find first line in this bucket
+                    let target_time = start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
+                    
+                    // Find closest filtered line to this time
+                    let mut closest_idx = None;
+                    let mut min_diff = i64::MAX;
+                    
+                    for &line_idx in &self.filters[filter_index].filtered_indices {
+                        if let Some(ts) = self.lines[line_idx].timestamp {
+                            let diff = (ts.timestamp() - target_time).abs();
+                            if diff < min_diff {
+                                min_diff = diff;
+                                closest_idx = Some(line_idx);
+                            }
+                        }
+                    }
+                    
+                    if let Some(idx) = closest_idx {
+                        self.selected_line_index = Some(idx);
+                        self.selected_timestamp = self.lines[idx].timestamp;
+                    }
+                }
+            }
+        }
+        
+        // Show time range below
+        ui.horizontal(|ui| {
+            ui.label(format!("Timeline: {} → {}", 
+                start_time.format("%H:%M:%S"),
+                end_time.format("%H:%M:%S")
+            ));
+            if let Some(sel_idx) = self.selected_line_index {
+                if sel_idx < self.lines.len() {
+                    if let Some(sel_ts) = self.lines[sel_idx].timestamp {
+                        ui.separator();
+                        ui.colored_label(Color32::YELLOW, format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")));
+                    }
+                }
+            }
+        });
     }
     
     fn render_filter_table(&mut self, ui: &mut Ui, filter_index: usize, scroll_to_row: Option<usize>) {
@@ -654,6 +796,11 @@ impl LogView {
         ));
         ui.separator();
         
+        // Render context histogram
+        self.render_context_histogram(ui, start_idx, end_idx, selected_idx);
+        
+        ui.separator();
+        
         let scroll_to_row = if self.last_rendered_selection_context != self.selected_line_index {
             self.last_rendered_selection_context = self.selected_line_index;
             Some(selected_position)
@@ -775,6 +922,146 @@ impl LogView {
                     });
                 });
             });
+    }
+    
+    fn render_context_histogram(&mut self, ui: &mut Ui, start_idx: usize, end_idx: usize, selected_idx: usize) {
+        if self.lines.is_empty() {
+            return;
+        }
+        
+        // Get overall time range
+        let first_ts = self.lines.iter().find_map(|l| l.timestamp);
+        let last_ts = self.lines.iter().rev().find_map(|l| l.timestamp);
+        
+        if first_ts.is_none() || last_ts.is_none() {
+            return;
+        }
+        
+        let overall_start = first_ts.unwrap();
+        let overall_end = last_ts.unwrap();
+        let time_range = (overall_end.timestamp() - overall_start.timestamp()).max(1);
+        
+        const NUM_BUCKETS: usize = 100;
+        let bucket_size = time_range as f64 / NUM_BUCKETS as f64;
+        
+        // Count ALL lines per bucket
+        let mut buckets = vec![0usize; NUM_BUCKETS];
+        for line in &self.lines {
+            if let Some(ts) = line.timestamp {
+                let elapsed = (ts.timestamp() - overall_start.timestamp()) as f64;
+                let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
+                buckets[bucket_idx] += 1;
+            }
+        }
+        
+        let max_count = *buckets.iter().max().unwrap_or(&1);
+        
+        // Calculate visible window range
+        let window_start = self.lines[start_idx].timestamp;
+        let window_end = self.lines[end_idx - 1].timestamp;
+        let selected_ts = self.lines[selected_idx].timestamp;
+        
+        let window_start_bucket = window_start.map(|ts| {
+            let elapsed = (ts.timestamp() - overall_start.timestamp()) as f64;
+            ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1)
+        });
+        
+        let window_end_bucket = window_end.map(|ts| {
+            let elapsed = (ts.timestamp() - overall_start.timestamp()) as f64;
+            ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1)
+        });
+        
+        let selected_bucket = selected_ts.map(|ts| {
+            let elapsed = (ts.timestamp() - overall_start.timestamp()) as f64;
+            ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1)
+        });
+        
+        // Render histogram
+        let desired_size = egui::vec2(ui.available_width(), 40.0);
+        let (response, painter) = ui.allocate_painter(desired_size, egui::Sense::click());
+        let rect = response.rect;
+        
+        // Draw background
+        painter.rect_filled(rect, 0.0, Color32::from_gray(20));
+        
+        let bar_width = rect.width() / NUM_BUCKETS as f32;
+        
+        // Draw bars
+        for (i, &count) in buckets.iter().enumerate() {
+            if count > 0 {
+                let x = rect.min.x + i as f32 * bar_width;
+                let height = (count as f32 / max_count as f32) * rect.height();
+                let y = rect.max.y - height;
+                
+                let bar_rect = egui::Rect::from_min_size(
+                    egui::pos2(x, y),
+                    egui::vec2(bar_width.max(1.0), height),
+                );
+                
+                // Color: gray for normal, highlighted for visible window
+                let in_window = if let (Some(start_b), Some(end_b)) = (window_start_bucket, window_end_bucket) {
+                    i >= start_b && i <= end_b
+                } else {
+                    false
+                };
+                
+                let color = if in_window {
+                    Color32::from_rgb(150, 200, 255) // Light blue for visible window
+                } else {
+                    Color32::from_gray(80) // Gray for rest
+                };
+                
+                painter.rect_filled(bar_rect, 0.0, color);
+            }
+        }
+        
+        // Draw visible window overlay
+        if let (Some(start_b), Some(end_b)) = (window_start_bucket, window_end_bucket) {
+            let start_x = rect.min.x + start_b as f32 * bar_width;
+            let end_x = rect.min.x + (end_b + 1) as f32 * bar_width;
+            let window_rect = egui::Rect::from_min_max(
+                egui::pos2(start_x, rect.min.y),
+                egui::pos2(end_x, rect.max.y),
+            );
+            painter.rect_stroke(window_rect, 0.0, (2.0, Color32::YELLOW));
+        }
+        
+        // Draw selected line indicator
+        if let Some(bucket_idx) = selected_bucket {
+            let x = rect.min.x + bucket_idx as f32 * bar_width + bar_width / 2.0;
+            painter.vline(x, rect.y_range(), (2.0, Color32::RED));
+        }
+        
+        // Handle clicks to jump to time
+        if response.clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let rel_x = (pos.x - rect.min.x) / rect.width();
+                let bucket_idx = (rel_x * NUM_BUCKETS as f32) as usize;
+                
+                if bucket_idx < NUM_BUCKETS {
+                    let target_time = overall_start.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
+                    
+                    // Find closest line to this time
+                    let mut closest_idx = None;
+                    let mut min_diff = i64::MAX;
+                    
+                    for (idx, line) in self.lines.iter().enumerate() {
+                        if let Some(ts) = line.timestamp {
+                            let diff = (ts.timestamp() - target_time).abs();
+                            if diff < min_diff {
+                                min_diff = diff;
+                                closest_idx = Some(idx);
+                            }
+                        }
+                    }
+                    
+                    if let Some(idx) = closest_idx {
+                        self.selected_line_index = Some(idx);
+                        self.selected_timestamp = self.lines[idx].timestamp;
+                    }
+                }
+            }
+        }
     }
     
     pub fn render_bookmarks(&mut self, ui: &mut Ui) {
