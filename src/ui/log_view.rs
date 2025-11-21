@@ -465,9 +465,32 @@ impl LogView {
         // Check if selection changed
         if scroll_to_row.is_none() && self.selected_line_index.is_some() {
             if self.filters[filter_index].last_rendered_selection != self.selected_line_index {
+                eprintln!("Filter {}: Selection changed from {:?} to {:?}", 
+                    filter_index, 
+                    self.filters[filter_index].last_rendered_selection, 
+                    self.selected_line_index);
                 if let Some(selected_idx) = self.selected_line_index {
                     if let Some(position) = self.filters[filter_index].filtered_indices.iter().position(|&idx| idx == selected_idx) {
+                        eprintln!("Filter {}: Found exact line at position {}, will scroll", filter_index, position);
                         scroll_to_row = Some(position);
+                    } else {
+                        // Line not in filtered results - try to find closest by timestamp
+                        if let Some(selected_ts) = self.selected_timestamp {
+                            if let Some(closest_pos) = self.filters[filter_index].find_closest_timestamp_index(&self.lines, selected_ts) {
+                                eprintln!("Filter {}: Line not in results, scrolling to closest timestamp at position {}", 
+                                    filter_index, closest_pos);
+                                scroll_to_row = Some(closest_pos);
+                            } else {
+                                eprintln!("Filter {}: No timestamp match found (total filtered: {})", 
+                                    filter_index, 
+                                    self.filters[filter_index].filtered_indices.len());
+                            }
+                        } else {
+                            eprintln!("Filter {}: Line not in filtered results and no timestamp available", 
+                                filter_index);
+                        }
+                        // Mark as processed so we don't keep checking on every render
+                        self.filters[filter_index].last_rendered_selection = self.selected_line_index;
                     }
                 }
             }
@@ -543,7 +566,12 @@ impl LogView {
             if sel_idx < self.lines.len() {
                 if let Some(sel_ts) = self.lines[sel_idx].timestamp {
                     let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
-                    Some(((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1))
+                    // Only show indicator if the selected time is within this filter's time range
+                    if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
+                        Some(((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
