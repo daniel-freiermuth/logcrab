@@ -3,6 +3,10 @@ use egui::{Color32, RichText, Ui, text::LayoutJob, TextFormat};
 use egui_extras::{TableBuilder, Column};
 use regex::{Regex, RegexBuilder};
 use chrono::{DateTime, Local};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
 
 pub struct LogView {
     pub lines: Vec<LogLine>,
@@ -20,6 +24,9 @@ pub struct LogView {
     // Track last rendered selection to detect changes for each view
     last_rendered_selection_context: Option<usize>,
     last_rendered_selection_filtered: Option<usize>,
+    // Bookmarks
+    bookmarked_lines: HashSet<usize>,
+    bookmarks_file: Option<PathBuf>,
 }
 
 impl LogView {
@@ -37,12 +44,56 @@ impl LogView {
             selected_timestamp: None,
             last_rendered_selection_context: None,
             last_rendered_selection_filtered: None,
+            bookmarked_lines: HashSet::new(),
+            bookmarks_file: None,
         }
     }
     
     pub fn set_lines(&mut self, lines: Vec<LogLine>) {
         self.lines = lines;
         self.filter_dirty = true;
+    }
+    
+    pub fn set_bookmarks_file(&mut self, log_file_path: PathBuf) {
+        let bookmarks_path = log_file_path.with_extension("bookmarks");
+        self.bookmarks_file = Some(bookmarks_path.clone());
+        self.load_bookmarks();
+    }
+    
+    fn load_bookmarks(&mut self) {
+        self.bookmarked_lines.clear();
+        
+        if let Some(ref path) = self.bookmarks_file {
+            if let Ok(file) = fs::File::open(path) {
+                let reader = BufReader::new(file);
+                for line in reader.lines().flatten() {
+                    if let Ok(line_num) = line.trim().parse::<usize>() {
+                        self.bookmarked_lines.insert(line_num);
+                    }
+                }
+            }
+        }
+    }
+    
+    fn save_bookmarks(&self) {
+        if let Some(ref path) = self.bookmarks_file {
+            if let Ok(mut file) = fs::File::create(path) {
+                let mut bookmarks: Vec<usize> = self.bookmarked_lines.iter().copied().collect();
+                bookmarks.sort();
+                for line_num in bookmarks {
+                    let _ = writeln!(file, "{}", line_num);
+                }
+            }
+        }
+    }
+    
+    fn toggle_bookmark(&mut self, line_index: usize) {
+        if self.bookmarked_lines.contains(&line_index) {
+            self.bookmarked_lines.remove(&line_index);
+        } else {
+            self.bookmarked_lines.insert(line_index);
+        }
+        self.save_bookmarks();
     }
     
     fn update_search_regex(&mut self) {
@@ -313,6 +364,7 @@ impl LogView {
                     
                     // Extract all needed data before entering closures to avoid borrow checker issues
                     let is_selected = self.selected_line_index == Some(line_idx);
+                    let is_bookmarked = self.bookmarked_lines.contains(&line_idx);
                     let color = score_to_color(line.anomaly_score);
                     let line_number = line.line_number;
                     let timestamp_str = if let Some(ts) = line.timestamp {
@@ -326,29 +378,45 @@ impl LogView {
                     
                     // Track if row was clicked in any column
                     let mut row_clicked = false;
+                    let mut row_right_clicked = false;
                     
                     // Line number
                     row.col(|ui| {
-                        // Highlight background if selected
-                        if is_selected {
+                        // Highlight background if bookmarked (takes priority)
+                        if is_bookmarked {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                        }
+                        // Otherwise highlight if selected
+                        else if is_selected {
                             let rect = ui.available_rect_before_wrap();
                             ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                         }
                         
-                        let text = RichText::new(format!("▶ {}", line_number)).color(color);
-                        let text = if is_selected { text.strong() } else { RichText::new(format!("{}", line_number)).color(color) };
+                        let bookmark_icon = if is_bookmarked { "★ " } else { "" };
+                        let text = RichText::new(format!("▶ {}{}", bookmark_icon, line_number)).color(color);
+                        let text = if is_selected { text.strong() } else { RichText::new(format!("{}{}", bookmark_icon, line_number)).color(color) };
                         ui.label(text);
                         
-                        // Add invisible button covering entire cell
-                        if ui.interact(ui.max_rect(), ui.id().with(line_idx), egui::Sense::click()).clicked() {
+                        // Add interactive area for entire cell
+                        let response = ui.interact(ui.max_rect(), ui.id().with(line_idx), egui::Sense::click());
+                        if response.clicked() {
                             row_clicked = true;
+                        }
+                        if response.secondary_clicked() {
+                            row_right_clicked = true;
                         }
                     });
                     
                     // Timestamp
                     row.col(|ui| {
-                        // Highlight background if selected
-                        if is_selected {
+                        // Highlight background if bookmarked (takes priority)
+                        if is_bookmarked {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                        }
+                        // Otherwise highlight if selected
+                        else if is_selected {
                             let rect = ui.available_rect_before_wrap();
                             ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                         }
@@ -356,16 +424,25 @@ impl LogView {
                         let job = self.highlight_matches(&timestamp_str, color);
                         ui.label(job);
                         
-                        // Add invisible button covering entire cell
-                        if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ts"), egui::Sense::click()).clicked() {
+                        // Add interactive area for entire cell
+                        let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ts"), egui::Sense::click());
+                        if response.clicked() {
                             row_clicked = true;
+                        }
+                        if response.secondary_clicked() {
+                            row_right_clicked = true;
                         }
                     });
                     
                     // Message (don't truncate, let it clip)
                     row.col(|ui| {
-                        // Highlight background if selected
-                        if is_selected {
+                        // Highlight background if bookmarked (takes priority)
+                        if is_bookmarked {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                        }
+                        // Otherwise highlight if selected
+                        else if is_selected {
                             let rect = ui.available_rect_before_wrap();
                             ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                         }
@@ -373,16 +450,25 @@ impl LogView {
                         let job = self.highlight_matches(&message, color);
                         ui.label(job);
                         
-                        // Add invisible button covering entire cell
-                        if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("msg"), egui::Sense::click()).clicked() {
+                        // Add interactive area for entire cell
+                        let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("msg"), egui::Sense::click());
+                        if response.clicked() {
                             row_clicked = true;
+                        }
+                        if response.secondary_clicked() {
+                            row_right_clicked = true;
                         }
                     });
                     
                     // Anomaly score
                     row.col(|ui| {
-                        // Highlight background if selected
-                        if is_selected {
+                        // Highlight background if bookmarked (takes priority)
+                        if is_bookmarked {
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                        }
+                        // Otherwise highlight if selected
+                        else if is_selected {
                             let rect = ui.available_rect_before_wrap();
                             ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                         }
@@ -392,14 +478,20 @@ impl LogView {
                             .color(color);
                         ui.label(text);
                         
-                        // Add invisible button covering entire cell
-                        if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("score"), egui::Sense::click()).clicked() {
+                        // Add interactive area for entire cell
+                        let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("score"), egui::Sense::click());
+                        if response.clicked() {
                             row_clicked = true;
+                        }
+                        if response.secondary_clicked() {
+                            row_right_clicked = true;
                         }
                     });
                     
-                    // Update selection after all columns processed
-                    if row_clicked {
+                    // Update selection or bookmark after all columns processed
+                    if row_right_clicked {
+                        self.toggle_bookmark(line_idx);
+                    } else if row_clicked {
                         self.selected_line_index = Some(line_idx);
                         self.selected_timestamp = timestamp;
                     }
@@ -491,23 +583,38 @@ impl LogView {
                         let line = &self.lines[line_idx];
                         
                         let is_selected = line_idx == selected_idx;
+                        let is_bookmarked = self.bookmarked_lines.contains(&line_idx);
                         let color = score_to_color(line.anomaly_score);
+                        
+                        let mut row_right_clicked = false;
                         
                         // Line number
                         row.col(|ui| {
-                            if is_selected {
+                            // Highlight background if bookmarked (takes priority)
+                            if is_bookmarked {
+                                let rect = ui.available_rect_before_wrap();
+                                ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            // Otherwise highlight if selected
+                            else if is_selected {
                                 let rect = ui.available_rect_before_wrap();
                                 ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                             }
                             
+                            let bookmark_icon = if is_bookmarked { "★ " } else { "" };
                             let text = if is_selected {
-                                RichText::new(format!("▶ {}", line.line_number)).color(color).strong()
+                                RichText::new(format!("▶ {}{}", bookmark_icon, line.line_number)).color(color).strong()
                             } else {
-                                RichText::new(format!("{}", line.line_number)).color(color)
+                                RichText::new(format!("{}{}", bookmark_icon, line.line_number)).color(color)
                             };
                             ui.label(text);
                             
-                            if ui.interact(ui.max_rect(), ui.id().with(line_idx), egui::Sense::click()).clicked() {
+                            // Add interactive area for right-click
+                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ctx"), egui::Sense::click());
+                            if response.secondary_clicked() {
+                                row_right_clicked = true;
+                            }
+                            if response.clicked() {
                                 self.selected_line_index = Some(line_idx);
                                 self.selected_timestamp = line.timestamp;
                             }
@@ -515,7 +622,13 @@ impl LogView {
                         
                         // Timestamp
                         row.col(|ui| {
-                            if is_selected {
+                            // Highlight background if bookmarked (takes priority)
+                            if is_bookmarked {
+                                let rect = ui.available_rect_before_wrap();
+                                ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            // Otherwise highlight if selected
+                            else if is_selected {
                                 let rect = ui.available_rect_before_wrap();
                                 ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                             }
@@ -527,7 +640,11 @@ impl LogView {
                             };
                             ui.label(RichText::new(timestamp_str).color(color));
                             
-                            if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ts"), egui::Sense::click()).clicked() {
+                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ts"), egui::Sense::click());
+                            if response.secondary_clicked() {
+                                row_right_clicked = true;
+                            }
+                            if response.clicked() {
                                 self.selected_line_index = Some(line_idx);
                                 self.selected_timestamp = line.timestamp;
                             }
@@ -535,14 +652,24 @@ impl LogView {
                         
                         // Message
                         row.col(|ui| {
-                            if is_selected {
+                            // Highlight background if bookmarked (takes priority)
+                            if is_bookmarked {
+                                let rect = ui.available_rect_before_wrap();
+                                ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            // Otherwise highlight if selected
+                            else if is_selected {
                                 let rect = ui.available_rect_before_wrap();
                                 ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                             }
                             
                             ui.label(RichText::new(&line.message).color(color));
                             
-                            if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("msg"), egui::Sense::click()).clicked() {
+                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("msg"), egui::Sense::click());
+                            if response.secondary_clicked() {
+                                row_right_clicked = true;
+                            }
+                            if response.clicked() {
                                 self.selected_line_index = Some(line_idx);
                                 self.selected_timestamp = line.timestamp;
                             }
@@ -550,7 +677,13 @@ impl LogView {
                         
                         // Anomaly score
                         row.col(|ui| {
-                            if is_selected {
+                            // Highlight background if bookmarked (takes priority)
+                            if is_bookmarked {
+                                let rect = ui.available_rect_before_wrap();
+                                ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(100, 80, 30));
+                            }
+                            // Otherwise highlight if selected
+                            else if is_selected {
                                 let rect = ui.available_rect_before_wrap();
                                 ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(60, 60, 80));
                             }
@@ -560,11 +693,20 @@ impl LogView {
                                 .color(color);
                             ui.label(text);
                             
-                            if ui.interact(ui.max_rect(), ui.id().with(line_idx).with("score"), egui::Sense::click()).clicked() {
+                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("score"), egui::Sense::click());
+                            if response.secondary_clicked() {
+                                row_right_clicked = true;
+                            }
+                            if response.clicked() {
                                 self.selected_line_index = Some(line_idx);
                                 self.selected_timestamp = line.timestamp;
                             }
                         });
+                        
+                        // Handle right-click bookmark toggle
+                        if row_right_clicked {
+                            self.toggle_bookmark(line_idx);
+                        }
                     });
                 });
             }); // End of ScrollArea

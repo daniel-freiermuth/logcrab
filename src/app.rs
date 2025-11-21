@@ -195,6 +195,7 @@ impl eframe::App for LogOwlApp {
                     }
                     LoadMessage::Complete(lines, path) => {
                         self.log_view.set_lines(lines);
+                        self.log_view.set_bookmarks_file(path.clone());
                         self.current_file = Some(path.clone());
                         self.status_message = format!("Loaded {} successfully with {} lines", 
                             path.display(), 
