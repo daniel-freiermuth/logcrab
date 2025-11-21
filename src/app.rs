@@ -274,7 +274,17 @@ impl eframe::App for LogCrabApp {
                     }
                     LoadMessage::Complete(lines, path) => {
                         self.log_view.set_lines(lines);
-                        self.log_view.set_bookmarks_file(path.clone());
+                        let additional_filters = self.log_view.set_bookmarks_file(path.clone());
+                        
+                        // Create tabs for any additional filters loaded from the crab file
+                        for i in 0..additional_filters {
+                            let filter_index = 2 + i; // First 2 filters already have tabs
+                            self.dock_state.push_to_focused_leaf(TabContent {
+                                tab_type: TabType::Filter(filter_index),
+                                title: format!("Filter {}", filter_index + 1),
+                            });
+                        }
+                        
                         self.current_file = Some(path.clone());
                         self.status_message = format!("Loaded {} successfully with {} lines", 
                             path.display(), 

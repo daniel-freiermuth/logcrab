@@ -296,10 +296,13 @@ impl LogView {
         }
     }
     
-    pub fn set_bookmarks_file(&mut self, log_file_path: PathBuf) {
+    pub fn set_bookmarks_file(&mut self, log_file_path: PathBuf) -> usize {
         let crab_path = log_file_path.with_extension("crab");
         self.crab_file = Some(crab_path.clone());
+        let initial_filter_count = self.filters.len();
         self.load_crab_file();
+        // Return how many filters we have after loading
+        self.filters.len().saturating_sub(initial_filter_count)
     }
     
     fn load_crab_file(&mut self) {
@@ -313,14 +316,18 @@ impl LogView {
                         self.bookmarks.insert(bookmark.line_index, bookmark);
                     }
                     
-                    // Load favorite filters
+                    // Load saved filters - create additional filters if needed
                     for (i, saved_filter) in crab_data.filters.iter().enumerate() {
-                        if i < self.filters.len() {
-                            self.filters[i].search_text = saved_filter.search_text.clone();
-                            self.filters[i].case_insensitive = saved_filter.case_insensitive;
-                            self.filters[i].is_favorite = saved_filter.is_favorite;
-                            self.filters[i].update_search_regex();
+                        // Add new filter if we don't have enough
+                        while i >= self.filters.len() {
+                            self.add_filter();
                         }
+                        
+                        // Restore filter settings
+                        self.filters[i].search_text = saved_filter.search_text.clone();
+                        self.filters[i].case_insensitive = saved_filter.case_insensitive;
+                        self.filters[i].is_favorite = saved_filter.is_favorite;
+                        self.filters[i].update_search_regex();
                     }
                 }
             }
