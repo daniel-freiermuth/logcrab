@@ -238,7 +238,7 @@ impl eframe::App for LogOwlApp {
                 
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
-                        self.status_message = "LogOwl - Log Anomaly Explorer v0.1.0".to_string();
+                        self.status_message = "DecentLog - Log Anomaly Explorer v0.1.0".to_string();
                         ui.close_menu();
                     }
                 });
@@ -270,7 +270,7 @@ impl eframe::App for LogOwlApp {
             if self.log_view.lines.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
-                    ui.heading("Welcome to LogOwl 🦉");
+                    ui.heading("Welcome to DecentLog 🔍");
                     ui.add_space(20.0);
                     ui.add_space(40.0);
                     

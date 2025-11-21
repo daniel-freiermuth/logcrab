@@ -11,10 +11,10 @@ use std::path::PathBuf;
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-/// LogOwl - An intelligent log anomaly explorer
+/// DecentLog - An intelligent log anomaly explorer
 #[derive(Parser, Debug)]
-#[command(name = "logowl")]
-#[command(author = "LogOwl Team")]
+#[command(name = "decentlog")]
+#[command(author = "DecentLog Team")]
 #[command(version = "0.1.0")]
 #[command(about = "Analyze log files with anomaly detection and pattern matching", long_about = None)]
 struct Args {
@@ -54,7 +54,7 @@ fn main() -> eframe::Result<()> {
     };
     
     eframe::run_native(
-        "LogOwl - Log Anomaly Explorer",
+        "DecentLog - Log Anomaly Explorer",
         native_options,
         Box::new(move |cc| Ok(Box::new(LogOwlApp::new(cc, args.file)))),
     )
