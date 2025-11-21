@@ -272,7 +272,6 @@ impl eframe::App for LogOwlApp {
                     ui.add_space(100.0);
                     ui.heading("Welcome to LogOwl 🦉");
                     ui.add_space(20.0);
-                    ui.label("An intelligent log anomaly explorer");
                     ui.add_space(40.0);
                     
                     if ui.button("Open Log File").clicked() {
