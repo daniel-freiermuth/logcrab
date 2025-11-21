@@ -3,10 +3,42 @@ use egui::{Color32, RichText, Ui, text::LayoutJob, TextFormat};
 use egui_extras::{TableBuilder, Column};
 use regex::{Regex, RegexBuilder};
 use chrono::{DateTime, Local};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use serde::{Serialize, Deserialize};
+
+/// Named bookmark with optional description
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Bookmark {
+    line_index: usize,
+    name: String,
+    timestamp: Option<DateTime<Local>>,
+}
+
+/// Saved filter configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedFilter {
+    search_text: String,
+    case_insensitive: bool,
+    is_favorite: bool,
+}
+
+/// .crab file format - stores all session data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CrabFile {
+    bookmarks: Vec<Bookmark>,
+    filters: Vec<SavedFilter>,
+}
+
+impl CrabFile {
+    fn new() -> Self {
+        CrabFile {
+            bookmarks: Vec::new(),
+            filters: Vec::new(),
+        }
+    }
+}
 
 /// Represents a single filter view with its own search criteria and cached results
 struct FilterView {
@@ -18,6 +50,7 @@ struct FilterView {
     filter_dirty: bool,
     last_rendered_selection: Option<usize>,
     highlight_color: Color32,
+    is_favorite: bool,
 }
 
 impl FilterView {
@@ -31,6 +64,7 @@ impl FilterView {
             filter_dirty: true,
             last_rendered_selection: None,
             highlight_color,
+            is_favorite: false,
         }
     }
     
@@ -184,9 +218,14 @@ pub struct LogView {
     selected_timestamp: Option<DateTime<Local>>,
     // Track last rendered selection for context view
     last_rendered_selection_context: Option<usize>,
-    // Bookmarks
-    bookmarked_lines: HashSet<usize>,
-    bookmarks_file: Option<PathBuf>,
+    // Bookmarks with names
+    bookmarks: HashMap<usize, Bookmark>,
+    // .crab file path
+    crab_file: Option<PathBuf>,
+    // UI state
+    show_bookmarks_panel: bool,
+    bookmark_name_input: String,
+    editing_bookmark: Option<usize>,
 }
 
 impl LogView {
@@ -204,8 +243,11 @@ impl LogView {
             selected_line_index: None,
             selected_timestamp: None,
             last_rendered_selection_context: None,
-            bookmarked_lines: HashSet::new(),
-            bookmarks_file: None,
+            bookmarks: HashMap::new(),
+            crab_file: None,
+            show_bookmarks_panel: false,
+            bookmark_name_input: String::new(),
+            editing_bookmark: None,
         }
     }
     
@@ -233,6 +275,10 @@ impl LogView {
         self.filters.len()
     }
     
+    pub fn is_bookmarks_panel_visible(&self) -> bool {
+        self.show_bookmarks_panel
+    }
+    
     pub fn set_lines(&mut self, lines: Vec<LogLine>) {
         self.lines = lines;
         for filter in &mut self.filters {
@@ -241,45 +287,85 @@ impl LogView {
     }
     
     pub fn set_bookmarks_file(&mut self, log_file_path: PathBuf) {
-        let bookmarks_path = log_file_path.with_extension("bookmarks");
-        self.bookmarks_file = Some(bookmarks_path.clone());
-        self.load_bookmarks();
+        let crab_path = log_file_path.with_extension("crab");
+        self.crab_file = Some(crab_path.clone());
+        self.load_crab_file();
     }
     
-    fn load_bookmarks(&mut self) {
-        self.bookmarked_lines.clear();
+    fn load_crab_file(&mut self) {
+        self.bookmarks.clear();
         
-        if let Some(ref path) = self.bookmarks_file {
-            if let Ok(file) = fs::File::open(path) {
-                let reader = BufReader::new(file);
-                for line in reader.lines().flatten() {
-                    if let Ok(line_num) = line.trim().parse::<usize>() {
-                        self.bookmarked_lines.insert(line_num);
+        if let Some(ref path) = self.crab_file {
+            if let Ok(file_content) = fs::read_to_string(path) {
+                if let Ok(crab_data) = serde_json::from_str::<CrabFile>(&file_content) {
+                    // Load bookmarks
+                    for bookmark in crab_data.bookmarks {
+                        self.bookmarks.insert(bookmark.line_index, bookmark);
+                    }
+                    
+                    // Load favorite filters
+                    for (i, saved_filter) in crab_data.filters.iter().enumerate() {
+                        if i < self.filters.len() {
+                            self.filters[i].search_text = saved_filter.search_text.clone();
+                            self.filters[i].case_insensitive = saved_filter.case_insensitive;
+                            self.filters[i].is_favorite = saved_filter.is_favorite;
+                            self.filters[i].update_search_regex();
+                        }
                     }
                 }
             }
         }
     }
     
-    fn save_bookmarks(&self) {
-        if let Some(ref path) = self.bookmarks_file {
-            if let Ok(mut file) = fs::File::create(path) {
-                let mut bookmarks: Vec<usize> = self.bookmarked_lines.iter().copied().collect();
-                bookmarks.sort();
-                for line_num in bookmarks {
-                    let _ = writeln!(file, "{}", line_num);
-                }
+    fn save_crab_file(&self) {
+        if let Some(ref path) = self.crab_file {
+            let crab_data = CrabFile {
+                bookmarks: self.bookmarks.values().cloned().collect(),
+                filters: self.filters.iter().map(|f| SavedFilter {
+                    search_text: f.search_text.clone(),
+                    case_insensitive: f.case_insensitive,
+                    is_favorite: f.is_favorite,
+                }).collect(),
+            };
+            
+            if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
+                let _ = fs::write(path, json);
             }
         }
     }
     
     fn toggle_bookmark(&mut self, line_index: usize) {
-        if self.bookmarked_lines.contains(&line_index) {
-            self.bookmarked_lines.remove(&line_index);
+        if self.bookmarks.contains_key(&line_index) {
+            self.bookmarks.remove(&line_index);
         } else {
-            self.bookmarked_lines.insert(line_index);
+            let timestamp = if line_index < self.lines.len() {
+                self.lines[line_index].timestamp
+            } else {
+                None
+            };
+            
+            self.bookmarks.insert(line_index, Bookmark {
+                line_index,
+                name: format!("Line {}", if line_index < self.lines.len() {
+                    self.lines[line_index].line_number.to_string()
+                } else {
+                    line_index.to_string()
+                }),
+                timestamp,
+            });
         }
-        self.save_bookmarks();
+        self.save_crab_file();
+    }
+    
+    fn rename_bookmark(&mut self, line_index: usize, new_name: String) {
+        if let Some(bookmark) = self.bookmarks.get_mut(&line_index) {
+            bookmark.name = new_name;
+            self.save_crab_file();
+        }
+    }
+    
+    pub fn toggle_bookmarks_panel(&mut self) {
+        self.show_bookmarks_panel = !self.show_bookmarks_panel;
     }
     
     /// Render a specific filter view
@@ -290,6 +376,16 @@ impl LogView {
         }
         
         ui.heading(format!("Filter View {}", filter_index + 1));
+        
+        // Star/Unstar button
+        ui.horizontal(|ui| {
+            let star_text = if self.filters[filter_index].is_favorite { "⭐" } else { "☆" };
+            if ui.button(star_text).on_hover_text("Toggle favorite filter").clicked() {
+                self.filters[filter_index].is_favorite = !self.filters[filter_index].is_favorite;
+                self.save_crab_file();
+            }
+        });
+        
         ui.separator();
         
         // Search bar
@@ -403,7 +499,7 @@ impl LogView {
                         let line = &self.lines[line_idx];
                         
                         let is_selected = self.selected_line_index == Some(line_idx);
-                        let is_bookmarked = self.bookmarked_lines.contains(&line_idx);
+                        let is_bookmarked = self.bookmarks.contains_key(&line_idx);
                         let color = score_to_color(line.anomaly_score);
                         let line_number = line.line_number;
                         let timestamp_str = if let Some(ts) = line.timestamp {
@@ -575,7 +671,7 @@ impl LogView {
                         let line = &self.lines[line_idx];
                         
                         let is_selected = line_idx == selected_idx;
-                        let is_bookmarked = self.bookmarked_lines.contains(&line_idx);
+                        let is_bookmarked = self.bookmarks.contains_key(&line_idx);
                         let color = score_to_color(line.anomaly_score);
                         let timestamp = line.timestamp;
                         
@@ -656,6 +752,112 @@ impl LogView {
                     });
                 });
             });
+    }
+    
+    pub fn render_bookmarks(&mut self, ui: &mut Ui) {
+        ui.heading("Bookmarks");
+        ui.separator();
+        
+        if self.bookmarks.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.0);
+                ui.label("No bookmarks yet");
+                ui.label("Right-click on any line to bookmark it");
+            });
+            return;
+        }
+        
+        let mut bookmarks: Vec<_> = self.bookmarks.values().cloned().collect();
+        bookmarks.sort_by_key(|b| b.line_index);
+        
+        let mut to_delete = None;
+        let mut to_jump = None;
+        let mut should_save = false;
+        
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for bookmark in &bookmarks {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        // Click to jump to bookmark
+                        if ui.button("→").on_hover_text("Jump to line").clicked() {
+                            to_jump = Some((bookmark.line_index, bookmark.timestamp));
+                        }
+                        
+                        // Show line number and timestamp
+                        let line_text = if bookmark.line_index < self.lines.len() {
+                            format!("Line {} ({})", 
+                                self.lines[bookmark.line_index].line_number,
+                                if let Some(ts) = bookmark.timestamp {
+                                    ts.format("%H:%M:%S").to_string()
+                                } else {
+                                    "-".to_string()
+                                }
+                            )
+                        } else {
+                            format!("Line {}", bookmark.line_index)
+                        };
+                        ui.label(RichText::new(line_text).strong());
+                    });
+                    
+                    ui.horizontal(|ui| {
+                        // Editable name
+                        if self.editing_bookmark == Some(bookmark.line_index) {
+                            let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
+                            if response.lost_focus() || ui.button("✓").clicked() {
+                                if !self.bookmark_name_input.is_empty() {
+                                    if let Some(b) = self.bookmarks.get_mut(&bookmark.line_index) {
+                                        b.name = self.bookmark_name_input.clone();
+                                        should_save = true;
+                                    }
+                                }
+                                self.editing_bookmark = None;
+                                self.bookmark_name_input.clear();
+                            }
+                            if ui.button("✖").clicked() {
+                                self.editing_bookmark = None;
+                                self.bookmark_name_input.clear();
+                            }
+                        } else {
+                            ui.label(format!("📝 {}", bookmark.name));
+                            if ui.small_button("✏").on_hover_text("Rename").clicked() {
+                                self.editing_bookmark = Some(bookmark.line_index);
+                                self.bookmark_name_input = bookmark.name.clone();
+                            }
+                            if ui.small_button("🗑").on_hover_text("Delete bookmark").clicked() {
+                                to_delete = Some(bookmark.line_index);
+                            }
+                        }
+                    });
+                    
+                    // Show message preview
+                    if bookmark.line_index < self.lines.len() {
+                        let message = &self.lines[bookmark.line_index].message;
+                        let preview = if message.len() > 100 {
+                            format!("{}...", &message[..100])
+                        } else {
+                            message.clone()
+                        };
+                        ui.label(RichText::new(preview).italics().color(Color32::GRAY));
+                    }
+                });
+                ui.add_space(5.0);
+            }
+        });
+        
+        // Apply actions after the scroll area
+        if let Some(line_idx) = to_delete {
+            self.bookmarks.remove(&line_idx);
+            should_save = true;
+        }
+        
+        if let Some((line_idx, timestamp)) = to_jump {
+            self.selected_line_index = Some(line_idx);
+            self.selected_timestamp = timestamp;
+        }
+        
+        if should_save {
+            self.save_crab_file();
+        }
     }
 }
 

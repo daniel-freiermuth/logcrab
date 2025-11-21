@@ -847,6 +847,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -2220,6 +2221,8 @@ dependencies = [
  "puffin_egui",
  "regex",
  "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

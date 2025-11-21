@@ -236,6 +236,13 @@ impl eframe::App for LogCrabApp {
                     }
                 });
                 
+                ui.menu_button("View", |ui| {
+                    if ui.button("Toggle Bookmarks Panel").clicked() {
+                        self.log_view.toggle_bookmarks_panel();
+                        ui.close_menu();
+                    }
+                });
+                
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
                         self.status_message = "LogCrab - Log Anomaly Explorer v0.1.0".to_string();
@@ -285,6 +292,16 @@ impl eframe::App for LogCrabApp {
                     }
                 });
             } else {
+                // Optional bookmarks panel on the left
+                if self.log_view.is_bookmarks_panel_visible() {
+                    egui::SidePanel::left("bookmarks_panel")
+                        .resizable(true)
+                        .default_width(ui.available_width() * 0.2)
+                        .show_inside(ui, |ui| {
+                            self.log_view.render_bookmarks(ui);
+                        });
+                }
+                
                 // Dynamic layout: context view on left, N filtered views on right
                 egui::SidePanel::left("context_panel")
                     .resizable(true)
