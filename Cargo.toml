@@ -13,6 +13,7 @@ cpu-profiling = ["puffin", "puffin_egui"]
 eframe = "0.28"
 egui = "0.28"
 egui_extras = "0.28"
+egui_dock = "0.13"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.10"
 lazy_static = "1.4"
