@@ -507,9 +507,17 @@ impl LogView {
             return;
         }
         
-        // Get time range
-        let first_ts = self.lines.iter().find_map(|l| l.timestamp);
-        let last_ts = self.lines.iter().rev().find_map(|l| l.timestamp);
+        // Get time range from filtered lines only
+        let filtered_indices = &self.filters[filter_index].filtered_indices;
+        if filtered_indices.is_empty() {
+            ui.label("No logs match the current filter");
+            return;
+        }
+        
+        let first_ts = filtered_indices.iter()
+            .find_map(|&idx| self.lines[idx].timestamp);
+        let last_ts = filtered_indices.iter().rev()
+            .find_map(|&idx| self.lines[idx].timestamp);
         
         if first_ts.is_none() || last_ts.is_none() {
             ui.label("No timestamps available for histogram");
