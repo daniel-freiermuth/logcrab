@@ -724,6 +724,12 @@ impl LogView {
                         let mut row_clicked = false;
                         let mut row_right_clicked = false;
                         
+                        let bookmark_name = if is_bookmarked {
+                            self.bookmarks.get(&line_idx).map(|b| b.name.as_str())
+                        } else {
+                            None
+                        };
+                        
                         let bookmark_icon = if is_bookmarked { "★ " } else { "" };
                         let line_text = if is_selected {
                             format!("▶ {}{}", bookmark_icon, line_number)
@@ -731,7 +737,7 @@ impl LogView {
                             format!("{}{}", bookmark_icon, line_number)
                         };
                         
-                        self.render_table_cell(&mut row, filter_index, is_bookmarked, is_selected, &line_text, color, line_idx, "line", &mut row_clicked, &mut row_right_clicked);
+                        self.render_table_cell(&mut row, filter_index, is_bookmarked, is_selected, &line_text, color, line_idx, "line", &mut row_clicked, &mut row_right_clicked, bookmark_name, &line.raw);
                         
                         row.col(|ui| {
                             if is_bookmarked {
@@ -744,6 +750,7 @@ impl LogView {
                             ui.label(job);
                             
                             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("ts"), egui::Sense::click());
+                            let response = response.on_hover_text(&line.raw);
                             if response.clicked() { row_clicked = true; }
                             if response.secondary_clicked() { row_right_clicked = true; }
                         });
@@ -759,6 +766,7 @@ impl LogView {
                             ui.label(job);
                             
                             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("msg"), egui::Sense::click());
+                            let response = response.on_hover_text(&line.raw);
                             if response.clicked() { row_clicked = true; }
                             if response.secondary_clicked() { row_right_clicked = true; }
                         });
@@ -774,6 +782,7 @@ impl LogView {
                             ui.label(text);
                             
                             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("score"), egui::Sense::click());
+                            let response = response.on_hover_text(&line.raw);
                             if response.clicked() { row_clicked = true; }
                             if response.secondary_clicked() { row_right_clicked = true; }
                         });
@@ -789,7 +798,7 @@ impl LogView {
             });
     }
     
-    fn render_table_cell(&self, row: &mut egui_extras::TableRow, _filter_index: usize, is_bookmarked: bool, is_selected: bool, text: &str, color: Color32, line_idx: usize, id_suffix: &str, row_clicked: &mut bool, row_right_clicked: &mut bool) {
+    fn render_table_cell(&self, row: &mut egui_extras::TableRow, _filter_index: usize, is_bookmarked: bool, is_selected: bool, text: &str, color: Color32, line_idx: usize, id_suffix: &str, row_clicked: &mut bool, row_right_clicked: &mut bool, bookmark_name: Option<&str>, raw_line: &str) {
         row.col(|ui| {
             if is_bookmarked {
                 ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
@@ -802,9 +811,19 @@ impl LogView {
             } else {
                 RichText::new(text).color(color)
             };
-            ui.label(text);
+            let label_response = ui.label(text);
+            
+            // Show tooltip with bookmark name if this is the line number column and it's bookmarked
+            if id_suffix == "line" && is_bookmarked {
+                if let Some(name) = bookmark_name {
+                    label_response.on_hover_text(format!("📑 Bookmark: {}", name));
+                }
+            }
             
             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(id_suffix), egui::Sense::click());
+            // Show full raw line on hover for all cells
+            let response = response.on_hover_text(raw_line);
+            
             if response.clicked() { *row_clicked = true; }
             if response.secondary_clicked() { *row_right_clicked = true; }
         });
@@ -914,9 +933,17 @@ impl LogView {
                             } else {
                                 RichText::new(format!("{}{}", bookmark_icon, line.line_number)).color(color)
                             };
-                            ui.label(text);
+                            let label_response = ui.label(text);
+                            
+                            // Show bookmark name on hover if bookmarked
+                            if is_bookmarked {
+                                if let Some(bookmark) = self.bookmarks.get(&line_idx) {
+                                    label_response.on_hover_text(format!("📑 Bookmark: {}", bookmark.name));
+                                }
+                            }
                             
                             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ctx_line"), egui::Sense::click());
+                            let response = response.on_hover_text(&line.raw);
                             if response.clicked() { row_clicked = true; }
                             if response.secondary_clicked() { row_right_clicked = true; }
                         });
@@ -930,6 +957,7 @@ impl LogView {
                             ui.label(RichText::new(&timestamp_str).color(color));
                             
                             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ctx_ts"), egui::Sense::click());
+                            let response = response.on_hover_text(&line.raw);
                             if response.clicked() { row_clicked = true; }
                             if response.secondary_clicked() { row_right_clicked = true; }
                         });
@@ -943,6 +971,7 @@ impl LogView {
                             ui.label(RichText::new(&line.message).color(color));
                             
                             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ctx_msg"), egui::Sense::click());
+                            let response = response.on_hover_text(&line.raw);
                             if response.clicked() { row_clicked = true; }
                             if response.secondary_clicked() { row_right_clicked = true; }
                         });
@@ -956,6 +985,7 @@ impl LogView {
                             ui.label(RichText::new(format!("{:.1}", line.anomaly_score)).strong().color(color));
                             
                             let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("ctx_score"), egui::Sense::click());
+                            let response = response.on_hover_text(&line.raw);
                             if response.clicked() { row_clicked = true; }
                             if response.secondary_clicked() { row_right_clicked = true; }
                         });
