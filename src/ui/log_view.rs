@@ -1245,7 +1245,11 @@ impl LogView {
                             } else {
                                 ui.label(RichText::new(&bookmark.name).color(color).strong());
                                 let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_name"), egui::Sense::click());
-                                if response.clicked() { row_clicked = true; }
+                                if response.double_clicked() {
+                                    to_rename = Some(line_idx);
+                                } else if response.clicked() {
+                                    row_clicked = true;
+                                }
                             }
                         });
                         
