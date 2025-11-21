@@ -274,7 +274,17 @@ impl LogView {
     pub fn filter_count(&self) -> usize {
         self.filters.len()
     }
-    
+
+    /// Update the global selection and invalidate tracking for all filters
+    fn set_selection(&mut self, line_index: Option<usize>, timestamp: Option<DateTime<Local>>) {
+        self.selected_line_index = line_index;
+        self.selected_timestamp = timestamp;
+        // Invalidate selection tracking for all filters so they detect the change
+        for filter in &mut self.filters {
+            filter.last_rendered_selection = None;
+        }
+    }
+
     pub fn is_bookmarks_panel_visible(&self) -> bool {
         self.show_bookmarks_panel
     }
@@ -463,6 +473,8 @@ impl LogView {
                         scroll_to_row = Some(position);
                     }
                 }
+                // Always update the tracking, even if the line isn't visible in this filter
+                self.filters[filter_index].last_rendered_selection = self.selected_line_index;
             }
         }
         
@@ -603,8 +615,7 @@ impl LogView {
                     }
                     
                     if let Some(idx) = closest_idx {
-                        self.selected_line_index = Some(idx);
-                        self.selected_timestamp = self.lines[idx].timestamp;
+                        self.set_selection(Some(idx), self.lines[idx].timestamp);
                     }
                 }
             }
@@ -648,7 +659,6 @@ impl LogView {
                 
                 if let Some(row_idx) = scroll_to_row {
                     table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
-                    self.filters[filter_index].last_rendered_selection = self.selected_line_index;
                 }
                 
                 table.header(20.0, |mut header| {
@@ -916,8 +926,7 @@ impl LogView {
                         if row_right_clicked {
                             self.toggle_bookmark(line_idx);
                         } else if row_clicked {
-                            self.selected_line_index = Some(line_idx);
-                            self.selected_timestamp = timestamp;
+                            self.set_selection(Some(line_idx), timestamp);
                         }
                     });
                 });
@@ -1161,8 +1170,7 @@ impl LogView {
         }
         
         if let Some((line_idx, timestamp)) = to_jump {
-            self.selected_line_index = Some(line_idx);
-            self.selected_timestamp = timestamp;
+            self.set_selection(Some(line_idx), timestamp);
         }
         
         if should_save {
