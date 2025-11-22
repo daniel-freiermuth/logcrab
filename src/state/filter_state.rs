@@ -1,0 +1,200 @@
+// LogCrab - GPL-3.0-or-later
+// This file is part of LogCrab.
+//
+// Copyright (C) 2025 Daniel Freiermuth
+//
+// LogCrab is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// LogCrab is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
+
+use crate::parser::line::LogLine;
+use chrono::{DateTime, Local};
+use egui::Color32;
+use regex::{Regex, RegexBuilder};
+
+/// Represents a single filter view with its own search criteria and cached results
+pub struct FilterState {
+    pub search_text: String,
+    pub search_regex: Option<Regex>,
+    pub regex_error: Option<String>,
+    pub case_insensitive: bool,
+    pub filtered_indices: Vec<usize>,
+    pub filter_dirty: bool,
+    pub last_rendered_selection: Option<usize>,
+    pub highlight_color: Color32,
+    pub is_favorite: bool,
+    pub name: Option<String>,
+    pub should_focus_search: bool,
+}
+
+impl FilterState {
+    pub fn new(highlight_color: Color32) -> Self {
+        FilterState {
+            search_text: String::new(),
+            search_regex: None,
+            regex_error: None,
+            case_insensitive: false,
+            filtered_indices: Vec::new(),
+            filter_dirty: true,
+            last_rendered_selection: None,
+            highlight_color,
+            is_favorite: false,
+            name: None,
+            should_focus_search: false,
+        }
+    }
+    
+    /// Update the search regex based on current search text
+    pub fn update_search_regex(&mut self) {
+        if self.search_text.is_empty() {
+            self.search_regex = None;
+            self.regex_error = None;
+        } else {
+            match RegexBuilder::new(&self.search_text)
+                .case_insensitive(self.case_insensitive)
+                .build()
+            {
+                Ok(regex) => {
+                    self.search_regex = Some(regex);
+                    self.regex_error = None;
+                }
+                Err(e) => {
+                    self.search_regex = None;
+                    self.regex_error = Some(e.to_string());
+                }
+            }
+        }
+        self.filter_dirty = true;
+    }
+    
+    /// Check if a line matches the current search criteria
+    pub fn matches_search(&self, line: &LogLine) -> bool {
+        if let Some(ref regex) = self.search_regex {
+            regex.is_match(&line.message) || regex.is_match(&line.raw)
+        } else {
+            true
+        }
+    }
+    
+    /// Rebuild the filtered indices based on current filter criteria
+    pub fn rebuild_filtered_indices(
+        &mut self,
+        lines: &[LogLine],
+        min_score_filter: f64,
+        selected_line_index: Option<usize>,
+        selected_timestamp: Option<DateTime<Local>>,
+    ) -> Option<usize> {
+        #[cfg(feature = "cpu-profiling")]
+        puffin::profile_function!();
+        
+        self.filtered_indices.clear();
+        self.filtered_indices.reserve(lines.len() / 10);
+        
+        for (idx, line) in lines.iter().enumerate() {
+            if line.anomaly_score >= min_score_filter && self.matches_search(line) {
+                self.filtered_indices.push(idx);
+            }
+        }
+        self.filter_dirty = false;
+        
+        // Find selected line in filtered results
+        if let Some(selected_line_idx) = selected_line_index {
+            if let Some(position) = self.filtered_indices.iter().position(|&idx| idx == selected_line_idx) {
+                return Some(position);
+            }
+            
+            if let Some(selected_ts) = selected_timestamp {
+                return self.find_closest_timestamp_index(lines, selected_ts);
+            }
+        }
+        
+        None
+    }
+    
+    /// Find the closest line by timestamp in the filtered results
+    pub fn find_closest_timestamp_index(&self, lines: &[LogLine], target_ts: DateTime<Local>) -> Option<usize> {
+        if self.filtered_indices.is_empty() {
+            return None;
+        }
+        
+        let mut closest_idx = 0;
+        let mut min_diff = i64::MAX;
+        
+        for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
+            if let Some(line_ts) = lines[line_idx].timestamp {
+                let diff = (line_ts.timestamp() - target_ts.timestamp()).abs();
+                if diff < min_diff {
+                    min_diff = diff;
+                    closest_idx = filtered_idx;
+                }
+            }
+        }
+        
+        Some(closest_idx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::line::{LogLine, LogLevel};
+    use chrono::TimeZone;
+    
+    fn create_test_line(message: &str, score: f64) -> LogLine {
+        LogLine {
+            raw: message.to_string(),
+            timestamp: Some(Local.with_ymd_and_hms(2025, 11, 22, 10, 0, 0).unwrap()),
+            level: LogLevel::Info,
+            tag: "TEST".to_string(),
+            message: message.to_string(),
+            anomaly_score: score,
+            template_key: message.to_lowercase(),
+            line_number: 1,
+        }
+    }
+    
+    #[test]
+    fn test_filter_state_search() {
+        let mut state = FilterState::new(Color32::YELLOW);
+        
+        state.search_text = "ERROR".to_string();
+        state.update_search_regex();
+        
+        assert!(state.search_regex.is_some());
+        assert!(state.regex_error.is_none());
+        
+        let line = create_test_line("ERROR: Something failed", 50.0);
+        assert!(state.matches_search(&line));
+        
+        let line2 = create_test_line("INFO: All good", 20.0);
+        assert!(!state.matches_search(&line2));
+    }
+    
+    #[test]
+    fn test_rebuild_filtered_indices() {
+        let mut state = FilterState::new(Color32::YELLOW);
+        
+        let lines = vec![
+            create_test_line("ERROR: First", 80.0),
+            create_test_line("INFO: Second", 20.0),
+            create_test_line("ERROR: Third", 90.0),
+        ];
+        
+        state.search_text = "ERROR".to_string();
+        state.update_search_regex();
+        state.rebuild_filtered_indices(&lines, 0.0, None, None);
+        
+        assert_eq!(state.filtered_indices.len(), 2);
+        assert_eq!(state.filtered_indices[0], 0);
+        assert_eq!(state.filtered_indices[1], 2);
+    }
+}

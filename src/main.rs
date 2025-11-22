@@ -18,6 +18,8 @@ mod parser;
 mod anomaly;
 mod ui;
 mod app;
+mod core;
+mod state;
 
 use app::LogCrabApp;
 use clap::Parser;

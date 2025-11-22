@@ -16,6 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 use crate::parser::line::LogLine;
+use crate::state::FilterState;
 use egui::{Color32, RichText, Ui, text::LayoutJob, TextFormat};
 use egui_extras::{TableBuilder, Column};
 use regex::{Regex, RegexBuilder};
@@ -59,122 +60,7 @@ impl CrabFile {
     }
 }
 
-/// Represents a single filter view with its own search criteria and cached results
-struct FilterView {
-    search_text: String,
-    search_regex: Option<Regex>,
-    regex_error: Option<String>,
-    case_insensitive: bool,
-    filtered_indices: Vec<usize>,
-    filter_dirty: bool,
-    last_rendered_selection: Option<usize>,
-    highlight_color: Color32,
-    is_favorite: bool,
-    name: Option<String>,
-    should_focus_search: bool,  // Flag to focus search input on next render
-}
-
-impl FilterView {
-    fn new(highlight_color: Color32) -> Self {
-        FilterView {
-            search_text: String::new(),
-            search_regex: None,
-            regex_error: None,
-            case_insensitive: false,
-            filtered_indices: Vec::new(),
-            filter_dirty: true,
-            last_rendered_selection: None,
-            highlight_color,
-            is_favorite: false,
-            name: None,
-            should_focus_search: false,
-        }
-    }
-    
-    fn update_search_regex(&mut self) {
-        if self.search_text.is_empty() {
-            self.search_regex = None;
-            self.regex_error = None;
-        } else {
-            match RegexBuilder::new(&self.search_text)
-                .case_insensitive(self.case_insensitive)
-                .build()
-            {
-                Ok(regex) => {
-                    self.search_regex = Some(regex);
-                    self.regex_error = None;
-                }
-                Err(e) => {
-                    self.search_regex = None;
-                    self.regex_error = Some(e.to_string());
-                }
-            }
-        }
-        self.filter_dirty = true;
-    }
-    
-    fn matches_search(&self, line: &LogLine) -> bool {
-        if let Some(ref regex) = self.search_regex {
-            regex.is_match(&line.message) || regex.is_match(&line.raw)
-        } else {
-            true
-        }
-    }
-    
-    fn rebuild_filtered_indices(
-        &mut self,
-        lines: &[LogLine],
-        min_score_filter: f64,
-        selected_line_index: Option<usize>,
-        selected_timestamp: Option<DateTime<Local>>,
-    ) -> Option<usize> {
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_function!();
-        
-        self.filtered_indices.clear();
-        self.filtered_indices.reserve(lines.len() / 10);
-        
-        for (idx, line) in lines.iter().enumerate() {
-            if line.anomaly_score >= min_score_filter && self.matches_search(line) {
-                self.filtered_indices.push(idx);
-            }
-        }
-        self.filter_dirty = false;
-        
-        if let Some(selected_line_idx) = selected_line_index {
-            if let Some(position) = self.filtered_indices.iter().position(|&idx| idx == selected_line_idx) {
-                return Some(position);
-            }
-            
-            if let Some(selected_ts) = selected_timestamp {
-                return self.find_closest_timestamp_index(lines, selected_ts);
-            }
-        }
-        
-        None
-    }
-    
-    fn find_closest_timestamp_index(&self, lines: &[LogLine], target_ts: DateTime<Local>) -> Option<usize> {
-        if self.filtered_indices.is_empty() {
-            return None;
-        }
-        
-        let mut closest_idx = 0;
-        let mut min_diff = i64::MAX;
-        
-        for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
-            if let Some(line_ts) = lines[line_idx].timestamp {
-                let diff = (line_ts.timestamp() - target_ts.timestamp()).abs();
-                if diff < min_diff {
-                    min_diff = diff;
-                    closest_idx = filtered_idx;
-                }
-            }
-        }
-        
-        Some(closest_idx)
-    }
-    
+impl FilterState {
     fn highlight_matches(&self, text: &str, base_color: Color32) -> LayoutJob {
         let mut job = LayoutJob::default();
         
@@ -235,7 +121,7 @@ pub struct LogView {
     pub lines: Vec<LogLine>,
     pub min_score_filter: f64,
     // Multiple filter views
-    filters: Vec<FilterView>,
+    filters: Vec<FilterState>,
     // Selected line tracking
     selected_line_index: Option<usize>,
     selected_timestamp: Option<DateTime<Local>>,
@@ -253,8 +139,8 @@ impl LogView {
     pub fn new() -> Self {
         // Start with 2 filters by default (yellow and light blue highlights)
         let filters = vec![
-            FilterView::new(Color32::YELLOW),
-            FilterView::new(Color32::LIGHT_BLUE),
+            FilterState::new(Color32::YELLOW),
+            FilterState::new(Color32::LIGHT_BLUE),
         ];
         
         LogView {
@@ -282,7 +168,7 @@ impl LogView {
             Color32::from_rgb(150, 255, 255), // Light cyan
         ];
         let color = colors[self.filters.len() % colors.len()];
-        self.filters.push(FilterView::new(color));
+        self.filters.push(FilterState::new(color));
     }
     
     /// Focus the search input for a specific filter (called by Ctrl+L)
