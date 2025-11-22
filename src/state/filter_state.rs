@@ -20,6 +20,95 @@ use crate::parser::line::LogLine;
 use chrono::{DateTime, Local};
 use egui::{text::LayoutJob, Color32, TextFormat};
 use regex::{Regex, RegexBuilder};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, OnceLock};
+
+/// Request to compute filtered indices in background
+#[derive(Clone)]
+struct FilterRequest {
+    search_text: String,
+    case_insensitive: bool,
+    min_score: f64,
+    generation: u64,
+    lines: Arc<Vec<LogLine>>, // Shared read-only access to log lines
+    result_tx: Sender<FilterResult>, // Each filter has its own result channel
+}
+
+/// Result from background filtering
+struct FilterResult {
+    filtered_indices: Vec<usize>,
+    generation: u64,
+}
+
+/// Global filter worker channels
+struct GlobalFilterWorker {
+    request_tx: Sender<FilterRequest>,
+}
+
+impl GlobalFilterWorker {
+    fn get() -> &'static GlobalFilterWorker {
+        static INSTANCE: OnceLock<GlobalFilterWorker> = OnceLock::new();
+        INSTANCE.get_or_init(|| {
+            let (request_tx, request_rx) = channel::<FilterRequest>();
+            
+            // Spawn the single global worker thread
+            std::thread::spawn(move || {
+                Self::filter_worker(request_rx);
+            });
+            
+            GlobalFilterWorker { request_tx }
+        })
+    }
+    
+    /// Single background worker that processes all filter requests
+    fn filter_worker(request_rx: Receiver<FilterRequest>) {
+        // Keep processing requests forever
+        while let Ok(mut request) = request_rx.recv() {
+            // Check if there are newer requests in the queue
+            // Keep draining until we get the most recent one
+            while let Ok(newer_request) = request_rx.try_recv() {
+                request = newer_request;
+            }
+            
+            // Now process the most recent request
+            // Build regex for search
+            let search_regex = if !request.search_text.is_empty() {
+                RegexBuilder::new(&request.search_text)
+                    .case_insensitive(request.case_insensitive)
+                    .build()
+                    .ok()
+            } else {
+                None
+            };
+            
+            // Filter lines
+            let mut filtered_indices = Vec::with_capacity(request.lines.len() / 10);
+            for (idx, line) in request.lines.iter().enumerate() {
+                // Check score filter
+                if line.anomaly_score < request.min_score {
+                    continue;
+                }
+                
+                // Check search filter
+                if let Some(ref regex) = search_regex {
+                    if !regex.is_match(&line.message) && !regex.is_match(&line.raw) {
+                        continue;
+                    }
+                }
+                
+                filtered_indices.push(idx);
+            }
+            
+            let result = FilterResult {
+                filtered_indices,
+                generation: request.generation,
+            };
+            
+            // Send result back to the specific filter (ignore errors if filter is gone)
+            let _ = request.result_tx.send(result);
+        }
+    }
+}
 
 /// Represents a single filter view with its own search criteria and cached results
 pub struct FilterState {
@@ -34,10 +123,20 @@ pub struct FilterState {
     pub is_favorite: bool,
     pub name: Option<String>,
     pub should_focus_search: bool,
+    
+    // Background filtering - each filter has its own result channel
+    filter_result_rx: Receiver<FilterResult>,
+    filter_result_tx: Sender<FilterResult>, // Keep sender to create requests
+    filter_generation: u64,
+    pending_min_score: f64,
+    pub is_filtering: bool, // True when request sent but result not yet received
 }
 
 impl FilterState {
     pub fn new(highlight_color: Color32) -> Self {
+        // Create result channel for this specific filter
+        let (result_tx, filter_result_rx) = channel::<FilterResult>();
+        
         FilterState {
             search_text: String::new(),
             search_regex: None,
@@ -50,6 +149,11 @@ impl FilterState {
             is_favorite: false,
             name: None,
             should_focus_search: false,
+            filter_result_rx,
+            filter_result_tx: result_tx,
+            filter_generation: 0,
+            pending_min_score: 0.0,
+            is_filtering: false,
         }
     }
 
@@ -74,6 +178,52 @@ impl FilterState {
             }
         }
         self.filter_dirty = true;
+    }
+    
+    /// Send a filter request to the background thread
+    pub fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>, min_score_filter: f64) {
+        self.filter_generation += 1;
+        self.pending_min_score = min_score_filter;
+        
+        // Only mark as filtering if we have search text
+        // (min_score filtering is usually fast enough to not need indication)
+        if !self.search_text.is_empty() {
+            self.is_filtering = true;
+            eprintln!("DEBUG: Set is_filtering=true for search: '{}'", self.search_text);
+        }
+        
+        let request = FilterRequest {
+            search_text: self.search_text.clone(),
+            case_insensitive: self.case_insensitive,
+            min_score: min_score_filter,
+            generation: self.filter_generation,
+            lines,
+            result_tx: self.filter_result_tx.clone(),
+        };
+        
+        // Send request to global worker (ignore error if worker thread is gone)
+        let _ = GlobalFilterWorker::get().request_tx.send(request);
+    }
+    
+    /// Check for completed filter results from background thread
+    pub fn check_filter_results(&mut self) -> bool {
+        let mut updated = false;
+        
+        // Drain all available results, keeping only the newest
+        while let Ok(result) = self.filter_result_rx.try_recv() {
+            // Only apply results from the current or newer generation
+            if result.generation >= self.filter_generation {
+                self.filtered_indices = result.filtered_indices;
+                self.filter_dirty = false;
+                if self.is_filtering {
+                    eprintln!("DEBUG: Set is_filtering=false (result received)");
+                }
+                self.is_filtering = false; // Filtering complete
+                updated = true;
+            }
+        }
+        
+        updated
     }
 
     /// Check if a line matches the current search criteria
@@ -105,6 +255,7 @@ impl FilterState {
             }
         }
         self.filter_dirty = false;
+        self.is_filtering = false; // Clear filtering flag since we did it synchronously
 
         // Find selected line in filtered results
         if let Some(selected_line_idx) = selected_line_index {

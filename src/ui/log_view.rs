@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Named bookmark with optional description
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +54,7 @@ struct CrabFile {
 }
 
 pub struct LogView {
-    pub lines: Vec<LogLine>,
+    pub lines: Arc<Vec<LogLine>>,
     pub min_score_filter: f64,
     // Multiple filter views
     filters: Vec<FilterState>,
@@ -78,7 +79,7 @@ impl LogView {
         ];
 
         LogView {
-            lines: Vec::new(),
+            lines: Arc::new(Vec::new()),
             min_score_filter: 0.0,
             filters,
             selected_line_index: None,
@@ -102,6 +103,11 @@ impl LogView {
         ];
         let color = colors[self.filters.len() % colors.len()];
         self.filters.push(FilterState::new(color));
+    }
+
+    /// Check if any filter is currently processing in the background
+    pub fn is_any_filter_active(&self) -> bool {
+        self.filters.iter().any(|f| f.is_filtering)
     }
 
     /// Focus the search input for a specific filter (called by Ctrl+L)
@@ -195,9 +201,10 @@ impl LogView {
     }
 
     pub fn set_lines(&mut self, lines: Vec<LogLine>) {
-        self.lines = lines;
+        self.lines = Arc::new(lines);
+        // Request background filtering for all filters
         for filter in &mut self.filters {
-            filter.filter_dirty = true;
+            filter.request_filter_update(Arc::clone(&self.lines), self.min_score_filter);
         }
     }
 

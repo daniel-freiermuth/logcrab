@@ -23,6 +23,7 @@ use crate::ui::components::{
 };
 use chrono::DateTime;
 use egui::{Color32, Ui};
+use std::sync::Arc;
 use std::collections::HashMap;
 
 /// Events that can be emitted by the filter view
@@ -49,7 +50,7 @@ impl FilterView {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         ui: &mut Ui,
-        lines: &[LogLine],
+        lines: &Arc<Vec<LogLine>>,
         filter: &mut FilterState,
         filter_index: usize,
         all_filters: &[FilterState],
@@ -108,13 +109,16 @@ impl FilterView {
             match event {
                 FilterBarEvent::SearchChanged => {
                     filter.update_search_regex();
+                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
                 }
                 FilterBarEvent::CaseInsensitiveToggled => {
                     filter.update_search_regex();
+                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
                 }
                 FilterBarEvent::ClearClicked => {
                     filter.search_text.clear();
                     filter.update_search_regex();
+                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
                 }
                 FilterBarEvent::FavoriteSelected {
                     search_text,
@@ -123,14 +127,20 @@ impl FilterView {
                     filter.search_text = search_text;
                     filter.case_insensitive = case_insensitive;
                     filter.update_search_regex();
+                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
                 }
             }
         }
 
         ui.separator();
 
-        // Rebuild filtered indices if needed
-        let mut scroll_to_row = if filter.filter_dirty {
+        // Check for completed filter results from background thread
+        filter.check_filter_results();
+
+        // Rebuild filtered indices synchronously ONLY if:
+        // - filter_dirty is true (needs filtering)
+        // - AND we're NOT currently waiting for a background result
+        let mut scroll_to_row = if filter.filter_dirty && !filter.is_filtering {
             filter.rebuild_filtered_indices(
                 lines,
                 min_score_filter,

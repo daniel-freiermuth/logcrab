@@ -249,6 +249,13 @@ impl LogCrabApp {
                 let progress_bar = egui::ProgressBar::new(self.load_progress).show_percentage();
                 ui.add(progress_bar);
             }
+            
+            // Show filtering indicator if any filter is currently processing
+            if self.log_view.is_any_filter_active() {
+                ui.separator();
+                ui.spinner();
+                ui.label("Filtering...");
+            }
         });
     }
 
