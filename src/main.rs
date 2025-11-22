@@ -20,6 +20,7 @@ mod ui;
 mod app;
 mod core;
 mod state;
+mod input;
 
 use app::LogCrabApp;
 use clap::Parser;

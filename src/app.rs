@@ -18,6 +18,7 @@
 use crate::parser::line::LogLine;
 use crate::ui::LogView;
 use crate::core::{LogFileLoader, LoadMessage};
+use crate::input::{KeyboardBindings, ShortcutAction, InputAction, PaneDirection};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use egui_dock::{DockArea, DockState, TabViewer};
@@ -26,88 +27,6 @@ use egui_dock::{DockArea, DockState, TabViewer};
 enum TabType {
     Filter(usize),
     Bookmarks,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum ShortcutAction {
-    MoveUp,
-    MoveDown,
-    ToggleBookmark,
-    FocusSearch,
-    NewFilterTab,
-    CloseTab,
-    JumpToTop,
-    JumpToBottom,
-    FocusPaneLeft,
-    FocusPaneDown,
-    FocusPaneUp,
-    FocusPaneRight,
-}
-
-impl ShortcutAction {
-    fn name(&self) -> &'static str {
-        match self {
-            ShortcutAction::MoveUp => "Move Selection Up",
-            ShortcutAction::MoveDown => "Move Selection Down",
-            ShortcutAction::ToggleBookmark => "Toggle Bookmark",
-            ShortcutAction::FocusSearch => "Focus Search Input",
-            ShortcutAction::NewFilterTab => "New Filter Tab",
-            ShortcutAction::CloseTab => "Close Current Tab",
-            ShortcutAction::JumpToTop => "Jump to Top",
-            ShortcutAction::JumpToBottom => "Jump to Bottom",
-            ShortcutAction::FocusPaneLeft => "Focus Pane Left",
-            ShortcutAction::FocusPaneDown => "Focus Pane Down",
-            ShortcutAction::FocusPaneUp => "Focus Pane Up",
-            ShortcutAction::FocusPaneRight => "Focus Pane Right",
-        }
-    }
-    
-    fn description(&self) -> &'static str {
-        match self {
-            ShortcutAction::MoveUp => "Move to the previous log line in the active view",
-            ShortcutAction::MoveDown => "Move to the next log line in the active view",
-            ShortcutAction::ToggleBookmark => "Add or remove a bookmark on the selected line",
-            ShortcutAction::FocusSearch => "Jump to the search input field (filter tabs only). Press Enter to return focus to logs.",
-            ShortcutAction::NewFilterTab => "Create a new filter tab with search focused",
-            ShortcutAction::CloseTab => "Close the currently active tab (filter tabs only)",
-            ShortcutAction::JumpToTop => "Jump to the first log line (Vim-style: gg)",
-            ShortcutAction::JumpToBottom => "Jump to the last log line (Vim-style: G)",
-            ShortcutAction::FocusPaneLeft => "Move focus to the pane on the left (Vim-style: Shift+H)",
-            ShortcutAction::FocusPaneDown => "Move focus to the pane below (Vim-style: Shift+J)",
-            ShortcutAction::FocusPaneUp => "Move focus to the pane above (Vim-style: Shift+K)",
-            ShortcutAction::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
-        }
-    }
-}
-
-struct ShortcutBindings {
-    move_up: egui::KeyboardShortcut,
-    move_down: egui::KeyboardShortcut,
-    toggle_bookmark: egui::KeyboardShortcut,
-    focus_search: egui::KeyboardShortcut,
-    new_filter_tab: egui::KeyboardShortcut,
-    close_tab: egui::KeyboardShortcut,
-    focus_pane_left: egui::KeyboardShortcut,
-    focus_pane_down: egui::KeyboardShortcut,
-    focus_pane_up: egui::KeyboardShortcut,
-    focus_pane_right: egui::KeyboardShortcut,
-}
-
-impl Default for ShortcutBindings {
-    fn default() -> Self {
-        ShortcutBindings {
-            move_up: egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::K),             // Vim-style by default
-            move_down: egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::J),           // Vim-style by default
-            toggle_bookmark: egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space), // Space by default
-            focus_search: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::L),         // Ctrl+L by default
-            new_filter_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T),       // Ctrl+T by default
-            close_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::W),            // Ctrl+W by default
-            focus_pane_left: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::H),      // Vim-style by default
-            focus_pane_down: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::J),     // Shift+J by default
-            focus_pane_up: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::K),       // Shift+K by default
-            focus_pane_right: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::L),     // Vim-style by default
-        }
-    }
 }
 
 struct TabContent {
@@ -129,23 +48,14 @@ pub struct LogCrabApp {
     // Keyboard shortcut / input state
     active_tab: Option<TabType>,
     show_shortcuts_window: bool,
-    shortcut_bindings: ShortcutBindings,
+    shortcut_bindings: KeyboardBindings,
     pending_rebind: Option<ShortcutAction>,
     focus_search_next_frame: Option<usize>,  // Filter index to focus search input on next render
     request_new_filter_tab: bool,  // Request to create a new filter tab
     close_active_tab: bool,  // Request to close the currently active tab
-    last_g_press_time: Option<std::time::Instant>,  // Track when 'g' was last pressed for gg detection
     navigate_pane_direction: Option<PaneDirection>,  // Direction to navigate between panes
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum PaneDirection {
-    Left,
-    Right,
-    Up,
-    Down,
 }
 
 impl LogCrabApp {
@@ -179,12 +89,11 @@ impl LogCrabApp {
             add_tab_after: None,
             active_tab: None,
             show_shortcuts_window: false,
-            shortcut_bindings: ShortcutBindings::default(), // Vim-style (j/k) by default
+            shortcut_bindings: KeyboardBindings::default(), // Vim-style (j/k) by default
             pending_rebind: None,
             focus_search_next_frame: None,
             request_new_filter_tab: false,
             close_active_tab: false,
-            last_g_press_time: None,
             navigate_pane_direction: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
@@ -589,159 +498,53 @@ impl eframe::App for LogCrabApp {
         
         // Global keyboard shortcut handling (navigation). Skip if a text input wants keyboard.
         if !ctx.wants_keyboard_input() {
-            ctx.input(|i| {
-                let mut move_delta: i32 = 0;
-                
-                // If rebinding in progress, capture first pressed key or keyboard shortcut
-                if let Some(action) = self.pending_rebind {
-                    if let Some(event_key) = i.events.iter().find_map(|e| match e { 
-                        egui::Event::Key { key, pressed: true, .. } => Some(*key), 
-                        _ => None 
-                    }) {
-                        // Capture modifiers + key for all actions
-                        let shortcut = egui::KeyboardShortcut::new(i.modifiers, event_key);
-                        match action {
-                            ShortcutAction::MoveUp => self.shortcut_bindings.move_up = shortcut,
-                            ShortcutAction::MoveDown => self.shortcut_bindings.move_down = shortcut,
-                            ShortcutAction::ToggleBookmark => self.shortcut_bindings.toggle_bookmark = shortcut,
-                            ShortcutAction::FocusSearch => self.shortcut_bindings.focus_search = shortcut,
-                            ShortcutAction::NewFilterTab => self.shortcut_bindings.new_filter_tab = shortcut,
-                            ShortcutAction::CloseTab => self.shortcut_bindings.close_tab = shortcut,
-                            ShortcutAction::FocusPaneLeft => self.shortcut_bindings.focus_pane_left = shortcut,
-                            ShortcutAction::FocusPaneDown => self.shortcut_bindings.focus_pane_down = shortcut,
-                            ShortcutAction::FocusPaneUp => self.shortcut_bindings.focus_pane_up = shortcut,
-                            ShortcutAction::FocusPaneRight => self.shortcut_bindings.focus_pane_right = shortcut,
-                            // JumpToTop and JumpToBottom are hardcoded (gg/G), not rebindable
-                            ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom => {}
-                        }
-                        self.pending_rebind = None;
-                    }
-                } else {
-                    // New filter tab (Ctrl+T by default)
-                    if i.modifiers.matches_exact(self.shortcut_bindings.new_filter_tab.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.new_filter_tab.logical_key) {
-                        self.request_new_filter_tab = true;
-                    }
-                    
-                    // Close tab (Ctrl+W by default)
-                    if i.modifiers.matches_exact(self.shortcut_bindings.close_tab.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.close_tab.logical_key) {
-                        // Only allow closing filter tabs
-                        if let Some(ref active) = self.active_tab {
-                            if matches!(active, TabType::Filter(_)) {
-                                self.close_active_tab = true;
-                            }
-                        }
-                    }
-                    
-                    // Focus search input (only works in filter tabs)
-                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_search.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.focus_search.logical_key) {
+            let active_filter_index = match &self.active_tab {
+                Some(TabType::Filter(idx)) => Some(*idx),
+                _ => None,
+            };
+            
+            let actions = ctx.input(|i| {
+                self.shortcut_bindings.process_input(i, &mut self.pending_rebind, active_filter_index)
+            });
+            
+            // Execute all generated actions
+            for action in actions {
+                match action {
+                    InputAction::MoveSelection(delta) => {
                         if let Some(TabType::Filter(idx)) = &self.active_tab {
-                            // Will focus the search input in the next frame during render
-                            self.focus_search_next_frame = Some(*idx);
+                            self.log_view.move_selection_in_filter(*idx, delta);
                         }
                     }
-                    
-                    // Arrow keys always work (hardcoded, not configurable)
-                    if i.key_pressed(egui::Key::ArrowUp) { move_delta = -1; }
-                    if i.key_pressed(egui::Key::ArrowDown) { move_delta = 1; }
-                    
-                    // Configurable bindings (default: j/k vim-style)
-                    if i.modifiers.matches_exact(self.shortcut_bindings.move_up.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.move_up.logical_key) { 
-                        move_delta = -1; 
-                    }
-                    if i.modifiers.matches_exact(self.shortcut_bindings.move_down.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.move_down.logical_key) { 
-                        move_delta = 1; 
-                    }
-                    
-                    // Toggle bookmark (configurable, default: Space)
-                    if i.modifiers.matches_exact(self.shortcut_bindings.toggle_bookmark.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.toggle_bookmark.logical_key) {
+                    InputAction::ToggleBookmark => {
                         self.log_view.toggle_bookmark_for_selected();
                     }
-                    
-                    // Pane navigation (default: HJKL vim-style)
-                    // H = left, J = down, K = up, L = right
-                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_left.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.focus_pane_left.logical_key) {
-                        self.navigate_pane_direction = Some(PaneDirection::Left);
+                    InputAction::FocusSearch(idx) => {
+                        self.focus_search_next_frame = Some(idx);
                     }
-                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_down.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.focus_pane_down.logical_key) {
-                        self.navigate_pane_direction = Some(PaneDirection::Down);
+                    InputAction::NewFilterTab => {
+                        self.request_new_filter_tab = true;
                     }
-                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_up.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.focus_pane_up.logical_key) {
-                        self.navigate_pane_direction = Some(PaneDirection::Up);
-                    }
-                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_right.modifiers) 
-                        && i.key_pressed(self.shortcut_bindings.focus_pane_right.logical_key) {
-                        self.navigate_pane_direction = Some(PaneDirection::Right);
-                    }
-                    
-                    // Vim-style navigation: gg (jump to top) and G (jump to bottom)
-                    // gg: Press 'g' twice within 500ms
-                    if i.key_pressed(egui::Key::G) {
-                        let now = std::time::Instant::now();
-                        
-                        // Check if Shift is held (Shift+G = capital G)
-                        if i.modifiers.shift {
-                            // Shift+G: Jump to bottom
-                            if let Some(active) = &self.active_tab {
-                                match active {
-                                    TabType::Filter(idx) => {
-                                        self.log_view.jump_to_bottom_in_filter(*idx);
-                                    }
-                                    TabType::Bookmarks => {}
-                                }
-                            }
-                            self.last_g_press_time = None; // Clear gg state
-                        } else {
-                            // g without shift: Check for gg (double g)
-                            if let Some(last_press) = self.last_g_press_time {
-                                // If less than 500ms since last 'g', treat as gg (jump to top)
-                                if now.duration_since(last_press).as_millis() < 500 {
-                                    if let Some(active) = &self.active_tab {
-                                        match active {
-                                            TabType::Filter(idx) => {
-                                                self.log_view.jump_to_top_in_filter(*idx);
-                                            }
-                                            TabType::Bookmarks => {}
-                                        }
-                                    }
-                                    self.last_g_press_time = None; // Clear after successful gg
-                                } else {
-                                    // Too much time passed, start new gg sequence
-                                    self.last_g_press_time = Some(now);
-                                }
-                            } else {
-                                // First 'g' press, start timing
-                                self.last_g_press_time = Some(now);
-                            }
-                        }
-                    } else {
-                        // Clear gg state if any other key is pressed
-                        if i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })) {
-                            self.last_g_press_time = None;
+                    InputAction::CloseTab => {
+                        // Only allow closing filter tabs
+                        if let Some(TabType::Filter(_)) = &self.active_tab {
+                            self.close_active_tab = true;
                         }
                     }
-                    
-                    // Execute movement if any key was pressed
-                    if move_delta != 0 {
-                        if let Some(active) = &self.active_tab {
-                            match active {
-                                TabType::Filter(idx) => {
-                                    self.log_view.move_selection_in_filter(*idx, move_delta);
-                                }
-                                TabType::Bookmarks => {}
-                            }
+                    InputAction::JumpToTop => {
+                        if let Some(TabType::Filter(idx)) = &self.active_tab {
+                            self.log_view.jump_to_top_in_filter(*idx);
                         }
+                    }
+                    InputAction::JumpToBottom => {
+                        if let Some(TabType::Filter(idx)) = &self.active_tab {
+                            self.log_view.jump_to_bottom_in_filter(*idx);
+                        }
+                    }
+                    InputAction::NavigatePane(direction) => {
+                        self.navigate_pane_direction = Some(direction);
                     }
                 }
-            });
+            }
         }
         
         // Handle new filter tab request (Ctrl+T)
@@ -918,7 +721,7 @@ impl eframe::App for LogCrabApp {
                         
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button(egui::RichText::new("↺ Reset").size(10.0)).clicked() {
-                                self.shortcut_bindings = ShortcutBindings::default();
+                                self.shortcut_bindings = KeyboardBindings::default();
                                 self.pending_rebind = None;
                             }
                         });
@@ -967,18 +770,18 @@ impl eframe::App for LogCrabApp {
                             
                             // All bindings are now KeyboardShortcuts
                             let key_text = match action {
-                                ShortcutAction::MoveUp => format_shortcut(&self.shortcut_bindings.move_up),
-                                ShortcutAction::MoveDown => format_shortcut(&self.shortcut_bindings.move_down),
-                                ShortcutAction::ToggleBookmark => format_shortcut(&self.shortcut_bindings.toggle_bookmark),
-                                ShortcutAction::FocusSearch => format_shortcut(&self.shortcut_bindings.focus_search),
-                                ShortcutAction::NewFilterTab => format_shortcut(&self.shortcut_bindings.new_filter_tab),
-                                ShortcutAction::CloseTab => format_shortcut(&self.shortcut_bindings.close_tab),
+                                ShortcutAction::MoveUp => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::MoveUp)),
+                                ShortcutAction::MoveDown => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::MoveDown)),
+                                ShortcutAction::ToggleBookmark => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::ToggleBookmark)),
+                                ShortcutAction::FocusSearch => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusSearch)),
+                                ShortcutAction::NewFilterTab => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::NewFilterTab)),
+                                ShortcutAction::CloseTab => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::CloseTab)),
                                 ShortcutAction::JumpToTop => "gg".to_string(),
                                 ShortcutAction::JumpToBottom => "G".to_string(),
-                                ShortcutAction::FocusPaneLeft => format_shortcut(&self.shortcut_bindings.focus_pane_left),
-                                ShortcutAction::FocusPaneDown => format_shortcut(&self.shortcut_bindings.focus_pane_down),
-                                ShortcutAction::FocusPaneUp => format_shortcut(&self.shortcut_bindings.focus_pane_up),
-                                ShortcutAction::FocusPaneRight => format_shortcut(&self.shortcut_bindings.focus_pane_right),
+                                ShortcutAction::FocusPaneLeft => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneLeft)),
+                                ShortcutAction::FocusPaneDown => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneDown)),
+                                ShortcutAction::FocusPaneUp => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneUp)),
+                                ShortcutAction::FocusPaneRight => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneRight)),
                             };
                             
                             let badge_color = if self.pending_rebind == Some(*action) {
