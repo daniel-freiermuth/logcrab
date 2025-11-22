@@ -162,9 +162,9 @@ impl FilterView {
                             scroll_to_row = Some(closest_pos);
                         }
                     }
-                    // Mark as processed so we don't keep checking on every render
-                    filter.last_rendered_selection = selected_line_index;
                 }
+                // Mark as processed so we don't keep checking on every render
+                filter.last_rendered_selection = selected_line_index;
             }
         }
 
