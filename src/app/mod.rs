@@ -264,7 +264,22 @@ impl LogCrabApp {
                 ui.add_space(20.0);
                 ui.add_space(40.0);
 
-                if ui.button("Open Log File").clicked() {
+                if self.is_loading {
+                    // Show prominent loading indicator instead of button
+                    ui.add_space(20.0);
+                    ui.spinner();
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new(&self.status_message)
+                            .size(16.0)
+                            .strong(),
+                    );
+                    ui.add_space(10.0);
+                    let progress_bar = egui::ProgressBar::new(self.load_progress)
+                        .show_percentage()
+                        .desired_width(400.0);
+                    ui.add(progress_bar);
+                } else if ui.button("Open Log File").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("Log Files", &["log", "txt"])
                         .add_filter("All Files", &["*"])
