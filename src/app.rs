@@ -48,6 +48,10 @@ enum ShortcutAction {
     CloseTab,
     JumpToTop,
     JumpToBottom,
+    FocusPaneLeft,
+    FocusPaneDown,
+    FocusPaneUp,
+    FocusPaneRight,
 }
 
 impl ShortcutAction {
@@ -61,6 +65,10 @@ impl ShortcutAction {
             ShortcutAction::CloseTab => "Close Current Tab",
             ShortcutAction::JumpToTop => "Jump to Top",
             ShortcutAction::JumpToBottom => "Jump to Bottom",
+            ShortcutAction::FocusPaneLeft => "Focus Pane Left",
+            ShortcutAction::FocusPaneDown => "Focus Pane Down",
+            ShortcutAction::FocusPaneUp => "Focus Pane Up",
+            ShortcutAction::FocusPaneRight => "Focus Pane Right",
         }
     }
     
@@ -74,6 +82,10 @@ impl ShortcutAction {
             ShortcutAction::CloseTab => "Close the currently active tab (filter tabs only)",
             ShortcutAction::JumpToTop => "Jump to the first log line (Vim-style: gg)",
             ShortcutAction::JumpToBottom => "Jump to the last log line (Vim-style: G)",
+            ShortcutAction::FocusPaneLeft => "Move focus to the pane on the left (Vim-style: Shift+H)",
+            ShortcutAction::FocusPaneDown => "Move focus to the pane below (Vim-style: Shift+J)",
+            ShortcutAction::FocusPaneUp => "Move focus to the pane above (Vim-style: Shift+K)",
+            ShortcutAction::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
         }
     }
 }
@@ -85,6 +97,10 @@ struct ShortcutBindings {
     focus_search: egui::KeyboardShortcut,
     new_filter_tab: egui::KeyboardShortcut,
     close_tab: egui::KeyboardShortcut,
+    focus_pane_left: egui::KeyboardShortcut,
+    focus_pane_down: egui::KeyboardShortcut,
+    focus_pane_up: egui::KeyboardShortcut,
+    focus_pane_right: egui::KeyboardShortcut,
 }
 
 impl Default for ShortcutBindings {
@@ -96,6 +112,10 @@ impl Default for ShortcutBindings {
             focus_search: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::L),         // Ctrl+L by default
             new_filter_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T),       // Ctrl+T by default
             close_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::W),            // Ctrl+W by default
+            focus_pane_left: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::H),      // Vim-style by default
+            focus_pane_down: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::J),     // Shift+J by default
+            focus_pane_up: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::K),       // Shift+K by default
+            focus_pane_right: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::L),     // Vim-style by default
         }
     }
 }
@@ -125,8 +145,17 @@ pub struct LogCrabApp {
     request_new_filter_tab: bool,  // Request to create a new filter tab
     close_active_tab: bool,  // Request to close the currently active tab
     last_g_press_time: Option<std::time::Instant>,  // Track when 'g' was last pressed for gg detection
+    navigate_pane_direction: Option<PaneDirection>,  // Direction to navigate between panes
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PaneDirection {
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 impl LogCrabApp {
@@ -178,9 +207,121 @@ impl LogCrabApp {
             request_new_filter_tab: false,
             close_active_tab: false,
             last_g_press_time: None,
+            navigate_pane_direction: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
+    }
+    
+    /// Find a neighboring leaf node in the specified direction
+    fn find_neighbor(tree: &egui_dock::Tree<TabContent>, current: egui_dock::NodeIndex, direction: PaneDirection) -> Option<egui_dock::NodeIndex> {
+        let current_rect = tree[current].rect()?;
+        
+        // Track best candidate: (NodeIndex, distance, overlap)
+        let mut best: Option<(egui_dock::NodeIndex, f32, f32)> = None;
+        
+        for idx_usize in 0..tree.len() {
+            let idx = egui_dock::NodeIndex::from(idx_usize);
+            
+            if idx == current {
+                continue;
+            }
+            
+            let node = &tree[idx];
+            if !node.is_leaf() {
+                continue;
+            }
+            
+            let candidate_rect = match node.rect() {
+                Some(r) => r,
+                None => continue,
+            };
+            
+            // Check if candidate is in the correct direction and calculate distance and overlap
+            let (interesting_candidate, distance, overlap) = match direction {
+                PaneDirection::Left => {
+                    // Must be entirely to the left
+                    if candidate_rect.max.x > current_rect.min.x {
+                        (false, 0.0, 0.0)
+                    } else {
+                        // Require vertical overlap
+                        let overlap = (candidate_rect.max.y.min(current_rect.max.y))
+                            - (candidate_rect.min.y.max(current_rect.min.y));
+                        if overlap <= 0.0 {
+                            (false, 0.0, 0.0)
+                        } else {
+                            (true, current_rect.min.x - candidate_rect.max.x, overlap)
+                        }
+                    }
+                }
+                PaneDirection::Right => {
+                    // Must be entirely to the right
+                    if candidate_rect.min.x < current_rect.max.x {
+                        (false, 0.0, 0.0)
+                    } else {
+                        // Require vertical overlap
+                        let overlap = (candidate_rect.max.y.min(current_rect.max.y))
+                            - (candidate_rect.min.y.max(current_rect.min.y));
+                        if overlap <= 0.0 {
+                            (false, 0.0, 0.0)
+                        } else {
+                            (true, candidate_rect.min.x - current_rect.max.x, overlap)
+                        }
+                    }
+                }
+                PaneDirection::Up => {
+                    // Must be entirely above
+                    if candidate_rect.max.y > current_rect.min.y {
+                        (false, 0.0, 0.0)
+                    } else {
+                        // Require horizontal overlap
+                        let overlap = (candidate_rect.max.x.min(current_rect.max.x))
+                            - (candidate_rect.min.x.max(current_rect.min.x));
+                        if overlap <= 0.0 {
+                            (false, 0.0, 0.0)
+                        } else {
+                            (true, current_rect.min.y - candidate_rect.max.y, overlap)
+                        }
+                    }
+                }
+                PaneDirection::Down => {
+                    // Must be entirely below
+                    if candidate_rect.min.y < current_rect.max.y {
+                        (false, 0.0, 0.0)
+                    } else {
+                        // Require horizontal overlap
+                        let overlap = (candidate_rect.max.x.min(current_rect.max.x))
+                            - (candidate_rect.min.x.max(current_rect.min.x));
+                        if overlap <= 0.0 {
+                            (false, 0.0, 0.0)
+                        } else {
+                            (true, candidate_rect.min.y - current_rect.max.y, overlap)
+                        }
+                    }
+                }
+            };
+            
+            if !interesting_candidate {
+                continue;
+            }
+            
+            // Pick the best candidate: closest distance, then most overlap as tiebreaker
+            let is_better = best.map_or(true, |(_, best_dist, best_overlap)| {
+                const EPSILON: f32 = 1e-6;
+                if (distance - best_dist).abs() < EPSILON {
+                    // Distances are essentially equal, use overlap as tiebreaker
+                    overlap > best_overlap
+                } else {
+                    distance < best_dist
+                }
+            });
+            
+            if is_better {
+                best = Some((idx, distance, overlap));
+            }
+        }
+        
+        best.map(|(idx, _, _)| idx)
     }
     
     pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {
@@ -611,6 +752,10 @@ impl eframe::App for LogCrabApp {
                             ShortcutAction::FocusSearch => self.shortcut_bindings.focus_search = shortcut,
                             ShortcutAction::NewFilterTab => self.shortcut_bindings.new_filter_tab = shortcut,
                             ShortcutAction::CloseTab => self.shortcut_bindings.close_tab = shortcut,
+                            ShortcutAction::FocusPaneLeft => self.shortcut_bindings.focus_pane_left = shortcut,
+                            ShortcutAction::FocusPaneDown => self.shortcut_bindings.focus_pane_down = shortcut,
+                            ShortcutAction::FocusPaneUp => self.shortcut_bindings.focus_pane_up = shortcut,
+                            ShortcutAction::FocusPaneRight => self.shortcut_bindings.focus_pane_right = shortcut,
                             // JumpToTop and JumpToBottom are hardcoded (gg/G), not rebindable
                             ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom => {}
                         }
@@ -661,6 +806,25 @@ impl eframe::App for LogCrabApp {
                     if i.modifiers.matches_exact(self.shortcut_bindings.toggle_bookmark.modifiers) 
                         && i.key_pressed(self.shortcut_bindings.toggle_bookmark.logical_key) {
                         self.log_view.toggle_bookmark_for_selected();
+                    }
+                    
+                    // Pane navigation (default: HJKL vim-style)
+                    // H = left, J = down, K = up, L = right
+                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_left.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.focus_pane_left.logical_key) {
+                        self.navigate_pane_direction = Some(PaneDirection::Left);
+                    }
+                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_down.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.focus_pane_down.logical_key) {
+                        self.navigate_pane_direction = Some(PaneDirection::Down);
+                    }
+                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_up.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.focus_pane_up.logical_key) {
+                        self.navigate_pane_direction = Some(PaneDirection::Up);
+                    }
+                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_pane_right.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.focus_pane_right.logical_key) {
+                        self.navigate_pane_direction = Some(PaneDirection::Right);
                     }
                     
                     // Vim-style navigation: gg (jump to top) and G (jump to bottom)
@@ -751,6 +915,27 @@ impl eframe::App for LogCrabApp {
             // Focus the search input in the new tab
             self.focus_search_next_frame = Some(filter_index);
             self.active_tab = Some(TabType::Filter(filter_index));
+        }
+        
+        // Handle pane navigation (Shift+HJKL)
+        if let Some(direction) = self.navigate_pane_direction.take() {
+            let tree = self.dock_state.main_surface_mut();
+            
+            // Get the currently focused node
+            if let Some(current_node) = tree.focused_leaf() {
+                // Find the neighbor in the specified direction
+                let neighbor = Self::find_neighbor(tree, current_node, direction);
+                
+                // If we found a neighbor, focus it
+                if let Some(neighbor_idx) = neighbor {
+                    tree.set_focused_node(neighbor_idx);
+                    
+                    // Update active_tab to match the newly focused tab
+                    if let Some((_, tab)) = self.dock_state.find_active_focused() {
+                        self.active_tab = Some(tab.tab_type.clone());
+                    }
+                }
+            }
         }
 
         // Anomaly score explanation window
@@ -907,6 +1092,10 @@ impl eframe::App for LogCrabApp {
                         ShortcutAction::CloseTab,
                         ShortcutAction::JumpToTop,
                         ShortcutAction::JumpToBottom,
+                        ShortcutAction::FocusPaneLeft,
+                        ShortcutAction::FocusPaneRight,
+                        ShortcutAction::FocusPaneUp,
+                        ShortcutAction::FocusPaneDown,
                     ];
                     
                     for (i, action) in actions.iter().enumerate() {
@@ -943,6 +1132,10 @@ impl eframe::App for LogCrabApp {
                                 ShortcutAction::CloseTab => format_shortcut(&self.shortcut_bindings.close_tab),
                                 ShortcutAction::JumpToTop => "gg".to_string(),
                                 ShortcutAction::JumpToBottom => "G".to_string(),
+                                ShortcutAction::FocusPaneLeft => format_shortcut(&self.shortcut_bindings.focus_pane_left),
+                                ShortcutAction::FocusPaneDown => format_shortcut(&self.shortcut_bindings.focus_pane_down),
+                                ShortcutAction::FocusPaneUp => format_shortcut(&self.shortcut_bindings.focus_pane_up),
+                                ShortcutAction::FocusPaneRight => format_shortcut(&self.shortcut_bindings.focus_pane_right),
                             };
                             
                             let badge_color = if self.pending_rebind == Some(*action) {
