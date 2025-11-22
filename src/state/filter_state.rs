@@ -18,7 +18,7 @@
 
 use crate::parser::line::LogLine;
 use chrono::{DateTime, Local};
-use egui::Color32;
+use egui::{Color32, text::LayoutJob, TextFormat};
 use regex::{Regex, RegexBuilder};
 
 /// Represents a single filter view with its own search criteria and cached results
@@ -141,20 +141,74 @@ impl FilterState {
         
         Some(closest_idx)
     }
+    
+    /// Highlight search matches in text with background color
+    pub fn highlight_matches(&self, text: &str, base_color: Color32) -> LayoutJob {
+        let mut job = LayoutJob::default();
+        
+        if let Some(ref regex) = self.search_regex {
+            let mut last_end = 0;
+            
+            for mat in regex.find_iter(text) {
+                if mat.start() > last_end {
+                    job.append(
+                        &text[last_end..mat.start()],
+                        0.0,
+                        TextFormat {
+                            color: base_color,
+                            ..Default::default()
+                        },
+                    );
+                }
+                
+                job.append(
+                    mat.as_str(),
+                    0.0,
+                    TextFormat {
+                        color: Color32::BLACK,
+                        background: self.highlight_color,
+                        ..Default::default()
+                    },
+                );
+                
+                last_end = mat.end();
+            }
+            
+            if last_end < text.len() {
+                job.append(
+                    &text[last_end..],
+                    0.0,
+                    TextFormat {
+                        color: base_color,
+                        ..Default::default()
+                    },
+                );
+            }
+        } else {
+            job.append(
+                text,
+                0.0,
+                TextFormat {
+                    color: base_color,
+                    ..Default::default()
+                },
+            );
+        }
+        
+        job
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::line::{LogLine, LogLevel};
+    use crate::parser::line::LogLine;
     use chrono::TimeZone;
     
     fn create_test_line(message: &str, score: f64) -> LogLine {
         LogLine {
             raw: message.to_string(),
             timestamp: Some(Local.with_ymd_and_hms(2025, 11, 22, 10, 0, 0).unwrap()),
-            level: LogLevel::Info,
-            tag: "TEST".to_string(),
             message: message.to_string(),
             anomaly_score: score,
             template_key: message.to_lowercase(),

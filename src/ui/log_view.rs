@@ -60,63 +60,6 @@ impl CrabFile {
     }
 }
 
-impl FilterState {
-    fn highlight_matches(&self, text: &str, base_color: Color32) -> LayoutJob {
-        let mut job = LayoutJob::default();
-        
-        if let Some(ref regex) = self.search_regex {
-            let mut last_end = 0;
-            
-            for mat in regex.find_iter(text) {
-                if mat.start() > last_end {
-                    job.append(
-                        &text[last_end..mat.start()],
-                        0.0,
-                        TextFormat {
-                            color: base_color,
-                            ..Default::default()
-                        },
-                    );
-                }
-                
-                job.append(
-                    mat.as_str(),
-                    0.0,
-                    TextFormat {
-                        color: Color32::BLACK,
-                        background: self.highlight_color,
-                        ..Default::default()
-                    },
-                );
-                
-                last_end = mat.end();
-            }
-            
-            if last_end < text.len() {
-                job.append(
-                    &text[last_end..],
-                    0.0,
-                    TextFormat {
-                        color: base_color,
-                        ..Default::default()
-                    },
-                );
-            }
-        } else {
-            job.append(
-                text,
-                0.0,
-                TextFormat {
-                    color: base_color,
-                    ..Default::default()
-                },
-            );
-        }
-        
-        job
-    }
-}
-
 pub struct LogView {
     pub lines: Vec<LogLine>,
     pub min_score_filter: f64,
