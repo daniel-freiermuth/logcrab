@@ -2,6 +2,24 @@
 
 An intelligent log anomaly explorer built with Rust and egui. LogCrab helps developers and system administrators debug by automatically highlighting unusual, novel, or interesting log lines in large log files.
 
+## License
+
+LogCrab is free software licensed under the **GNU General Public License v3.0 or later (GPL-3.0-or-later)**.
+
+You are free to:
+ - Use the software for any purpose
+ - Study how it works and modify it
+ - Share it with others
+ - Distribute modified versions
+
+Under the conditions that:
+ - You preserve the same license for derivative works (copyleft)
+ - You include copyright and license notices
+ - You disclose source when distributing binaries
+
+See the `LICENSE` file for the complete text.
+
+
 ## Features
 
 - 🚀 **High Performance**: Handles 100-500 MB log files efficiently
