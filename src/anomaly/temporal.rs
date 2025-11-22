@@ -77,7 +77,7 @@ impl AnomalyScorer for TemporalScorer {
             }
         }
 
-        score.min(1.0).max(0.0) // Ensure score is always in [0, 1]
+        score.clamp(0.0, 1.0) // Ensure score is always in [0, 1]
     }
 
     fn update(&mut self, line: &LogLine) {
@@ -100,12 +100,6 @@ impl AnomalyScorer for TemporalScorer {
         if self.recent_timestamps.len() % 1000 == 0 {
             self.clean_old_entries(current_time);
         }
-    }
-
-    fn reset(&mut self) {
-        self.last_seen.clear();
-        self.recent_timestamps.clear();
-        self.window_template_counts.clear();
     }
 }
 

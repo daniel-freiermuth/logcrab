@@ -189,6 +189,7 @@ impl LogTable {
         events
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_line_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -253,6 +254,7 @@ impl LogTable {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -304,6 +306,7 @@ impl LogTable {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_message_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -349,6 +352,7 @@ impl LogTable {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_score_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,

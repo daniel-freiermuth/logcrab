@@ -196,7 +196,7 @@ impl LogCrabApp {
             }
 
             // Pick the best candidate: closest distance, then most overlap as tiebreaker
-            let is_better = best.map_or(true, |(_, best_dist, best_overlap)| {
+            let is_better = best.is_none_or(|(_, best_dist, best_overlap)| {
                 const EPSILON: f32 = 1e-6;
                 if (distance - best_dist).abs() < EPSILON {
                     // Distances are essentially equal, use overlap as tiebreaker
@@ -233,7 +233,7 @@ struct LogCrabTabViewer<'a> {
     close_active_tab: &'a mut bool,
 }
 
-impl<'a> TabViewer for LogCrabTabViewer<'a> {
+impl TabViewer for LogCrabTabViewer<'_> {
     type Tab = TabContent;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
@@ -318,10 +318,8 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
         // CRITICAL: Only update active_tab if the pointer is CURRENTLY in this UI's bounds
         // AND a click/press just happened in this frame
         // This prevents the last-rendered-tab from always winning
-        if ui.ui_contains_pointer() {
-            if ui.input(|i| i.pointer.any_pressed()) {
-                *self.active_tab = Some(tab.tab_type.clone());
-            }
+        if ui.ui_contains_pointer() && ui.input(|i| i.pointer.any_pressed()) {
+            *self.active_tab = Some(tab.tab_type.clone());
         }
     }
 }

@@ -127,16 +127,14 @@ impl LogView {
                 .filtered_indices
                 .iter()
                 .position(|&idx| idx == sel)
-                .unwrap_or_else(|| {
+                .unwrap_or({
                     // Fallback: choose nearest by timestamp if available later improvements; for now start at beginning
                     0
                 })
+        } else if delta >= 0 {
+            0
         } else {
-            if delta >= 0 {
-                0
-            } else {
-                filter.filtered_indices.len() - 1
-            }
+            filter.filtered_indices.len() - 1
         };
 
         let new_pos = if delta < 0 {
@@ -265,18 +263,14 @@ impl LogView {
     }
 
     fn toggle_bookmark(&mut self, line_index: usize) {
-        if self.bookmarks.contains_key(&line_index) {
-            self.bookmarks.remove(&line_index);
-        } else {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.bookmarks.entry(line_index) {
             let timestamp = if line_index < self.lines.len() {
                 self.lines[line_index].timestamp
             } else {
                 None
             };
 
-            self.bookmarks.insert(
-                line_index,
-                Bookmark {
+            e.insert(Bookmark {
                     line_index,
                     name: format!(
                         "Line {}",
@@ -287,8 +281,9 @@ impl LogView {
                         }
                     ),
                     timestamp,
-                },
-            );
+                });
+        } else {
+            self.bookmarks.remove(&line_index);
         }
         self.save_crab_file();
     }

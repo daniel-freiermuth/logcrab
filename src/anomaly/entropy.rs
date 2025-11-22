@@ -76,12 +76,6 @@ impl AnomalyScorer for EntropyScorer {
 
         self.sample_count += 1;
     }
-
-    fn reset(&mut self) {
-        self.avg_length = 0.0;
-        self.avg_entropy = 0.0;
-        self.sample_count = 0;
-    }
 }
 
 impl Default for EntropyScorer {

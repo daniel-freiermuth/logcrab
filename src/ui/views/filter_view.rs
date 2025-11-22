@@ -46,6 +46,7 @@ impl FilterView {
     /// Render a complete filter view
     ///
     /// Returns events that occurred during rendering
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         ui: &mut Ui,
         lines: &[LogLine],
@@ -141,27 +142,25 @@ impl FilterView {
         };
 
         // Check if selection changed
-        if scroll_to_row.is_none() && selected_line_index.is_some() {
-            if filter.last_rendered_selection != selected_line_index {
-                if let Some(selected_idx) = selected_line_index {
-                    if let Some(position) = filter
-                        .filtered_indices
-                        .iter()
-                        .position(|&idx| idx == selected_idx)
-                    {
-                        scroll_to_row = Some(position);
-                    } else {
-                        // Line not in filtered results - try to find closest by timestamp
-                        if let Some(selected_ts) = selected_timestamp {
-                            if let Some(closest_pos) =
-                                filter.find_closest_timestamp_index(lines, selected_ts)
-                            {
-                                scroll_to_row = Some(closest_pos);
-                            }
+        if scroll_to_row.is_none() && selected_line_index.is_some() && filter.last_rendered_selection != selected_line_index {
+            if let Some(selected_idx) = selected_line_index {
+                if let Some(position) = filter
+                    .filtered_indices
+                    .iter()
+                    .position(|&idx| idx == selected_idx)
+                {
+                    scroll_to_row = Some(position);
+                } else {
+                    // Line not in filtered results - try to find closest by timestamp
+                    if let Some(selected_ts) = selected_timestamp {
+                        if let Some(closest_pos) =
+                            filter.find_closest_timestamp_index(lines, selected_ts)
+                        {
+                            scroll_to_row = Some(closest_pos);
                         }
-                        // Mark as processed so we don't keep checking on every render
-                        filter.last_rendered_selection = selected_line_index;
                     }
+                    // Mark as processed so we don't keep checking on every render
+                    filter.last_rendered_selection = selected_line_index;
                 }
             }
         }

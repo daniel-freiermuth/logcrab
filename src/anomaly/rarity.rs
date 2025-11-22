@@ -43,7 +43,7 @@ impl AnomalyScorer for RarityScorer {
         // score = (1 - frequency)^0.5 gives better distribution
         let score = (1.0 - frequency).sqrt();
 
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 
     fn update(&mut self, line: &LogLine) {
@@ -52,11 +52,6 @@ impl AnomalyScorer for RarityScorer {
             .entry(line.template_key.clone())
             .or_insert(0) += 1;
         self.total_lines += 1;
-    }
-
-    fn reset(&mut self) {
-        self.template_counts.clear();
-        self.total_lines = 0;
     }
 }
 

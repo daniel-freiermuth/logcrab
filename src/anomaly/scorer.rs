@@ -8,9 +8,6 @@ pub trait AnomalyScorer: Send {
 
     /// Update internal state after scoring
     fn update(&mut self, line: &LogLine);
-
-    /// Reset the scorer state
-    fn reset(&mut self);
 }
 
 /// Composite scorer that combines multiple scoring strategies
@@ -49,12 +46,6 @@ impl CompositeScorer {
     pub fn update(&mut self, line: &LogLine) {
         for (scorer, _) in &mut self.scorers {
             scorer.update(line);
-        }
-    }
-
-    pub fn reset(&mut self) {
-        for (scorer, _) in &mut self.scorers {
-            scorer.reset();
         }
     }
 }

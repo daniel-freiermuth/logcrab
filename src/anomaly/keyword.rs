@@ -68,10 +68,6 @@ impl AnomalyScorer for KeywordScorer {
     fn update(&mut self, _line: &LogLine) {
         // Stateless - no updates needed
     }
-
-    fn reset(&mut self) {
-        // Stateless - nothing to reset
-    }
 }
 
 impl Default for KeywordScorer {

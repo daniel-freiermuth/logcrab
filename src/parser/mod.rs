@@ -22,9 +22,7 @@ pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
     // Try DLT format first
     if let Some(mut line) = dlt::parse_dlt(raw.clone(), line_number) {
         // Skip lines without timestamp
-        if line.timestamp.is_none() {
-            return None;
-        }
+        line.timestamp?;
         line.template_key = normalize_message(&line.message);
         return Some(line);
     }
@@ -32,9 +30,7 @@ pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
     // Try logcat format
     if let Some(mut line) = logcat::parse_logcat(raw.clone(), line_number) {
         // Skip lines without timestamp
-        if line.timestamp.is_none() {
-            return None;
-        }
+        line.timestamp?;
         line.template_key = normalize_message(&line.message);
         return Some(line);
     }
@@ -43,9 +39,7 @@ pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
     let mut line = generic::parse_generic(raw, line_number);
 
     // Skip lines without timestamp
-    if line.timestamp.is_none() {
-        return None;
-    }
+    line.timestamp?;
 
     line.template_key = normalize_message(&line.message);
     Some(line)

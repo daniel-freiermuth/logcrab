@@ -33,10 +33,10 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
     if let Some(caps) = ISO_TIMESTAMP.captures(remaining) {
         if let Ok(dt) = DateTime::parse_from_rfc3339(&caps[1]) {
             timestamp = Some(dt.with_timezone(&Local));
-            remaining = &remaining[caps[0].len()..].trim_start();
+            remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(dt) = DateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S%.3f") {
             timestamp = Some(dt.with_timezone(&Local));
-            remaining = &remaining[caps[0].len()..].trim_start();
+            remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Some(caps) = BRACKETED_TIMESTAMP.captures(remaining) {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S%.3f")
@@ -45,7 +45,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
                 naive,
                 *Local::now().offset(),
             ));
-            remaining = &remaining[caps[0].len()..].trim_start();
+            remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Some(caps) = LOGCAT_TIMESTAMP.captures(remaining) {
         // Logcat format: MM-DD HH:MM:SS.mmm (no year!)
@@ -58,7 +58,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
                 naive,
                 *Local::now().offset(),
             ));
-            remaining = &remaining[caps[0].len()..].trim_start();
+            remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Some(caps) = SYSLOG_TIMESTAMP.captures(remaining) {
         // Parse syslog format (assuming current year)
@@ -69,7 +69,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
                 naive,
                 *Local::now().offset(),
             ));
-            remaining = &remaining[caps[0].len()..].trim_start();
+            remaining = remaining[caps[0].len()..].trim_start();
         }
     }
 

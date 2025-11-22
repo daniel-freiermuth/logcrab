@@ -223,15 +223,11 @@ impl BookmarkPanel {
                                         egui::TextEdit::singleline(bookmark_name_input)
                                             .desired_width(ui.available_width() - 50.0),
                                     );
-                                    if response.lost_focus()
-                                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                    {
-                                        if !bookmark_name_input.is_empty() {
-                                            events.push(BookmarkPanelEvent::BookmarkRenamed {
-                                                line_index: line_idx,
-                                                new_name: bookmark_name_input.clone(),
-                                            });
-                                        }
+                                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !bookmark_name_input.is_empty() {
+                                        events.push(BookmarkPanelEvent::BookmarkRenamed {
+                                            line_index: line_idx,
+                                            new_name: bookmark_name_input.clone(),
+                                        });
                                     }
                                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                                         // Clear editing state - will be handled by parent
