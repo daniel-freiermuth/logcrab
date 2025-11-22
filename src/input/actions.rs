@@ -40,6 +40,9 @@ pub enum InputAction {
     /// Create a new filter tab
     NewFilterTab,
 
+    /// Create a new bookmarks tab next to the current tab
+    NewBookmarksTab,
+
     /// Close the currently active tab
     CloseTab,
 

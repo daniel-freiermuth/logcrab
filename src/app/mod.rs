@@ -65,6 +65,9 @@ pub struct LogCrabApp {
     /// Request to create a new filter tab
     request_new_filter_tab: bool,
 
+    /// Request to create a new bookmarks tab
+    request_new_bookmarks_tab: bool,
+
     /// Request to close the active tab
     close_active_tab: bool,
 
@@ -111,6 +114,7 @@ impl LogCrabApp {
             pending_rebind: None,
             focus_search_next_frame: None,
             request_new_filter_tab: false,
+            request_new_bookmarks_tab: false,
             close_active_tab: false,
             navigate_pane_direction: None,
             #[cfg(feature = "cpu-profiling")]
@@ -321,6 +325,19 @@ impl LogCrabApp {
             self.focus_search_next_frame = Some(filter_index);
             self.active_tab = Some(TabType::Filter(filter_index));
         }
+
+        // Handle new bookmarks tab request (Ctrl+B)
+        if self.request_new_bookmarks_tab {
+            self.request_new_bookmarks_tab = false;
+
+            self.dock_state.push_to_focused_leaf(TabContent {
+                tab_type: TabType::Bookmarks,
+                title: "Bookmarks".to_string(),
+            });
+
+            // Update active tab to the new bookmarks tab
+            self.active_tab = Some(TabType::Bookmarks);
+        }
     }
 
     /// Process keyboard shortcuts and execute actions
@@ -357,9 +374,12 @@ impl LogCrabApp {
                 InputAction::NewFilterTab => {
                     self.request_new_filter_tab = true;
                 }
+                InputAction::NewBookmarksTab => {
+                    self.request_new_bookmarks_tab = true;
+                }
                 InputAction::CloseTab => {
-                    // Only allow closing filter tabs
-                    if let Some(TabType::Filter(_)) = &self.active_tab {
+                    // Allow closing both filter and bookmark tabs
+                    if self.active_tab.is_some() {
                         self.close_active_tab = true;
                     }
                 }

@@ -27,6 +27,7 @@ pub enum ShortcutAction {
     ToggleBookmark,
     FocusSearch,
     NewFilterTab,
+    NewBookmarksTab,
     CloseTab,
     JumpToTop,
     JumpToBottom,
@@ -44,6 +45,7 @@ impl ShortcutAction {
             ShortcutAction::ToggleBookmark => "Toggle Bookmark",
             ShortcutAction::FocusSearch => "Focus Search Input",
             ShortcutAction::NewFilterTab => "New Filter Tab",
+            ShortcutAction::NewBookmarksTab => "New Bookmarks Tab",
             ShortcutAction::CloseTab => "Close Current Tab",
             ShortcutAction::JumpToTop => "Jump to Top",
             ShortcutAction::JumpToBottom => "Jump to Bottom",
@@ -61,7 +63,8 @@ impl ShortcutAction {
             ShortcutAction::ToggleBookmark => "Add or remove a bookmark on the selected line",
             ShortcutAction::FocusSearch => "Jump to the search input field (filter tabs only). Press Enter to return focus to logs.",
             ShortcutAction::NewFilterTab => "Create a new filter tab with search focused",
-            ShortcutAction::CloseTab => "Close the currently active tab (filter tabs only)",
+            ShortcutAction::NewBookmarksTab => "Create a new bookmarks tab next to the current tab",
+            ShortcutAction::CloseTab => "Close the currently active tab",
             ShortcutAction::JumpToTop => "Jump to the first log line (Vim-style: gg)",
             ShortcutAction::JumpToBottom => "Jump to the last log line (Vim-style: G)",
             ShortcutAction::FocusPaneLeft => "Move focus to the pane on the left (Vim-style: Shift+H)",
@@ -79,6 +82,7 @@ pub struct KeyboardBindings {
     toggle_bookmark: egui::KeyboardShortcut,
     focus_search: egui::KeyboardShortcut,
     new_filter_tab: egui::KeyboardShortcut,
+    new_bookmarks_tab: egui::KeyboardShortcut,
     close_tab: egui::KeyboardShortcut,
     focus_pane_left: egui::KeyboardShortcut,
     focus_pane_down: egui::KeyboardShortcut,
@@ -98,6 +102,7 @@ impl KeyboardBindings {
             ShortcutAction::ToggleBookmark => self.toggle_bookmark,
             ShortcutAction::FocusSearch => self.focus_search,
             ShortcutAction::NewFilterTab => self.new_filter_tab,
+            ShortcutAction::NewBookmarksTab => self.new_bookmarks_tab,
             ShortcutAction::CloseTab => self.close_tab,
             ShortcutAction::FocusPaneLeft => self.focus_pane_left,
             ShortcutAction::FocusPaneDown => self.focus_pane_down,
@@ -118,6 +123,7 @@ impl KeyboardBindings {
             ShortcutAction::ToggleBookmark => self.toggle_bookmark = shortcut,
             ShortcutAction::FocusSearch => self.focus_search = shortcut,
             ShortcutAction::NewFilterTab => self.new_filter_tab = shortcut,
+            ShortcutAction::NewBookmarksTab => self.new_bookmarks_tab = shortcut,
             ShortcutAction::CloseTab => self.close_tab = shortcut,
             ShortcutAction::FocusPaneLeft => self.focus_pane_left = shortcut,
             ShortcutAction::FocusPaneDown => self.focus_pane_down = shortcut,
@@ -158,6 +164,15 @@ impl KeyboardBindings {
             && input.key_pressed(self.new_filter_tab.logical_key)
         {
             actions.push(InputAction::NewFilterTab);
+        }
+
+        // New bookmarks tab (Ctrl+B by default)
+        if input
+            .modifiers
+            .matches_exact(self.new_bookmarks_tab.modifiers)
+            && input.key_pressed(self.new_bookmarks_tab.logical_key)
+        {
+            actions.push(InputAction::NewBookmarksTab);
         }
 
         // Close tab (Ctrl+W by default)
@@ -277,6 +292,7 @@ impl Default for KeyboardBindings {
             toggle_bookmark: egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space),
             focus_search: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::L),
             new_filter_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T),
+            new_bookmarks_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B),
             close_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::W),
             focus_pane_left: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::H),
             focus_pane_down: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::J),

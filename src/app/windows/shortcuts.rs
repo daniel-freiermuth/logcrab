@@ -44,6 +44,7 @@ pub fn render_shortcuts_window(
                 ShortcutAction::ToggleBookmark,
                 ShortcutAction::FocusSearch,
                 ShortcutAction::NewFilterTab,
+                ShortcutAction::NewBookmarksTab,
                 ShortcutAction::CloseTab,
                 ShortcutAction::JumpToTop,
                 ShortcutAction::JumpToBottom,
@@ -93,6 +94,9 @@ pub fn render_shortcuts_window(
                         ),
                         ShortcutAction::NewFilterTab => format_shortcut(
                             &shortcut_bindings.get_shortcut(ShortcutAction::NewFilterTab),
+                        ),
+                        ShortcutAction::NewBookmarksTab => format_shortcut(
+                            &shortcut_bindings.get_shortcut(ShortcutAction::NewBookmarksTab),
                         ),
                         ShortcutAction::CloseTab => format_shortcut(
                             &shortcut_bindings.get_shortcut(ShortcutAction::CloseTab),
