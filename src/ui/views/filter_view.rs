@@ -142,7 +142,10 @@ impl FilterView {
         };
 
         // Check if selection changed
-        if scroll_to_row.is_none() && selected_line_index.is_some() && filter.last_rendered_selection != selected_line_index {
+        if scroll_to_row.is_none()
+            && selected_line_index.is_some()
+            && filter.last_rendered_selection != selected_line_index
+        {
             if let Some(selected_idx) = selected_line_index {
                 if let Some(position) = filter
                     .filtered_indices

@@ -271,17 +271,17 @@ impl LogView {
             };
 
             e.insert(Bookmark {
-                    line_index,
-                    name: format!(
-                        "Line {}",
-                        if line_index < self.lines.len() {
-                            self.lines[line_index].line_number.to_string()
-                        } else {
-                            line_index.to_string()
-                        }
-                    ),
-                    timestamp,
-                });
+                line_index,
+                name: format!(
+                    "Line {}",
+                    if line_index < self.lines.len() {
+                        self.lines[line_index].line_number.to_string()
+                    } else {
+                        line_index.to_string()
+                    }
+                ),
+                timestamp,
+            });
         } else {
             self.bookmarks.remove(&line_index);
         }

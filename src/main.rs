@@ -1,7 +1,3 @@
-mod anomaly;
-mod app;
-mod core;
-mod input;
 /// LogCrab - An intelligent log anomaly explorer
 ///
 /// Copyright (C) 2025 Daniel Freiermuth
@@ -18,6 +14,10 @@ mod input;
 ///
 /// You should have received a copy of the GNU General Public License
 /// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+mod anomaly;
+mod app;
+mod core;
+mod input;
 mod parser;
 mod state;
 mod ui;
