@@ -1,6 +1,5 @@
 use crate::parser::line::LogLine;
 use crate::anomaly::scorer::AnomalyScorer;
-use std::collections::VecDeque;
 
 /// Message entropy scorer - measures information content
 /// Higher entropy = more unique/random content = potentially more interesting

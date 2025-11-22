@@ -15,7 +15,6 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
-use crate::parser::line::LogLine;
 use crate::ui::LogView;
 use crate::core::{LogFileLoader, LoadMessage};
 use crate::input::{KeyboardBindings, ShortcutAction, InputAction, PaneDirection};

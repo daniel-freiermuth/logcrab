@@ -52,15 +52,6 @@ struct CrabFile {
     filters: Vec<SavedFilter>,
 }
 
-impl CrabFile {
-    fn new() -> Self {
-        CrabFile {
-            bookmarks: Vec::new(),
-            filters: Vec::new(),
-        }
-    }
-}
-
 pub struct LogView {
     pub lines: Vec<LogLine>,
     pub min_score_filter: f64,
@@ -74,7 +65,6 @@ pub struct LogView {
     // .crab file path
     crab_file: Option<PathBuf>,
     // UI state
-    show_bookmarks_panel: bool,
     bookmark_name_input: String,
     editing_bookmark: Option<usize>,
 }
@@ -95,7 +85,6 @@ impl LogView {
             selected_timestamp: None,
             bookmarks: HashMap::new(),
             crab_file: None,
-            show_bookmarks_panel: false,
             bookmark_name_input: String::new(),
             editing_bookmark: None,
         }

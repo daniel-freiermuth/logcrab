@@ -19,7 +19,7 @@
 use egui::{Color32, Ui};
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
-use crate::ui::components::{FilterBar, FavoriteFilter, FilterBarEvent, Histogram, HistogramClickEvent, LogTable, LogTableEvent};
+use crate::ui::components::{FilterBar, FavoriteFilter, FilterBarEvent, Histogram, LogTable, LogTableEvent};
 use chrono::DateTime;
 use std::collections::HashMap;
 

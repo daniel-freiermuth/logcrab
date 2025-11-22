@@ -71,7 +71,7 @@ impl FilterBar {
             
             // Search input with ID for Ctrl+L focusing
             let search_id = ui.id().with("search_input");
-            let mut search_response = ui.add(
+            let search_response = ui.add(
                 egui::TextEdit::singleline(&mut filter.search_text)
                     .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
                     .desired_width(300.0)

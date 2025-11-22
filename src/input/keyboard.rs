@@ -70,11 +70,6 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
         }
     }
-    
-    /// Returns true if this action is hardcoded and cannot be rebound
-    pub fn is_hardcoded(&self) -> bool {
-        matches!(self, ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom)
-    }
 }
 
 /// Manages keyboard bindings and processes input events
@@ -95,11 +90,6 @@ pub struct KeyboardBindings {
 }
 
 impl KeyboardBindings {
-    /// Create default Vim-style bindings
-    pub fn new() -> Self {
-        Self::default()
-    }
-    
     /// Get the shortcut for a specific action
     pub fn get_shortcut(&self, action: ShortcutAction) -> egui::KeyboardShortcut {
         match action {
