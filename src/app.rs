@@ -31,11 +31,67 @@ enum LoadMessage {
     Error(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum TabType {
     Context,
     Filter(usize),
     Bookmarks,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ShortcutAction {
+    MoveUp,
+    MoveDown,
+    ToggleBookmark,
+    FocusSearch,
+    NewFilterTab,
+    CloseTab,
+}
+
+impl ShortcutAction {
+    fn name(&self) -> &'static str {
+        match self {
+            ShortcutAction::MoveUp => "Move Selection Up",
+            ShortcutAction::MoveDown => "Move Selection Down",
+            ShortcutAction::ToggleBookmark => "Toggle Bookmark",
+            ShortcutAction::FocusSearch => "Focus Search Input",
+            ShortcutAction::NewFilterTab => "New Filter Tab",
+            ShortcutAction::CloseTab => "Close Current Tab",
+        }
+    }
+    
+    fn description(&self) -> &'static str {
+        match self {
+            ShortcutAction::MoveUp => "Move to the previous log line in the active view",
+            ShortcutAction::MoveDown => "Move to the next log line in the active view",
+            ShortcutAction::ToggleBookmark => "Add or remove a bookmark on the selected line",
+            ShortcutAction::FocusSearch => "Jump to the search input field (filter tabs only). Press Enter to return focus to logs.",
+            ShortcutAction::NewFilterTab => "Create a new filter tab with search focused",
+            ShortcutAction::CloseTab => "Close the currently active tab (filter tabs only)",
+        }
+    }
+}
+
+struct ShortcutBindings {
+    move_up: egui::KeyboardShortcut,
+    move_down: egui::KeyboardShortcut,
+    toggle_bookmark: egui::KeyboardShortcut,
+    focus_search: egui::KeyboardShortcut,
+    new_filter_tab: egui::KeyboardShortcut,
+    close_tab: egui::KeyboardShortcut,
+}
+
+impl Default for ShortcutBindings {
+    fn default() -> Self {
+        ShortcutBindings {
+            move_up: egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::K),             // Vim-style by default
+            move_down: egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::J),           // Vim-style by default
+            toggle_bookmark: egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space), // Space by default
+            focus_search: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::L),         // Ctrl+L by default
+            new_filter_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T),       // Ctrl+T by default
+            close_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::W),            // Ctrl+W by default
+        }
+    }
 }
 
 struct TabContent {
@@ -54,6 +110,14 @@ pub struct LogCrabApp {
     dock_state: DockState<TabContent>,
     show_anomaly_explanation: bool,
     add_tab_after: Option<egui_dock::NodeIndex>,
+    // Keyboard shortcut / input state
+    active_tab: Option<TabType>,
+    show_shortcuts_window: bool,
+    shortcut_bindings: ShortcutBindings,
+    pending_rebind: Option<ShortcutAction>,
+    focus_search_next_frame: Option<usize>,  // Filter index to focus search input on next render
+    request_new_filter_tab: bool,  // Request to create a new filter tab
+    close_active_tab: bool,  // Request to close the currently active tab
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
 }
@@ -99,6 +163,13 @@ impl LogCrabApp {
             dock_state,
             show_anomaly_explanation: false,
             add_tab_after: None,
+            active_tab: None,
+            show_shortcuts_window: false,
+            shortcut_bindings: ShortcutBindings::default(), // Vim-style (j/k) by default
+            pending_rebind: None,
+            focus_search_next_frame: None,
+            request_new_filter_tab: false,
+            close_active_tab: false,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
@@ -230,6 +301,9 @@ impl LogCrabApp {
 struct LogCrabTabViewer<'a> {
     log_view: &'a mut LogView,
     add_tab_after: &'a mut Option<egui_dock::NodeIndex>,
+    active_tab: &'a mut Option<TabType>,
+    focus_search_next_frame: &'a mut Option<usize>,
+    close_active_tab: &'a mut bool,
 }
 
 impl<'a> TabViewer for LogCrabTabViewer<'a> {
@@ -270,17 +344,48 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
             ui.close_menu();
         }
     }
+    
+    fn force_close(&mut self, tab: &mut Self::Tab) -> bool {
+        // Close the tab if it's the active tab and close_active_tab flag is set
+        if *self.close_active_tab {
+            if let Some(ref active) = self.active_tab {
+                if &tab.tab_type == active {
+                    // Clear both the active tab and the close flag
+                    *self.active_tab = None;
+                    *self.close_active_tab = false;
+                    return true;
+                }
+            }
+        }
+        false
+    }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        // Render content
         match &tab.tab_type {
             TabType::Context => {
                 self.log_view.render_context(ui);
             }
             TabType::Filter(index) => {
+                // If Ctrl+L was pressed for this filter, set flag before rendering
+                if *self.focus_search_next_frame == Some(*index) {
+                    self.log_view.focus_search_input(*index);
+                    *self.focus_search_next_frame = None;
+                }
+                
                 self.log_view.render_filter(ui, *index);
             }
             TabType::Bookmarks => {
                 self.log_view.render_bookmarks(ui);
+            }
+        }
+        
+        // CRITICAL: Only update active_tab if the pointer is CURRENTLY in this UI's bounds
+        // AND a click/press just happened in this frame
+        // This prevents the last-rendered-tab from always winning
+        if ui.ui_contains_pointer() {
+            if ui.input(|i| i.pointer.any_pressed()) {
+                *self.active_tab = Some(tab.tab_type.clone());
             }
         }
     }
@@ -400,6 +505,10 @@ impl eframe::App for LogCrabApp {
                         self.show_anomaly_explanation = true;
                         ui.close_menu();
                     }
+                    if ui.button("Keyboard Shortcuts").clicked() {
+                        self.show_shortcuts_window = true;
+                        ui.close_menu();
+                    }
                 });
                 
                 #[cfg(feature = "cpu-profiling")]
@@ -449,7 +558,17 @@ impl eframe::App for LogCrabApp {
                     .show_inside(ui, &mut LogCrabTabViewer {
                         log_view: &mut self.log_view,
                         add_tab_after: &mut self.add_tab_after,
+                        active_tab: &mut self.active_tab,
+                        focus_search_next_frame: &mut self.focus_search_next_frame,
+                        close_active_tab: &mut self.close_active_tab,
                     });
+                
+                // If a tab was just closed, update active_tab to the currently focused tab
+                if self.active_tab.is_none() {
+                    if let Some((_, tab)) = self.dock_state.find_active_focused() {
+                        self.active_tab = Some(tab.tab_type.clone());
+                    }
+                }
             }
         });
         
@@ -464,6 +583,113 @@ impl eframe::App for LogCrabApp {
             });
         }
         
+        // Global keyboard shortcut handling (navigation). Skip if a text input wants keyboard.
+        if !ctx.wants_keyboard_input() {
+            ctx.input(|i| {
+                let mut move_delta: i32 = 0;
+                
+                // If rebinding in progress, capture first pressed key or keyboard shortcut
+                if let Some(action) = self.pending_rebind {
+                    if let Some(event_key) = i.events.iter().find_map(|e| match e { 
+                        egui::Event::Key { key, pressed: true, .. } => Some(*key), 
+                        _ => None 
+                    }) {
+                        // Capture modifiers + key for all actions
+                        let shortcut = egui::KeyboardShortcut::new(i.modifiers, event_key);
+                        match action {
+                            ShortcutAction::MoveUp => self.shortcut_bindings.move_up = shortcut,
+                            ShortcutAction::MoveDown => self.shortcut_bindings.move_down = shortcut,
+                            ShortcutAction::ToggleBookmark => self.shortcut_bindings.toggle_bookmark = shortcut,
+                            ShortcutAction::FocusSearch => self.shortcut_bindings.focus_search = shortcut,
+                            ShortcutAction::NewFilterTab => self.shortcut_bindings.new_filter_tab = shortcut,
+                            ShortcutAction::CloseTab => self.shortcut_bindings.close_tab = shortcut,
+                        }
+                        self.pending_rebind = None;
+                    }
+                } else {
+                    // New filter tab (Ctrl+T by default)
+                    if i.modifiers.matches_exact(self.shortcut_bindings.new_filter_tab.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.new_filter_tab.logical_key) {
+                        self.request_new_filter_tab = true;
+                    }
+                    
+                    // Close tab (Ctrl+W by default)
+                    if i.modifiers.matches_exact(self.shortcut_bindings.close_tab.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.close_tab.logical_key) {
+                        // Only allow closing filter tabs
+                        if let Some(ref active) = self.active_tab {
+                            if matches!(active, TabType::Filter(_)) {
+                                self.close_active_tab = true;
+                            }
+                        }
+                    }
+                    
+                    // Focus search input (only works in filter tabs)
+                    if i.modifiers.matches_exact(self.shortcut_bindings.focus_search.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.focus_search.logical_key) {
+                        if let Some(TabType::Filter(idx)) = &self.active_tab {
+                            // Will focus the search input in the next frame during render
+                            self.focus_search_next_frame = Some(*idx);
+                        }
+                    }
+                    
+                    // Arrow keys always work (hardcoded, not configurable)
+                    if i.key_pressed(egui::Key::ArrowUp) { move_delta = -1; }
+                    if i.key_pressed(egui::Key::ArrowDown) { move_delta = 1; }
+                    
+                    // Configurable bindings (default: j/k vim-style)
+                    if i.modifiers.matches_exact(self.shortcut_bindings.move_up.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.move_up.logical_key) { 
+                        move_delta = -1; 
+                    }
+                    if i.modifiers.matches_exact(self.shortcut_bindings.move_down.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.move_down.logical_key) { 
+                        move_delta = 1; 
+                    }
+                    
+                    // Toggle bookmark (configurable, default: Space)
+                    if i.modifiers.matches_exact(self.shortcut_bindings.toggle_bookmark.modifiers) 
+                        && i.key_pressed(self.shortcut_bindings.toggle_bookmark.logical_key) {
+                        self.log_view.toggle_bookmark_for_selected();
+                    }
+                    
+                    // Execute movement if any key was pressed
+                    if move_delta != 0 {
+                        if let Some(active) = &self.active_tab {
+                            match active {
+                                TabType::Filter(idx) => {
+                                    self.log_view.move_selection_in_filter(*idx, move_delta);
+                                }
+                                TabType::Context => {
+                                    self.log_view.move_selection_global(move_delta);
+                                }
+                                TabType::Bookmarks => {}
+                            }
+                        } else {
+                            // Default to context view if none tracked
+                            self.log_view.move_selection_global(move_delta);
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Handle new filter tab request (Ctrl+T)
+        if self.request_new_filter_tab {
+            self.request_new_filter_tab = false;
+            let filter_index = self.log_view.filter_count();
+            self.log_view.add_filter();
+            
+            self.dock_state.push_to_focused_leaf(TabContent {
+                tab_type: TabType::Filter(filter_index),
+                title: format!("Filter {}", filter_index + 1),
+            });
+            
+            // Focus the search input in the new tab
+            self.focus_search_next_frame = Some(filter_index);
+            self.active_tab = Some(TabType::Filter(filter_index));
+        }
+
         // Anomaly score explanation window
         if self.show_anomaly_explanation {
             egui::Window::new("Anomaly Score Calculation")
@@ -578,6 +804,124 @@ impl eframe::App for LogCrabApp {
                         ui.label(egui::RichText::new("Note:").strong());
                         ui.label("Scores are calculated during file loading in a single pass. The scorer learns patterns as it processes lines sequentially, so later lines benefit from more context.");
                     });
+                });
+        }
+
+        // Keyboard shortcuts window
+        if self.show_shortcuts_window {
+            egui::Window::new("⌨ Keyboard Shortcuts")
+                .open(&mut self.show_shortcuts_window)
+                .default_width(480.0)
+                .resizable(true)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.add_space(5.0);
+                    
+                    // Configurable keys section
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("⚙ Keyboard Bindings")
+                            .strong()
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(100, 150, 255)));
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(egui::RichText::new("↺ Reset").size(10.0)).clicked() {
+                                self.shortcut_bindings = ShortcutBindings::default();
+                                self.pending_rebind = None;
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                    
+                    // Iterate over all shortcut actions
+                    let actions = [
+                        ShortcutAction::MoveUp, 
+                        ShortcutAction::MoveDown, 
+                        ShortcutAction::ToggleBookmark, 
+                        ShortcutAction::FocusSearch,
+                        ShortcutAction::NewFilterTab,
+                        ShortcutAction::CloseTab,
+                    ];
+                    
+                    for (i, action) in actions.iter().enumerate() {
+                        if i > 0 {
+                            ui.add_space(8.0);
+                        }
+                        
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            
+                            // Helper function to format keyboard shortcut
+                            let format_shortcut = |shortcut: &egui::KeyboardShortcut| -> String {
+                                let modifiers_text = if shortcut.modifiers.ctrl {
+                                    "Ctrl+"
+                                } else if shortcut.modifiers.shift {
+                                    "Shift+"
+                                } else if shortcut.modifiers.alt {
+                                    "Alt+"
+                                } else if shortcut.modifiers.mac_cmd {
+                                    "Cmd+"
+                                } else {
+                                    ""
+                                };
+                                format!("{}{:?}", modifiers_text, shortcut.logical_key)
+                            };
+                            
+                            // All bindings are now KeyboardShortcuts
+                            let key_text = match action {
+                                ShortcutAction::MoveUp => format_shortcut(&self.shortcut_bindings.move_up),
+                                ShortcutAction::MoveDown => format_shortcut(&self.shortcut_bindings.move_down),
+                                ShortcutAction::ToggleBookmark => format_shortcut(&self.shortcut_bindings.toggle_bookmark),
+                                ShortcutAction::FocusSearch => format_shortcut(&self.shortcut_bindings.focus_search),
+                                ShortcutAction::NewFilterTab => format_shortcut(&self.shortcut_bindings.new_filter_tab),
+                                ShortcutAction::CloseTab => format_shortcut(&self.shortcut_bindings.close_tab),
+                            };
+                            
+                            let badge_color = if self.pending_rebind == Some(*action) {
+                                egui::Color32::from_rgb(255, 200, 100)
+                            } else {
+                                ui.visuals().code_bg_color
+                            };
+                            
+                            egui::Frame::none()
+                                .fill(badge_color)
+                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                .rounding(egui::Rounding::same(4.0))
+                                .stroke(egui::Stroke::new(1.0, ui.visuals().window_stroke.color))
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new(&key_text).size(13.0).strong());
+                                });
+                            
+                            ui.add_space(8.0);
+                            
+                            // Action info
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new(action.name()).strong());
+                                ui.label(egui::RichText::new(action.description())
+                                    .size(10.0)
+                                    .color(ui.visuals().weak_text_color()));
+                            });
+                            
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if self.pending_rebind == Some(*action) {
+                                    ui.colored_label(
+                                        egui::Color32::from_rgb(255, 200, 100),
+                                        egui::RichText::new("⌛ Press any key...").strong()
+                                    );
+                                    if ui.button("✖ Cancel").clicked() {
+                                        self.pending_rebind = None;
+                                    }
+                                } else {
+                                    if ui.button(egui::RichText::new("🔧 Rebind").size(11.0)).clicked() {
+                                        self.pending_rebind = Some(*action);
+                                    }
+                                }
+                            });
+                        });
+                    }
+                    
+                    ui.add_space(4.0);
                 });
         }
         

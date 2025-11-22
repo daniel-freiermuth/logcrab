@@ -71,6 +71,7 @@ struct FilterView {
     highlight_color: Color32,
     is_favorite: bool,
     name: Option<String>,
+    should_focus_search: bool,  // Flag to focus search input on next render
 }
 
 impl FilterView {
@@ -86,6 +87,7 @@ impl FilterView {
             highlight_color,
             is_favorite: false,
             name: None,
+            should_focus_search: false,
         }
     }
     
@@ -286,6 +288,55 @@ impl LogView {
         self.filters.push(FilterView::new(color));
     }
     
+    /// Focus the search input for a specific filter (called by Ctrl+L)
+    pub fn focus_search_input(&mut self, filter_index: usize) {
+        if filter_index < self.filters.len() {
+            self.filters[filter_index].should_focus_search = true;
+        }
+    }
+
+    /// Move selection among all lines (context view navigation)
+    pub fn move_selection_global(&mut self, delta: i32) {
+        if self.lines.is_empty() { return; }
+        let current = self.selected_line_index.unwrap_or_else(|| {
+            if delta >= 0 { 0 } else { self.lines.len() - 1 }
+        });
+        let new_index = if delta < 0 {
+            current.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            (current + delta as usize).min(self.lines.len().saturating_sub(1))
+        };
+        self.selected_line_index = Some(new_index);
+        self.selected_timestamp = self.lines[new_index].timestamp;
+    }
+
+    /// Move selection within a filtered view (only through matched indices)
+    pub fn move_selection_in_filter(&mut self, filter_index: usize, delta: i32) {
+        if filter_index >= self.filters.len() { return; }
+        let filter = &self.filters[filter_index];
+        if filter.filtered_indices.is_empty() { return; }
+
+        // Determine current position within filtered list
+        let current_pos = if let Some(sel) = self.selected_line_index {
+            filter.filtered_indices.iter().position(|&idx| idx == sel).unwrap_or_else(|| {
+                // Fallback: choose nearest by timestamp if available later improvements; for now start at beginning
+                0
+            })
+        } else {
+            if delta >= 0 { 0 } else { filter.filtered_indices.len() - 1 }
+        };
+
+        let new_pos = if delta < 0 {
+            current_pos.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            (current_pos + delta as usize).min(filter.filtered_indices.len() - 1)
+        };
+
+        let new_line_index = filter.filtered_indices[new_pos];
+        self.selected_line_index = Some(new_line_index);
+        self.selected_timestamp = self.lines[new_line_index].timestamp;
+    }
+    
     pub fn remove_filter(&mut self, index: usize) {
         if self.filters.len() > 1 && index < self.filters.len() {
             self.filters.remove(index);
@@ -409,6 +460,13 @@ impl LogView {
         self.show_bookmarks_panel = !self.show_bookmarks_panel;
     }
     
+    /// Toggle bookmark for the currently selected line
+    pub fn toggle_bookmark_for_selected(&mut self) {
+        if let Some(selected_idx) = self.selected_line_index {
+            self.toggle_bookmark(selected_idx);
+        }
+    }
+    
     /// Render a specific filter view
     pub fn render_filter(&mut self, ui: &mut Ui, filter_index: usize) {
         if filter_index >= self.filters.len() {
@@ -469,18 +527,34 @@ impl LogView {
                     });
             }
             
-            let search_response = ui.add(
+            // Search input with ID for Ctrl+L focusing
+            let search_id = ui.id().with("search_input");
+            let mut search_response = ui.add(
                 egui::TextEdit::singleline(&mut self.filters[filter_index].search_text)
                     .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
                     .desired_width(300.0)
+                    .id(search_id)
             );
+            
+            // Focus search input if requested by Ctrl+L
+            if self.filters[filter_index].should_focus_search {
+                search_response.request_focus();
+                self.filters[filter_index].should_focus_search = false;
+            }
+            
+            // If Enter is pressed in the search input, surrender focus
+            if search_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                ui.memory_mut(|mem| mem.surrender_focus(search_id));
+            }
             
             if search_response.changed() {
                 self.filters[filter_index].update_search_regex();
             }
             
-            let case_changed = ui.checkbox(&mut self.filters[filter_index].case_insensitive, "Case insensitive").changed();
-            if case_changed {
+            // Checkbox
+            let checkbox_response = ui.checkbox(&mut self.filters[filter_index].case_insensitive, "Case insensitive");
+            
+            if checkbox_response.changed() {
                 self.filters[filter_index].update_search_regex();
             }
             
