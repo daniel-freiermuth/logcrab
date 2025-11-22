@@ -23,7 +23,7 @@ use std::fs::File;
 use std::io::Read;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui_dock::{DockArea, DockState, TabViewer};
 
 enum LoadMessage {
     Progress(f32, String),
@@ -33,7 +33,6 @@ enum LoadMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum TabType {
-    Context,
     Filter(usize),
     Bookmarks,
 }
@@ -160,29 +159,17 @@ enum PaneDirection {
 
 impl LogCrabApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
-        // Initialize dock state with default layout
-        let mut dock_state = DockState::new(vec![
+        // Initialize dock state with two filter tabs by default
+        let dock_state = DockState::new(vec![
             TabContent {
-                tab_type: TabType::Context,
-                title: "Context View".to_string(),
-            }
+                tab_type: TabType::Filter(0),
+                title: "Filter 1".to_string(),
+            },
+            TabContent {
+                tab_type: TabType::Filter(1),
+                title: "Filter 2".to_string(),
+            },
         ]);
-        
-        // Add two filter tabs by default
-        let [_context, _filters] = dock_state.main_surface_mut().split_right(
-            NodeIndex::root(),
-            0.3,
-            vec![
-                TabContent {
-                    tab_type: TabType::Filter(0),
-                    title: "Filter 1".to_string(),
-                },
-                TabContent {
-                    tab_type: TabType::Filter(1),
-                    title: "Filter 2".to_string(),
-                },
-            ],
-        );
         
         LogCrabApp {
             log_view: LogView::new(),
@@ -512,9 +499,6 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         // Render content
         match &tab.tab_type {
-            TabType::Context => {
-                self.log_view.render_context(ui);
-            }
             TabType::Filter(index) => {
                 // If Ctrl+L was pressed for this filter, set flag before rendering
                 if *self.focus_search_next_frame == Some(*index) {
@@ -631,14 +615,6 @@ impl eframe::App for LogCrabApp {
                         self.dock_state.push_to_focused_leaf(TabContent {
                             tab_type: TabType::Bookmarks,
                             title: "Bookmarks".to_string(),
-                        });
-                        ui.close_menu();
-                    }
-                    
-                    if ui.button("Add Context Tab").clicked() {
-                        self.dock_state.push_to_focused_leaf(TabContent {
-                            tab_type: TabType::Context,
-                            title: "Context View".to_string(),
                         });
                         ui.close_menu();
                     }
@@ -840,9 +816,6 @@ impl eframe::App for LogCrabApp {
                                     TabType::Filter(idx) => {
                                         self.log_view.jump_to_bottom_in_filter(*idx);
                                     }
-                                    TabType::Context => {
-                                        self.log_view.jump_to_bottom_global();
-                                    }
                                     TabType::Bookmarks => {}
                                 }
                             }
@@ -856,9 +829,6 @@ impl eframe::App for LogCrabApp {
                                         match active {
                                             TabType::Filter(idx) => {
                                                 self.log_view.jump_to_top_in_filter(*idx);
-                                            }
-                                            TabType::Context => {
-                                                self.log_view.jump_to_top_global();
                                             }
                                             TabType::Bookmarks => {}
                                         }
@@ -887,14 +857,8 @@ impl eframe::App for LogCrabApp {
                                 TabType::Filter(idx) => {
                                     self.log_view.move_selection_in_filter(*idx, move_delta);
                                 }
-                                TabType::Context => {
-                                    self.log_view.move_selection_global(move_delta);
-                                }
                                 TabType::Bookmarks => {}
                             }
-                        } else {
-                            // Default to context view if none tracked
-                            self.log_view.move_selection_global(move_delta);
                         }
                     }
                 }
