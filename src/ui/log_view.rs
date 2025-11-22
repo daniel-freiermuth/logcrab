@@ -337,6 +337,44 @@ impl LogView {
         self.selected_timestamp = self.lines[new_line_index].timestamp;
     }
     
+    /// Jump to the first line in the global view (Vim-style gg)
+    pub fn jump_to_top_global(&mut self) {
+        if self.lines.is_empty() { return; }
+        self.selected_line_index = Some(0);
+        self.selected_timestamp = self.lines[0].timestamp;
+    }
+    
+    /// Jump to the last line in the global view (Vim-style G)
+    pub fn jump_to_bottom_global(&mut self) {
+        if self.lines.is_empty() { return; }
+        let last_index = self.lines.len() - 1;
+        self.selected_line_index = Some(last_index);
+        self.selected_timestamp = self.lines[last_index].timestamp;
+    }
+    
+    /// Jump to the first line in a filtered view (Vim-style gg)
+    pub fn jump_to_top_in_filter(&mut self, filter_index: usize) {
+        if filter_index >= self.filters.len() { return; }
+        let filter = &self.filters[filter_index];
+        if filter.filtered_indices.is_empty() { return; }
+        
+        let first_line_index = filter.filtered_indices[0];
+        self.selected_line_index = Some(first_line_index);
+        self.selected_timestamp = self.lines[first_line_index].timestamp;
+    }
+    
+    /// Jump to the last line in a filtered view (Vim-style G)
+    pub fn jump_to_bottom_in_filter(&mut self, filter_index: usize) {
+        if filter_index >= self.filters.len() { return; }
+        let filter = &self.filters[filter_index];
+        if filter.filtered_indices.is_empty() { return; }
+        
+        let last_pos = filter.filtered_indices.len() - 1;
+        let last_line_index = filter.filtered_indices[last_pos];
+        self.selected_line_index = Some(last_line_index);
+        self.selected_timestamp = self.lines[last_line_index].timestamp;
+    }
+    
     pub fn remove_filter(&mut self, index: usize) {
         if self.filters.len() > 1 && index < self.filters.len() {
             self.filters.remove(index);

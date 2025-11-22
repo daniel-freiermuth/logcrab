@@ -46,6 +46,8 @@ enum ShortcutAction {
     FocusSearch,
     NewFilterTab,
     CloseTab,
+    JumpToTop,
+    JumpToBottom,
 }
 
 impl ShortcutAction {
@@ -57,6 +59,8 @@ impl ShortcutAction {
             ShortcutAction::FocusSearch => "Focus Search Input",
             ShortcutAction::NewFilterTab => "New Filter Tab",
             ShortcutAction::CloseTab => "Close Current Tab",
+            ShortcutAction::JumpToTop => "Jump to Top",
+            ShortcutAction::JumpToBottom => "Jump to Bottom",
         }
     }
     
@@ -68,6 +72,8 @@ impl ShortcutAction {
             ShortcutAction::FocusSearch => "Jump to the search input field (filter tabs only). Press Enter to return focus to logs.",
             ShortcutAction::NewFilterTab => "Create a new filter tab with search focused",
             ShortcutAction::CloseTab => "Close the currently active tab (filter tabs only)",
+            ShortcutAction::JumpToTop => "Jump to the first log line (Vim-style: gg)",
+            ShortcutAction::JumpToBottom => "Jump to the last log line (Vim-style: G)",
         }
     }
 }
@@ -118,6 +124,7 @@ pub struct LogCrabApp {
     focus_search_next_frame: Option<usize>,  // Filter index to focus search input on next render
     request_new_filter_tab: bool,  // Request to create a new filter tab
     close_active_tab: bool,  // Request to close the currently active tab
+    last_g_press_time: Option<std::time::Instant>,  // Track when 'g' was last pressed for gg detection
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
 }
@@ -170,6 +177,7 @@ impl LogCrabApp {
             focus_search_next_frame: None,
             request_new_filter_tab: false,
             close_active_tab: false,
+            last_g_press_time: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
@@ -603,6 +611,8 @@ impl eframe::App for LogCrabApp {
                             ShortcutAction::FocusSearch => self.shortcut_bindings.focus_search = shortcut,
                             ShortcutAction::NewFilterTab => self.shortcut_bindings.new_filter_tab = shortcut,
                             ShortcutAction::CloseTab => self.shortcut_bindings.close_tab = shortcut,
+                            // JumpToTop and JumpToBottom are hardcoded (gg/G), not rebindable
+                            ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom => {}
                         }
                         self.pending_rebind = None;
                     }
@@ -651,6 +661,59 @@ impl eframe::App for LogCrabApp {
                     if i.modifiers.matches_exact(self.shortcut_bindings.toggle_bookmark.modifiers) 
                         && i.key_pressed(self.shortcut_bindings.toggle_bookmark.logical_key) {
                         self.log_view.toggle_bookmark_for_selected();
+                    }
+                    
+                    // Vim-style navigation: gg (jump to top) and G (jump to bottom)
+                    // gg: Press 'g' twice within 500ms
+                    if i.key_pressed(egui::Key::G) {
+                        let now = std::time::Instant::now();
+                        
+                        // Check if Shift is held (Shift+G = capital G)
+                        if i.modifiers.shift {
+                            // Shift+G: Jump to bottom
+                            if let Some(active) = &self.active_tab {
+                                match active {
+                                    TabType::Filter(idx) => {
+                                        self.log_view.jump_to_bottom_in_filter(*idx);
+                                    }
+                                    TabType::Context => {
+                                        self.log_view.jump_to_bottom_global();
+                                    }
+                                    TabType::Bookmarks => {}
+                                }
+                            }
+                            self.last_g_press_time = None; // Clear gg state
+                        } else {
+                            // g without shift: Check for gg (double g)
+                            if let Some(last_press) = self.last_g_press_time {
+                                // If less than 500ms since last 'g', treat as gg (jump to top)
+                                if now.duration_since(last_press).as_millis() < 500 {
+                                    if let Some(active) = &self.active_tab {
+                                        match active {
+                                            TabType::Filter(idx) => {
+                                                self.log_view.jump_to_top_in_filter(*idx);
+                                            }
+                                            TabType::Context => {
+                                                self.log_view.jump_to_top_global();
+                                            }
+                                            TabType::Bookmarks => {}
+                                        }
+                                    }
+                                    self.last_g_press_time = None; // Clear after successful gg
+                                } else {
+                                    // Too much time passed, start new gg sequence
+                                    self.last_g_press_time = Some(now);
+                                }
+                            } else {
+                                // First 'g' press, start timing
+                                self.last_g_press_time = Some(now);
+                            }
+                        }
+                    } else {
+                        // Clear gg state if any other key is pressed
+                        if i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })) {
+                            self.last_g_press_time = None;
+                        }
                     }
                     
                     // Execute movement if any key was pressed
@@ -842,6 +905,8 @@ impl eframe::App for LogCrabApp {
                         ShortcutAction::FocusSearch,
                         ShortcutAction::NewFilterTab,
                         ShortcutAction::CloseTab,
+                        ShortcutAction::JumpToTop,
+                        ShortcutAction::JumpToBottom,
                     ];
                     
                     for (i, action) in actions.iter().enumerate() {
@@ -876,6 +941,8 @@ impl eframe::App for LogCrabApp {
                                 ShortcutAction::FocusSearch => format_shortcut(&self.shortcut_bindings.focus_search),
                                 ShortcutAction::NewFilterTab => format_shortcut(&self.shortcut_bindings.new_filter_tab),
                                 ShortcutAction::CloseTab => format_shortcut(&self.shortcut_bindings.close_tab),
+                                ShortcutAction::JumpToTop => "gg".to_string(),
+                                ShortcutAction::JumpToBottom => "G".to_string(),
                             };
                             
                             let badge_color = if self.pending_rebind == Some(*action) {
@@ -904,6 +971,9 @@ impl eframe::App for LogCrabApp {
                             });
                             
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                // JumpToTop and JumpToBottom are hardcoded (gg/G) and cannot be rebound
+                                let is_rebindable = !matches!(action, ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom);
+                                
                                 if self.pending_rebind == Some(*action) {
                                     ui.colored_label(
                                         egui::Color32::from_rgb(255, 200, 100),
@@ -912,10 +982,14 @@ impl eframe::App for LogCrabApp {
                                     if ui.button("✖ Cancel").clicked() {
                                         self.pending_rebind = None;
                                     }
-                                } else {
+                                } else if is_rebindable {
                                     if ui.button(egui::RichText::new("🔧 Rebind").size(11.0)).clicked() {
                                         self.pending_rebind = Some(*action);
                                     }
+                                } else {
+                                    ui.label(egui::RichText::new("(hardcoded)")
+                                        .size(10.0)
+                                        .color(ui.visuals().weak_text_color()));
                                 }
                             });
                         });
