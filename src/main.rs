@@ -1,3 +1,7 @@
+mod anomaly;
+mod app;
+mod core;
+mod input;
 /// LogCrab - An intelligent log anomaly explorer
 ///
 /// Copyright (C) 2025 Daniel Freiermuth
@@ -15,12 +19,8 @@
 /// You should have received a copy of the GNU General Public License
 /// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 mod parser;
-mod anomaly;
-mod ui;
-mod app;
-mod core;
 mod state;
-mod input;
+mod ui;
 
 use app::LogCrabApp;
 use clap::Parser;
@@ -39,10 +39,14 @@ struct Args {
     /// Path to the log file to open
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
-    
+
     /// Path for the DHAT heap profiling output (only used when built with --features ram-profiling)
     #[cfg(feature = "ram-profiling")]
-    #[arg(long = "profile-output", value_name = "PROFILE_FILE", default_value = "dhat-heap.json")]
+    #[arg(
+        long = "profile-output",
+        value_name = "PROFILE_FILE",
+        default_value = "dhat-heap.json"
+    )]
     profile_output: PathBuf,
 }
 
@@ -54,23 +58,20 @@ fn main() -> eframe::Result<()> {
             .file_name(args_early.profile_output.clone())
             .build()
     };
-    
+
     #[cfg(feature = "cpu-profiling")]
     puffin::set_scopes_on(true);
-    
+
     let args = Args::parse();
-    
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1400.0, 800.0])
             .with_min_inner_size([800.0, 600.0])
-            .with_icon(
-                eframe::icon_data::from_png_bytes(&[])
-                    .unwrap_or_default()
-            ),
+            .with_icon(eframe::icon_data::from_png_bytes(&[]).unwrap_or_default()),
         ..Default::default()
     };
-    
+
     eframe::run_native(
         "LogCrab - Log Anomaly Explorer",
         native_options,

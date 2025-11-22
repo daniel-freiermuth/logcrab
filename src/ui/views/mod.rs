@@ -16,8 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-mod filter_view;
 mod bookmarks_view;
+mod filter_view;
 
-pub use filter_view::{FilterView, FilterViewEvent};
 pub use bookmarks_view::{BookmarksView, BookmarksViewEvent};
+pub use filter_view::{FilterView, FilterViewEvent};

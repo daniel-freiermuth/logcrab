@@ -15,12 +15,12 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
+use crate::core::{LoadMessage, LogFileLoader};
+use crate::input::{InputAction, KeyboardBindings, PaneDirection, ShortcutAction};
 use crate::ui::LogView;
-use crate::core::{LogFileLoader, LoadMessage};
-use crate::input::{KeyboardBindings, ShortcutAction, InputAction, PaneDirection};
+use egui_dock::{DockArea, DockState, TabViewer};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use egui_dock::{DockArea, DockState, TabViewer};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum TabType {
@@ -49,10 +49,10 @@ pub struct LogCrabApp {
     show_shortcuts_window: bool,
     shortcut_bindings: KeyboardBindings,
     pending_rebind: Option<ShortcutAction>,
-    focus_search_next_frame: Option<usize>,  // Filter index to focus search input on next render
-    request_new_filter_tab: bool,  // Request to create a new filter tab
-    close_active_tab: bool,  // Request to close the currently active tab
-    navigate_pane_direction: Option<PaneDirection>,  // Direction to navigate between panes
+    focus_search_next_frame: Option<usize>, // Filter index to focus search input on next render
+    request_new_filter_tab: bool,           // Request to create a new filter tab
+    close_active_tab: bool,                 // Request to close the currently active tab
+    navigate_pane_direction: Option<PaneDirection>, // Direction to navigate between panes
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
 }
@@ -70,7 +70,7 @@ impl LogCrabApp {
                 title: "Filter 2".to_string(),
             },
         ]);
-        
+
         LogCrabApp {
             log_view: LogView::new(),
             current_file: None,
@@ -98,31 +98,35 @@ impl LogCrabApp {
             show_profiler: false,
         }
     }
-    
+
     /// Find a neighboring leaf node in the specified direction
-    fn find_neighbor(tree: &egui_dock::Tree<TabContent>, current: egui_dock::NodeIndex, direction: PaneDirection) -> Option<egui_dock::NodeIndex> {
+    fn find_neighbor(
+        tree: &egui_dock::Tree<TabContent>,
+        current: egui_dock::NodeIndex,
+        direction: PaneDirection,
+    ) -> Option<egui_dock::NodeIndex> {
         let current_rect = tree[current].rect()?;
-        
+
         // Track best candidate: (NodeIndex, distance, overlap)
         let mut best: Option<(egui_dock::NodeIndex, f32, f32)> = None;
-        
+
         for idx_usize in 0..tree.len() {
             let idx = egui_dock::NodeIndex::from(idx_usize);
-            
+
             if idx == current {
                 continue;
             }
-            
+
             let node = &tree[idx];
             if !node.is_leaf() {
                 continue;
             }
-            
+
             let candidate_rect = match node.rect() {
                 Some(r) => r,
                 None => continue,
             };
-            
+
             // Check if candidate is in the correct direction and calculate distance and overlap
             let (interesting_candidate, distance, overlap) = match direction {
                 PaneDirection::Left => {
@@ -186,11 +190,11 @@ impl LogCrabApp {
                     }
                 }
             };
-            
+
             if !interesting_candidate {
                 continue;
             }
-            
+
             // Pick the best candidate: closest distance, then most overlap as tiebreaker
             let is_better = best.map_or(true, |(_, best_dist, best_overlap)| {
                 const EPSILON: f32 = 1e-6;
@@ -201,20 +205,20 @@ impl LogCrabApp {
                     distance < best_dist
                 }
             });
-            
+
             if is_better {
                 best = Some((idx, distance, overlap));
             }
         }
-        
+
         best.map(|(idx, _, _)| idx)
     }
-    
+
     pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {
         self.is_loading = true;
         self.load_progress = 0.0;
         self.status_message = format!("Loading {}...", path.display());
-        
+
         let rx = LogFileLoader::load_async(path, ctx);
         self.load_receiver = Some(rx);
     }
@@ -241,18 +245,24 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
         }
         (&tab.title).into()
     }
-    
-    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab, _surface: egui_dock::SurfaceIndex, _node: egui_dock::NodeIndex) {
+
+    fn context_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        tab: &mut Self::Tab,
+        _surface: egui_dock::SurfaceIndex,
+        _node: egui_dock::NodeIndex,
+    ) {
         // Only allow renaming filter tabs
         if let TabType::Filter(index) = &tab.tab_type {
             ui.label("Filter Tab");
             ui.separator();
-            
+
             if ui.button("✏ Rename").clicked() {
                 // Will be handled in the main UI
                 ui.close_menu();
             }
-            
+
             if ui.button("🗑 Clear Name").clicked() {
                 self.log_view.set_filter_name(*index, None);
                 ui.close_menu();
@@ -260,14 +270,19 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
         }
     }
 
-    fn add_popup(&mut self, ui: &mut egui::Ui, _surface: egui_dock::SurfaceIndex, node: egui_dock::NodeIndex) {
+    fn add_popup(
+        &mut self,
+        ui: &mut egui::Ui,
+        _surface: egui_dock::SurfaceIndex,
+        node: egui_dock::NodeIndex,
+    ) {
         ui.set_min_width(120.0);
         if ui.button("➕ Filter Tab").clicked() {
             *self.add_tab_after = Some(node);
             ui.close_menu();
         }
     }
-    
+
     fn force_close(&mut self, tab: &mut Self::Tab) -> bool {
         // Close the tab if it's the active tab and close_active_tab flag is set
         if *self.close_active_tab {
@@ -292,14 +307,14 @@ impl<'a> TabViewer for LogCrabTabViewer<'a> {
                     self.log_view.focus_search_input(*index);
                     *self.focus_search_next_frame = None;
                 }
-                
+
                 self.log_view.render_filter(ui, *index);
             }
             TabType::Bookmarks => {
                 self.log_view.render_bookmarks(ui);
             }
         }
-        
+
         // CRITICAL: Only update active_tab if the pointer is CURRENTLY in this UI's bounds
         // AND a click/press just happened in this frame
         // This prevents the last-rendered-tab from always winning
@@ -315,7 +330,7 @@ impl eframe::App for LogCrabApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
-        
+
         // Load initial file if provided via command line
         if let Some(file) = self.initial_file.take() {
             if file.exists() {
@@ -324,7 +339,7 @@ impl eframe::App for LogCrabApp {
                 self.status_message = format!("Error: File not found: {}", file.display());
             }
         }
-        
+
         // Check for messages from background thread
         let mut should_clear_receiver = false;
         if let Some(ref rx) = self.load_receiver {
@@ -337,7 +352,7 @@ impl eframe::App for LogCrabApp {
                     LoadMessage::Complete(lines, path) => {
                         self.log_view.set_lines(lines);
                         let additional_filters = self.log_view.set_bookmarks_file(path.clone());
-                        
+
                         // Create tabs for any additional filters loaded from the crab file
                         for i in 0..additional_filters {
                             let filter_index = 2 + i; // First 2 filters already have tabs
@@ -346,11 +361,13 @@ impl eframe::App for LogCrabApp {
                                 title: format!("Filter {}", filter_index + 1),
                             });
                         }
-                        
+
                         self.current_file = Some(path.clone());
-                        self.status_message = format!("Loaded {} successfully with {} lines", 
-                            path.display(), 
-                            self.log_view.lines.len());
+                        self.status_message = format!(
+                            "Loaded {} successfully with {} lines",
+                            path.display(),
+                            self.log_view.lines.len()
+                        );
                         self.is_loading = false;
                         self.load_progress = 1.0;
                         should_clear_receiver = true;
@@ -367,7 +384,7 @@ impl eframe::App for LogCrabApp {
         if should_clear_receiver {
             self.load_receiver = None;
         }
-        
+
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -375,18 +392,18 @@ impl eframe::App for LogCrabApp {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("Log Files", &["log", "txt"])
                             .add_filter("All Files", &["*"])
-                            .pick_file() 
+                            .pick_file()
                         {
                             self.load_file(path, ctx.clone());
                         }
                         ui.close_menu();
                     }
-                    
+
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
-                
+
                 ui.menu_button("View", |ui| {
                     if ui.button("Add Filter Tab").clicked() {
                         let filter_index = self.log_view.filter_count();
@@ -397,7 +414,7 @@ impl eframe::App for LogCrabApp {
                         });
                         ui.close_menu();
                     }
-                    
+
                     if ui.button("Add Bookmarks Tab").clicked() {
                         self.dock_state.push_to_focused_leaf(TabContent {
                             tab_type: TabType::Bookmarks,
@@ -406,13 +423,14 @@ impl eframe::App for LogCrabApp {
                         ui.close_menu();
                     }
                 });
-                
+
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
-                        self.status_message = "LogCrab 🦀 - Log Anomaly Explorer v0.1.0".to_string();
+                        self.status_message =
+                            "LogCrab 🦀 - Log Anomaly Explorer v0.1.0".to_string();
                         ui.close_menu();
                     }
-                    
+
                     if ui.button("Anomaly Score Calculation").clicked() {
                         self.show_anomaly_explanation = true;
                         ui.close_menu();
@@ -422,43 +440,42 @@ impl eframe::App for LogCrabApp {
                         ui.close_menu();
                     }
                 });
-                
+
                 #[cfg(feature = "cpu-profiling")]
                 ui.menu_button("Profiling", |ui| {
                     ui.checkbox(&mut self.show_profiler, "Show CPU Profiler");
                 });
             });
         });
-        
+
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(&self.status_message);
-                
+
                 if self.is_loading {
                     ui.separator();
-                    let progress_bar = egui::ProgressBar::new(self.load_progress)
-                        .show_percentage();
+                    let progress_bar = egui::ProgressBar::new(self.load_progress).show_percentage();
                     ui.add(progress_bar);
                 }
             });
         });
-        
+
         egui::CentralPanel::default().show(ctx, |ui| {
             #[cfg(feature = "cpu-profiling")]
             puffin::profile_scope!("central_panel");
-            
-                    if self.log_view.lines.is_empty() {
+
+            if self.log_view.lines.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
                     ui.heading("Welcome to LogCrab 🦀");
                     ui.add_space(20.0);
                     ui.add_space(40.0);
-                    
+
                     if ui.button("Open Log File").clicked() {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("Log Files", &["log", "txt"])
                             .add_filter("All Files", &["*"])
-                            .pick_file() 
+                            .pick_file()
                         {
                             self.load_file(path, ctx.clone());
                         }
@@ -466,15 +483,17 @@ impl eframe::App for LogCrabApp {
                 });
             } else {
                 // Use dock area for VS Code-like draggable/tiling layout
-                DockArea::new(&mut self.dock_state)
-                    .show_inside(ui, &mut LogCrabTabViewer {
+                DockArea::new(&mut self.dock_state).show_inside(
+                    ui,
+                    &mut LogCrabTabViewer {
                         log_view: &mut self.log_view,
                         add_tab_after: &mut self.add_tab_after,
                         active_tab: &mut self.active_tab,
                         focus_search_next_frame: &mut self.focus_search_next_frame,
                         close_active_tab: &mut self.close_active_tab,
-                    });
-                
+                    },
+                );
+
                 // If a tab was just closed, update active_tab to the currently focused tab
                 if self.active_tab.is_none() {
                     if let Some((_, tab)) = self.dock_state.find_active_focused() {
@@ -483,29 +502,34 @@ impl eframe::App for LogCrabApp {
                 }
             }
         });
-        
+
         // Handle add tab request
         if let Some(node) = self.add_tab_after.take() {
             let filter_index = self.log_view.filter_count();
             self.log_view.add_filter();
-            self.dock_state.set_focused_node_and_surface((egui_dock::SurfaceIndex::main(), node));
+            self.dock_state
+                .set_focused_node_and_surface((egui_dock::SurfaceIndex::main(), node));
             self.dock_state.push_to_focused_leaf(TabContent {
                 tab_type: TabType::Filter(filter_index),
                 title: format!("Filter {}", filter_index + 1),
             });
         }
-        
+
         // Global keyboard shortcut handling (navigation). Skip if a text input wants keyboard.
         if !ctx.wants_keyboard_input() {
             let active_filter_index = match &self.active_tab {
                 Some(TabType::Filter(idx)) => Some(*idx),
                 _ => None,
             };
-            
+
             let actions = ctx.input(|i| {
-                self.shortcut_bindings.process_input(i, &mut self.pending_rebind, active_filter_index)
+                self.shortcut_bindings.process_input(
+                    i,
+                    &mut self.pending_rebind,
+                    active_filter_index,
+                )
             });
-            
+
             // Execute all generated actions
             for action in actions {
                 match action {
@@ -545,36 +569,36 @@ impl eframe::App for LogCrabApp {
                 }
             }
         }
-        
+
         // Handle new filter tab request (Ctrl+T)
         if self.request_new_filter_tab {
             self.request_new_filter_tab = false;
             let filter_index = self.log_view.filter_count();
             self.log_view.add_filter();
-            
+
             self.dock_state.push_to_focused_leaf(TabContent {
                 tab_type: TabType::Filter(filter_index),
                 title: format!("Filter {}", filter_index + 1),
             });
-            
+
             // Focus the search input in the new tab
             self.focus_search_next_frame = Some(filter_index);
             self.active_tab = Some(TabType::Filter(filter_index));
         }
-        
+
         // Handle pane navigation (Shift+HJKL)
         if let Some(direction) = self.navigate_pane_direction.take() {
             let tree = self.dock_state.main_surface_mut();
-            
+
             // Get the currently focused node
             if let Some(current_node) = tree.focused_leaf() {
                 // Find the neighbor in the specified direction
                 let neighbor = Self::find_neighbor(tree, current_node, direction);
-                
+
                 // If we found a neighbor, focus it
                 if let Some(neighbor_idx) = neighbor {
                     tree.set_focused_node(neighbor_idx);
-                    
+
                     // Update active_tab to match the newly focused tab
                     if let Some((_, tab)) = self.dock_state.find_active_focused() {
                         self.active_tab = Some(tab.tab_type.clone());
@@ -594,13 +618,13 @@ impl eframe::App for LogCrabApp {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.heading("How Anomaly Scores are Calculated");
                         ui.add_space(10.0);
-                        
+
                         ui.label("LogCrab uses a multi-component scoring system to identify interesting, unusual, or problematic log lines. Each line receives a score from 0-100, where higher scores indicate higher anomaly.");
                         ui.add_space(15.0);
-                        
+
                         ui.heading("Scoring Components:");
                         ui.add_space(10.0);
-                        
+
                         // Rarity Scorer
                         ui.label(egui::RichText::new("1. Rarity Scorer (Weight: 3.0)").strong().color(egui::Color32::from_rgb(100, 200, 255)));
                         ui.indent("rarity", |ui| {
@@ -611,7 +635,7 @@ impl eframe::App for LogCrabApp {
                             ui.label("• Example: A unique error gets 1.0, while a repeated 'INFO: started' gets ~0.1");
                         });
                         ui.add_space(10.0);
-                        
+
                         // Keyword Scorer
                         ui.label(egui::RichText::new("2. Keyword Scorer (Weight: 2.5)").strong().color(egui::Color32::from_rgb(100, 200, 255)));
                         ui.indent("keyword", |ui| {
@@ -623,7 +647,7 @@ impl eframe::App for LogCrabApp {
                             ui.label("• Case-insensitive pattern matching");
                         });
                         ui.add_space(10.0);
-                        
+
                         // Temporal Scorer
                         ui.label(egui::RichText::new("3. Temporal Scorer (Weight: 2.0)").strong().color(egui::Color32::from_rgb(100, 200, 255)));
                         ui.indent("temporal", |ui| {
@@ -636,7 +660,7 @@ impl eframe::App for LogCrabApp {
                             ui.label("  - Triggered when >100 events and >10 events/second");
                         });
                         ui.add_space(10.0);
-                        
+
                         // Entropy Scorer
                         ui.label(egui::RichText::new("4. Entropy Scorer (Weight: 1.5)").strong().color(egui::Color32::from_rgb(100, 200, 255)));
                         ui.indent("entropy", |ui| {
@@ -650,13 +674,13 @@ impl eframe::App for LogCrabApp {
                             ui.label("• Unusual messages (very short/long or random) score higher");
                         });
                         ui.add_space(15.0);
-                        
+
                         ui.separator();
                         ui.add_space(10.0);
-                        
+
                         ui.heading("Final Score Calculation:");
                         ui.add_space(10.0);
-                        
+
                         ui.label("1. Each scorer produces a raw score (0.0 - 1.0)");
                         ui.label("2. Raw scores are weighted and summed:");
                         ui.indent("formula", |ui| {
@@ -667,10 +691,10 @@ impl eframe::App for LogCrabApp {
                             ui.label("normalized = ((score - min_score) / (max_score - min_score)) × 100");
                         });
                         ui.add_space(10.0);
-                        
+
                         ui.separator();
                         ui.add_space(10.0);
-                        
+
                         ui.heading("Color Coding:");
                         ui.add_space(5.0);
                         ui.horizontal(|ui| {
@@ -689,11 +713,11 @@ impl eframe::App for LogCrabApp {
                             ui.label(egui::RichText::new("■").color(egui::Color32::WHITE));
                             ui.label("White (0-29): Normal - common, expected log lines");
                         });
-                        
+
                         ui.add_space(15.0);
                         ui.separator();
                         ui.add_space(10.0);
-                        
+
                         ui.label(egui::RichText::new("Note:").strong());
                         ui.label("Scores are calculated during file loading in a single pass. The scorer learns patterns as it processes lines sequentially, so later lines benefit from more context.");
                     });
@@ -709,29 +733,34 @@ impl eframe::App for LogCrabApp {
                 .collapsible(false)
                 .show(ctx, |ui| {
                     ui.add_space(5.0);
-                    
+
                     // Configurable keys section
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("⚙ Keyboard Bindings")
-                            .strong()
-                            .size(13.0)
-                            .color(egui::Color32::from_rgb(100, 150, 255)));
-                        
+                        ui.label(
+                            egui::RichText::new("⚙ Keyboard Bindings")
+                                .strong()
+                                .size(13.0)
+                                .color(egui::Color32::from_rgb(100, 150, 255)),
+                        );
+
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(egui::RichText::new("↺ Reset").size(10.0)).clicked() {
+                            if ui
+                                .button(egui::RichText::new("↺ Reset").size(10.0))
+                                .clicked()
+                            {
                                 self.shortcut_bindings = KeyboardBindings::default();
                                 self.pending_rebind = None;
                             }
                         });
                     });
                     ui.add_space(6.0);
-                    
+
                     // Iterate over all shortcut actions
                     let actions = [
-                        ShortcutAction::MoveUp, 
-                        ShortcutAction::MoveDown, 
-                        ShortcutAction::ToggleBookmark, 
+                        ShortcutAction::MoveUp,
+                        ShortcutAction::MoveDown,
+                        ShortcutAction::ToggleBookmark,
                         ShortcutAction::FocusSearch,
                         ShortcutAction::NewFilterTab,
                         ShortcutAction::CloseTab,
@@ -742,15 +771,15 @@ impl eframe::App for LogCrabApp {
                         ShortcutAction::FocusPaneUp,
                         ShortcutAction::FocusPaneDown,
                     ];
-                    
+
                     for (i, action) in actions.iter().enumerate() {
                         if i > 0 {
                             ui.add_space(8.0);
                         }
-                        
+
                         ui.horizontal(|ui| {
                             ui.add_space(10.0);
-                            
+
                             // Helper function to format keyboard shortcut
                             let format_shortcut = |shortcut: &egui::KeyboardShortcut| -> String {
                                 let modifiers_text = if shortcut.modifiers.ctrl {
@@ -766,29 +795,67 @@ impl eframe::App for LogCrabApp {
                                 };
                                 format!("{}{:?}", modifiers_text, shortcut.logical_key)
                             };
-                            
+
                             // All bindings are now KeyboardShortcuts
                             let key_text = match action {
-                                ShortcutAction::MoveUp => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::MoveUp)),
-                                ShortcutAction::MoveDown => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::MoveDown)),
-                                ShortcutAction::ToggleBookmark => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::ToggleBookmark)),
-                                ShortcutAction::FocusSearch => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusSearch)),
-                                ShortcutAction::NewFilterTab => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::NewFilterTab)),
-                                ShortcutAction::CloseTab => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::CloseTab)),
+                                ShortcutAction::MoveUp => format_shortcut(
+                                    &self.shortcut_bindings.get_shortcut(ShortcutAction::MoveUp),
+                                ),
+                                ShortcutAction::MoveDown => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::MoveDown),
+                                ),
+                                ShortcutAction::ToggleBookmark => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::ToggleBookmark),
+                                ),
+                                ShortcutAction::FocusSearch => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::FocusSearch),
+                                ),
+                                ShortcutAction::NewFilterTab => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::NewFilterTab),
+                                ),
+                                ShortcutAction::CloseTab => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::CloseTab),
+                                ),
                                 ShortcutAction::JumpToTop => "gg".to_string(),
                                 ShortcutAction::JumpToBottom => "G".to_string(),
-                                ShortcutAction::FocusPaneLeft => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneLeft)),
-                                ShortcutAction::FocusPaneDown => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneDown)),
-                                ShortcutAction::FocusPaneUp => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneUp)),
-                                ShortcutAction::FocusPaneRight => format_shortcut(&self.shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneRight)),
+                                ShortcutAction::FocusPaneLeft => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::FocusPaneLeft),
+                                ),
+                                ShortcutAction::FocusPaneDown => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::FocusPaneDown),
+                                ),
+                                ShortcutAction::FocusPaneUp => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::FocusPaneUp),
+                                ),
+                                ShortcutAction::FocusPaneRight => format_shortcut(
+                                    &self
+                                        .shortcut_bindings
+                                        .get_shortcut(ShortcutAction::FocusPaneRight),
+                                ),
                             };
-                            
+
                             let badge_color = if self.pending_rebind == Some(*action) {
                                 egui::Color32::from_rgb(255, 200, 100)
                             } else {
                                 ui.visuals().code_bg_color
                             };
-                            
+
                             egui::Frame::none()
                                 .fill(badge_color)
                                 .inner_margin(egui::Margin::symmetric(10.0, 6.0))
@@ -797,50 +864,63 @@ impl eframe::App for LogCrabApp {
                                 .show(ui, |ui| {
                                     ui.label(egui::RichText::new(&key_text).size(13.0).strong());
                                 });
-                            
+
                             ui.add_space(8.0);
-                            
+
                             // Action info
                             ui.vertical(|ui| {
                                 ui.label(egui::RichText::new(action.name()).strong());
-                                ui.label(egui::RichText::new(action.description())
-                                    .size(10.0)
-                                    .color(ui.visuals().weak_text_color()));
-                            });
-                            
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                // JumpToTop and JumpToBottom are hardcoded (gg/G) and cannot be rebound
-                                let is_rebindable = !matches!(action, ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom);
-                                
-                                if self.pending_rebind == Some(*action) {
-                                    ui.colored_label(
-                                        egui::Color32::from_rgb(255, 200, 100),
-                                        egui::RichText::new("⌛ Press any key...").strong()
-                                    );
-                                    if ui.button("✖ Cancel").clicked() {
-                                        self.pending_rebind = None;
-                                    }
-                                } else if is_rebindable {
-                                    if ui.button(egui::RichText::new("🔧 Rebind").size(11.0)).clicked() {
-                                        self.pending_rebind = Some(*action);
-                                    }
-                                } else {
-                                    ui.label(egui::RichText::new("(hardcoded)")
+                                ui.label(
+                                    egui::RichText::new(action.description())
                                         .size(10.0)
-                                        .color(ui.visuals().weak_text_color()));
-                                }
+                                        .color(ui.visuals().weak_text_color()),
+                                );
                             });
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    // JumpToTop and JumpToBottom are hardcoded (gg/G) and cannot be rebound
+                                    let is_rebindable = !matches!(
+                                        action,
+                                        ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom
+                                    );
+
+                                    if self.pending_rebind == Some(*action) {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(255, 200, 100),
+                                            egui::RichText::new("⌛ Press any key...").strong(),
+                                        );
+                                        if ui.button("✖ Cancel").clicked() {
+                                            self.pending_rebind = None;
+                                        }
+                                    } else if is_rebindable {
+                                        if ui
+                                            .button(egui::RichText::new("🔧 Rebind").size(11.0))
+                                            .clicked()
+                                        {
+                                            self.pending_rebind = Some(*action);
+                                        }
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new("(hardcoded)")
+                                                .size(10.0)
+                                                .color(ui.visuals().weak_text_color()),
+                                        );
+                                    }
+                                },
+                            );
                         });
                     }
-                    
+
                     ui.add_space(4.0);
                 });
         }
-        
+
         #[cfg(feature = "cpu-profiling")]
         {
             puffin::GlobalProfiler::lock().new_frame();
-            
+
             if self.show_profiler {
                 puffin_egui::profiler_window(ctx);
             }

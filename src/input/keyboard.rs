@@ -53,7 +53,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneRight => "Focus Pane Right",
         }
     }
-    
+
     pub fn description(&self) -> &'static str {
         match self {
             ShortcutAction::MoveUp => "Move to the previous log line in the active view",
@@ -84,7 +84,7 @@ pub struct KeyboardBindings {
     focus_pane_down: egui::KeyboardShortcut,
     focus_pane_up: egui::KeyboardShortcut,
     focus_pane_right: egui::KeyboardShortcut,
-    
+
     // State for Vim-style gg detection
     last_g_press_time: Option<Instant>,
 }
@@ -109,7 +109,7 @@ impl KeyboardBindings {
             }
         }
     }
-    
+
     /// Set the shortcut for a specific action
     pub fn set_shortcut(&mut self, action: ShortcutAction, shortcut: egui::KeyboardShortcut) {
         match action {
@@ -127,7 +127,7 @@ impl KeyboardBindings {
             ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom => {}
         }
     }
-    
+
     /// Process input and return actions to execute
     /// Returns None if rebinding is in progress and a key was captured
     pub fn process_input(
@@ -137,12 +137,14 @@ impl KeyboardBindings {
         active_filter_index: Option<usize>,
     ) -> Vec<InputAction> {
         let mut actions = Vec::new();
-        
+
         // If rebinding in progress, capture first pressed key
         if let Some(action) = *pending_rebind {
-            if let Some(event_key) = input.events.iter().find_map(|e| match e { 
-                egui::Event::Key { key, pressed: true, .. } => Some(*key), 
-                _ => None 
+            if let Some(event_key) = input.events.iter().find_map(|e| match e {
+                egui::Event::Key {
+                    key, pressed: true, ..
+                } => Some(*key),
+                _ => None,
             }) {
                 let shortcut = egui::KeyboardShortcut::new(input.modifiers, event_key);
                 self.set_shortcut(action, shortcut);
@@ -150,73 +152,91 @@ impl KeyboardBindings {
             }
             return actions; // Don't process other actions while rebinding
         }
-        
+
         // New filter tab (Ctrl+T by default)
-        if input.modifiers.matches_exact(self.new_filter_tab.modifiers) 
-            && input.key_pressed(self.new_filter_tab.logical_key) {
+        if input.modifiers.matches_exact(self.new_filter_tab.modifiers)
+            && input.key_pressed(self.new_filter_tab.logical_key)
+        {
             actions.push(InputAction::NewFilterTab);
         }
-        
+
         // Close tab (Ctrl+W by default)
-        if input.modifiers.matches_exact(self.close_tab.modifiers) 
-            && input.key_pressed(self.close_tab.logical_key) {
+        if input.modifiers.matches_exact(self.close_tab.modifiers)
+            && input.key_pressed(self.close_tab.logical_key)
+        {
             actions.push(InputAction::CloseTab);
         }
-        
+
         // Focus search input (only works in filter tabs)
-        if input.modifiers.matches_exact(self.focus_search.modifiers) 
-            && input.key_pressed(self.focus_search.logical_key) {
+        if input.modifiers.matches_exact(self.focus_search.modifiers)
+            && input.key_pressed(self.focus_search.logical_key)
+        {
             if let Some(idx) = active_filter_index {
                 actions.push(InputAction::FocusSearch(idx));
             }
         }
-        
+
         // Arrow keys always work (hardcoded, not configurable)
-        if input.key_pressed(egui::Key::ArrowUp) { 
+        if input.key_pressed(egui::Key::ArrowUp) {
             actions.push(InputAction::MoveSelection(-1));
         }
-        if input.key_pressed(egui::Key::ArrowDown) { 
+        if input.key_pressed(egui::Key::ArrowDown) {
             actions.push(InputAction::MoveSelection(1));
         }
-        
+
         // Configurable movement bindings (default: j/k vim-style)
-        if input.modifiers.matches_exact(self.move_up.modifiers) 
-            && input.key_pressed(self.move_up.logical_key) { 
+        if input.modifiers.matches_exact(self.move_up.modifiers)
+            && input.key_pressed(self.move_up.logical_key)
+        {
             actions.push(InputAction::MoveSelection(-1));
         }
-        if input.modifiers.matches_exact(self.move_down.modifiers) 
-            && input.key_pressed(self.move_down.logical_key) { 
+        if input.modifiers.matches_exact(self.move_down.modifiers)
+            && input.key_pressed(self.move_down.logical_key)
+        {
             actions.push(InputAction::MoveSelection(1));
         }
-        
+
         // Toggle bookmark (configurable, default: Space)
-        if input.modifiers.matches_exact(self.toggle_bookmark.modifiers) 
-            && input.key_pressed(self.toggle_bookmark.logical_key) {
+        if input
+            .modifiers
+            .matches_exact(self.toggle_bookmark.modifiers)
+            && input.key_pressed(self.toggle_bookmark.logical_key)
+        {
             actions.push(InputAction::ToggleBookmark);
         }
-        
+
         // Pane navigation (default: HJKL vim-style)
-        if input.modifiers.matches_exact(self.focus_pane_left.modifiers) 
-            && input.key_pressed(self.focus_pane_left.logical_key) {
+        if input
+            .modifiers
+            .matches_exact(self.focus_pane_left.modifiers)
+            && input.key_pressed(self.focus_pane_left.logical_key)
+        {
             actions.push(InputAction::NavigatePane(PaneDirection::Left));
         }
-        if input.modifiers.matches_exact(self.focus_pane_down.modifiers) 
-            && input.key_pressed(self.focus_pane_down.logical_key) {
+        if input
+            .modifiers
+            .matches_exact(self.focus_pane_down.modifiers)
+            && input.key_pressed(self.focus_pane_down.logical_key)
+        {
             actions.push(InputAction::NavigatePane(PaneDirection::Down));
         }
-        if input.modifiers.matches_exact(self.focus_pane_up.modifiers) 
-            && input.key_pressed(self.focus_pane_up.logical_key) {
+        if input.modifiers.matches_exact(self.focus_pane_up.modifiers)
+            && input.key_pressed(self.focus_pane_up.logical_key)
+        {
             actions.push(InputAction::NavigatePane(PaneDirection::Up));
         }
-        if input.modifiers.matches_exact(self.focus_pane_right.modifiers) 
-            && input.key_pressed(self.focus_pane_right.logical_key) {
+        if input
+            .modifiers
+            .matches_exact(self.focus_pane_right.modifiers)
+            && input.key_pressed(self.focus_pane_right.logical_key)
+        {
             actions.push(InputAction::NavigatePane(PaneDirection::Right));
         }
-        
+
         // Vim-style navigation: gg (jump to top) and G (jump to bottom)
         if input.key_pressed(egui::Key::G) {
             let now = Instant::now();
-            
+
             if input.modifiers.shift {
                 // Shift+G: Jump to bottom
                 actions.push(InputAction::JumpToBottom);
@@ -236,11 +256,15 @@ impl KeyboardBindings {
             }
         } else {
             // Clear gg state if any other key is pressed
-            if input.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })) {
+            if input
+                .events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))
+            {
                 self.last_g_press_time = None;
             }
         }
-        
+
         actions
     }
 }

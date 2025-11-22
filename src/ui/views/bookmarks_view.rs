@@ -16,18 +16,28 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use egui::Ui;
 use crate::parser::line::LogLine;
-use crate::ui::components::{BookmarkPanel, BookmarkPanelEvent, BookmarkData};
+use crate::ui::components::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 use chrono::DateTime;
+use egui::Ui;
 
 /// Events that can be emitted by the bookmarks view
 #[derive(Debug, Clone)]
 pub enum BookmarksViewEvent {
-    BookmarkClicked { line_index: usize, timestamp: Option<DateTime<chrono::Local>> },
-    BookmarkDeleted { line_index: usize },
-    BookmarkRenamed { line_index: usize, new_name: String },
-    StartRenaming { line_index: usize },
+    BookmarkClicked {
+        line_index: usize,
+        timestamp: Option<DateTime<chrono::Local>>,
+    },
+    BookmarkDeleted {
+        line_index: usize,
+    },
+    BookmarkRenamed {
+        line_index: usize,
+        new_name: String,
+    },
+    StartRenaming {
+        line_index: usize,
+    },
 }
 
 /// Orchestrates the bookmarks view UI using the BookmarkPanel component
@@ -35,7 +45,7 @@ pub struct BookmarksView;
 
 impl BookmarksView {
     /// Render the bookmarks view
-    /// 
+    ///
     /// Returns events that occurred during rendering
     pub fn render(
         ui: &mut Ui,
@@ -53,23 +63,32 @@ impl BookmarksView {
             editing_bookmark,
             bookmark_name_input,
         );
-        
+
         // Transform panel events to view events
-        panel_events.into_iter().map(|event| {
-            match event {
-                BookmarkPanelEvent::BookmarkClicked { line_index, timestamp } => {
-                    BookmarksViewEvent::BookmarkClicked { line_index, timestamp }
-                }
+        panel_events
+            .into_iter()
+            .map(|event| match event {
+                BookmarkPanelEvent::BookmarkClicked {
+                    line_index,
+                    timestamp,
+                } => BookmarksViewEvent::BookmarkClicked {
+                    line_index,
+                    timestamp,
+                },
                 BookmarkPanelEvent::BookmarkDeleted { line_index } => {
                     BookmarksViewEvent::BookmarkDeleted { line_index }
                 }
-                BookmarkPanelEvent::BookmarkRenamed { line_index, new_name } => {
-                    BookmarksViewEvent::BookmarkRenamed { line_index, new_name }
-                }
+                BookmarkPanelEvent::BookmarkRenamed {
+                    line_index,
+                    new_name,
+                } => BookmarksViewEvent::BookmarkRenamed {
+                    line_index,
+                    new_name,
+                },
                 BookmarkPanelEvent::StartRenaming { line_index } => {
                     BookmarksViewEvent::StartRenaming { line_index }
                 }
-            }
-        }).collect()
+            })
+            .collect()
     }
 }

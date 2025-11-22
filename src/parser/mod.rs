@@ -1,11 +1,11 @@
-pub mod line;
-pub mod logcat;
 pub mod dlt;
 pub mod generic;
+pub mod line;
+pub mod logcat;
 
+use lazy_static::lazy_static;
 use line::LogLine;
 use regex::Regex;
-use lazy_static::lazy_static;
 
 lazy_static! {
     // Normalization patterns
@@ -28,7 +28,7 @@ pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
         line.template_key = normalize_message(&line.message);
         return Some(line);
     }
-    
+
     // Try logcat format
     if let Some(mut line) = logcat::parse_logcat(raw.clone(), line_number) {
         // Skip lines without timestamp
@@ -38,15 +38,15 @@ pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
         line.template_key = normalize_message(&line.message);
         return Some(line);
     }
-    
+
     // Fall back to generic parser
     let mut line = generic::parse_generic(raw, line_number);
-    
+
     // Skip lines without timestamp
     if line.timestamp.is_none() {
         return None;
     }
-    
+
     line.template_key = normalize_message(&line.message);
     Some(line)
 }
@@ -55,22 +55,22 @@ pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
 /// This helps identify structurally similar messages
 pub fn normalize_message(message: &str) -> String {
     let mut normalized = message.to_lowercase();
-    
+
     // Replace UUIDs first (before hex, since UUIDs contain hex)
     normalized = UUID_PATTERN.replace_all(&normalized, "<UUID>").to_string();
-    
+
     // Replace URLs
     normalized = URL_PATTERN.replace_all(&normalized, "<URL>").to_string();
-    
+
     // Replace hex values
     normalized = HEX_PATTERN.replace_all(&normalized, "<HEX>").to_string();
-    
+
     // Replace numbers
     normalized = NUMBER_PATTERN.replace_all(&normalized, "<NUM>").to_string();
-    
+
     // Normalize whitespace
     normalized = WHITESPACE_PATTERN.replace_all(&normalized, " ").to_string();
-    
+
     normalized.trim().to_string()
 }
 
@@ -82,7 +82,10 @@ mod tests {
     fn test_normalize_message() {
         let msg = "User 12345 logged in from 192.168.1.100";
         let normalized = normalize_message(msg);
-        assert_eq!(normalized, "user <NUM> logged in from <NUM>.<NUM>.<NUM>.<NUM>");
+        assert_eq!(
+            normalized,
+            "user <NUM> logged in from <NUM>.<NUM>.<NUM>.<NUM>"
+        );
     }
 
     #[test]

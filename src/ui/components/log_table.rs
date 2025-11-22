@@ -16,28 +16,30 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use egui::{Color32, RichText, Ui};
-use egui_extras::{TableBuilder, Column};
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
 use chrono::DateTime;
+use egui::{Color32, RichText, Ui};
+use egui_extras::{Column, TableBuilder};
 
 /// Events emitted by the log table
 #[derive(Debug, Clone)]
 pub enum LogTableEvent {
-    LineClicked { 
-        line_index: usize, 
-        timestamp: Option<DateTime<chrono::Local>> 
+    LineClicked {
+        line_index: usize,
+        timestamp: Option<DateTime<chrono::Local>>,
     },
-    BookmarkToggled { line_index: usize },
+    BookmarkToggled {
+        line_index: usize,
+    },
 }
 
 /// Convert anomaly score to color
 pub fn score_to_color(score: f64) -> Color32 {
     if score >= 8.0 {
-        Color32::from_rgb(255, 50, 50)   // Bright red
+        Color32::from_rgb(255, 50, 50) // Bright red
     } else if score >= 6.0 {
-        Color32::from_rgb(255, 150, 50)  // Orange
+        Color32::from_rgb(255, 150, 50) // Orange
     } else if score >= 4.0 {
         Color32::from_rgb(255, 255, 100) // Yellow
     } else {
@@ -50,7 +52,7 @@ pub struct LogTable;
 
 impl LogTable {
     /// Render a table of log lines
-    /// 
+    ///
     /// Returns events that occurred (line clicks, bookmark toggles)
     pub fn render(
         ui: &mut Ui,
@@ -63,13 +65,13 @@ impl LogTable {
     ) -> Vec<LogTableEvent> {
         let mut events = Vec::new();
         let visible_lines = filter.filtered_indices.len();
-        
+
         egui::ScrollArea::horizontal()
             .id_source(format!("filtered_scroll_{}", filter_index))
             .show(ui, |ui| {
                 #[cfg(feature = "cpu-profiling")]
                 puffin::profile_scope!("filtered_table");
-                
+
                 let mut table = TableBuilder::new(ui)
                     .striped(true)
                     .resizable(false)
@@ -81,75 +83,112 @@ impl LogTable {
                     .column(Column::initial(110.0).resizable(true).clip(true))
                     .column(Column::remainder().resizable(true).clip(true))
                     .column(Column::initial(70.0).resizable(true).clip(true));
-                
+
                 if let Some(row_idx) = scroll_to_row {
                     table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
                 }
-                
-                table.header(20.0, |mut header| {
-                    header.col(|ui| { ui.strong("Line"); });
-                    header.col(|ui| { ui.strong("Timestamp"); });
-                    header.col(|ui| { ui.strong("Message"); });
-                    header.col(|ui| { ui.strong("Score"); });
-                })
-                .body(|body| {
-                    body.rows(18.0, visible_lines, |mut row| {
-                        let row_index = row.index();
-                        let line_idx = filter.filtered_indices[row_index];
-                        let line = &lines[line_idx];
-                        
-                        let is_selected = selected_line_index == Some(line_idx);
-                        let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
-                        let color = score_to_color(line.anomaly_score);
-                        
-                        let mut row_clicked = false;
-                        let mut row_right_clicked = false;
-                        
-                        // Line number column
-                        Self::render_line_column(
-                            &mut row, line, line_idx, filter_index,
-                            is_selected, is_bookmarked, color,
-                            bookmarked_lines.get(&line_idx).map(|s| s.as_str()),
-                            &mut row_clicked, &mut row_right_clicked
-                        );
-                        
-                        // Timestamp column
-                        Self::render_timestamp_column(
-                            &mut row, line, line_idx, filter_index, filter,
-                            is_selected, is_bookmarked, color,
-                            &mut row_clicked, &mut row_right_clicked
-                        );
-                        
-                        // Message column
-                        Self::render_message_column(
-                            &mut row, line, line_idx, filter_index, filter,
-                            is_selected, is_bookmarked, color,
-                            &mut row_clicked, &mut row_right_clicked
-                        );
-                        
-                        // Score column
-                        Self::render_score_column(
-                            &mut row, line, line_idx, filter_index,
-                            is_selected, is_bookmarked, color,
-                            &mut row_clicked, &mut row_right_clicked
-                        );
-                        
-                        // Handle interaction
-                        if row_right_clicked {
-                            events.push(LogTableEvent::BookmarkToggled { line_index: line_idx });
-                        } else if row_clicked {
-                            events.push(LogTableEvent::LineClicked { 
-                                line_index: line_idx,
-                                timestamp: line.timestamp 
-                            });
-                        }
+
+                table
+                    .header(20.0, |mut header| {
+                        header.col(|ui| {
+                            ui.strong("Line");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Timestamp");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Message");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Score");
+                        });
+                    })
+                    .body(|body| {
+                        body.rows(18.0, visible_lines, |mut row| {
+                            let row_index = row.index();
+                            let line_idx = filter.filtered_indices[row_index];
+                            let line = &lines[line_idx];
+
+                            let is_selected = selected_line_index == Some(line_idx);
+                            let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
+                            let color = score_to_color(line.anomaly_score);
+
+                            let mut row_clicked = false;
+                            let mut row_right_clicked = false;
+
+                            // Line number column
+                            Self::render_line_column(
+                                &mut row,
+                                line,
+                                line_idx,
+                                filter_index,
+                                is_selected,
+                                is_bookmarked,
+                                color,
+                                bookmarked_lines.get(&line_idx).map(|s| s.as_str()),
+                                &mut row_clicked,
+                                &mut row_right_clicked,
+                            );
+
+                            // Timestamp column
+                            Self::render_timestamp_column(
+                                &mut row,
+                                line,
+                                line_idx,
+                                filter_index,
+                                filter,
+                                is_selected,
+                                is_bookmarked,
+                                color,
+                                &mut row_clicked,
+                                &mut row_right_clicked,
+                            );
+
+                            // Message column
+                            Self::render_message_column(
+                                &mut row,
+                                line,
+                                line_idx,
+                                filter_index,
+                                filter,
+                                is_selected,
+                                is_bookmarked,
+                                color,
+                                &mut row_clicked,
+                                &mut row_right_clicked,
+                            );
+
+                            // Score column
+                            Self::render_score_column(
+                                &mut row,
+                                line,
+                                line_idx,
+                                filter_index,
+                                is_selected,
+                                is_bookmarked,
+                                color,
+                                &mut row_clicked,
+                                &mut row_right_clicked,
+                            );
+
+                            // Handle interaction
+                            if row_right_clicked {
+                                events.push(LogTableEvent::BookmarkToggled {
+                                    line_index: line_idx,
+                                });
+                            } else if row_clicked {
+                                events.push(LogTableEvent::LineClicked {
+                                    line_index: line_idx,
+                                    timestamp: line.timestamp,
+                                });
+                            }
+                        });
                     });
-                });
             });
-        
+
         events
     }
-    
+
     fn render_line_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -164,40 +203,56 @@ impl LogTable {
     ) {
         row.col(|ui| {
             if is_bookmarked {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(100, 80, 30),
+                );
             } else if is_selected {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(60, 60, 80),
+                );
             }
-            
+
             let bookmark_icon = if is_bookmarked { "★ " } else { "" };
             let line_text = if is_selected {
                 format!("▶ {}{}", bookmark_icon, line.line_number)
             } else {
                 format!("{}{}", bookmark_icon, line.line_number)
             };
-            
+
             let text = if is_selected {
                 RichText::new(line_text).color(color).strong()
             } else {
                 RichText::new(line_text).color(color)
             };
             let label_response = ui.label(text);
-            
+
             // Show tooltip with bookmark name if bookmarked
             if is_bookmarked {
                 if let Some(name) = bookmark_name {
                     label_response.on_hover_text(format!("📑 Bookmark: {}", name));
                 }
             }
-            
-            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("line"), egui::Sense::click());
+
+            let response = ui.interact(
+                ui.max_rect(),
+                ui.id().with(line_idx).with(filter_index).with("line"),
+                egui::Sense::click(),
+            );
             let response = response.on_hover_text(&line.raw);
-            
-            if response.clicked() { *row_clicked = true; }
-            if response.secondary_clicked() { *row_right_clicked = true; }
+
+            if response.clicked() {
+                *row_clicked = true;
+            }
+            if response.secondary_clicked() {
+                *row_right_clicked = true;
+            }
         });
     }
-    
+
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -212,27 +267,43 @@ impl LogTable {
     ) {
         row.col(|ui| {
             if is_bookmarked {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(100, 80, 30),
+                );
             } else if is_selected {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(60, 60, 80),
+                );
             }
-            
+
             let timestamp_str = if let Some(ts) = line.timestamp {
                 ts.format("%H:%M:%S%.3f").to_string()
             } else {
                 "-".to_string()
             };
-            
+
             let job = filter.highlight_matches(&timestamp_str, color);
             ui.label(job);
-            
-            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("ts"), egui::Sense::click());
+
+            let response = ui.interact(
+                ui.max_rect(),
+                ui.id().with(line_idx).with(filter_index).with("ts"),
+                egui::Sense::click(),
+            );
             let response = response.on_hover_text(&line.raw);
-            if response.clicked() { *row_clicked = true; }
-            if response.secondary_clicked() { *row_right_clicked = true; }
+            if response.clicked() {
+                *row_clicked = true;
+            }
+            if response.secondary_clicked() {
+                *row_right_clicked = true;
+            }
         });
     }
-    
+
     fn render_message_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -247,21 +318,37 @@ impl LogTable {
     ) {
         row.col(|ui| {
             if is_bookmarked {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(100, 80, 30),
+                );
             } else if is_selected {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(60, 60, 80),
+                );
             }
-            
+
             let job = filter.highlight_matches(&line.message, color);
             ui.label(job);
-            
-            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("msg"), egui::Sense::click());
+
+            let response = ui.interact(
+                ui.max_rect(),
+                ui.id().with(line_idx).with(filter_index).with("msg"),
+                egui::Sense::click(),
+            );
             let response = response.on_hover_text(&line.raw);
-            if response.clicked() { *row_clicked = true; }
-            if response.secondary_clicked() { *row_right_clicked = true; }
+            if response.clicked() {
+                *row_clicked = true;
+            }
+            if response.secondary_clicked() {
+                *row_right_clicked = true;
+            }
         });
     }
-    
+
     fn render_score_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -275,18 +362,36 @@ impl LogTable {
     ) {
         row.col(|ui| {
             if is_bookmarked {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(100, 80, 30),
+                );
             } else if is_selected {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(60, 60, 80),
+                );
             }
-            
-            let text = RichText::new(format!("{:.1}", line.anomaly_score)).strong().color(color);
+
+            let text = RichText::new(format!("{:.1}", line.anomaly_score))
+                .strong()
+                .color(color);
             ui.label(text);
-            
-            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("score"), egui::Sense::click());
+
+            let response = ui.interact(
+                ui.max_rect(),
+                ui.id().with(line_idx).with(filter_index).with("score"),
+                egui::Sense::click(),
+            );
             let response = response.on_hover_text(&line.raw);
-            if response.clicked() { *row_clicked = true; }
-            if response.secondary_clicked() { *row_right_clicked = true; }
+            if response.clicked() {
+                *row_clicked = true;
+            }
+            if response.secondary_clicked() {
+                *row_right_clicked = true;
+            }
         });
     }
 }

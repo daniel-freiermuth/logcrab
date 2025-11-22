@@ -16,8 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use egui::{Color32, Ui};
 use crate::state::FilterState;
+use egui::{Color32, Ui};
 
 /// Favorite filter for quick selection
 pub struct FavoriteFilter {
@@ -31,7 +31,10 @@ pub enum FilterBarEvent {
     SearchChanged,
     CaseInsensitiveToggled,
     ClearClicked,
-    FavoriteSelected { search_text: String, case_insensitive: bool },
+    FavoriteSelected {
+        search_text: String,
+        case_insensitive: bool,
+    },
 }
 
 /// Reusable filter search bar component
@@ -39,7 +42,7 @@ pub struct FilterBar;
 
 impl FilterBar {
     /// Render the filter bar UI
-    /// 
+    ///
     /// Returns events that occurred during rendering
     pub fn render(
         ui: &mut Ui,
@@ -48,10 +51,10 @@ impl FilterBar {
         favorites: &[FavoriteFilter],
     ) -> Vec<FilterBarEvent> {
         let mut events = Vec::new();
-        
+
         ui.horizontal(|ui| {
             ui.label("🔍 Search (regex):");
-            
+
             // Dropdown menu for favorites
             if !favorites.is_empty() {
                 egui::ComboBox::from_id_source(format!("favorites_{}", filter_index))
@@ -68,42 +71,42 @@ impl FilterBar {
                         }
                     });
             }
-            
+
             // Search input with ID for Ctrl+L focusing
             let search_id = ui.id().with("search_input");
             let search_response = ui.add(
                 egui::TextEdit::singleline(&mut filter.search_text)
                     .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
                     .desired_width(300.0)
-                    .id(search_id)
+                    .id(search_id),
             );
-            
+
             // Focus search input if requested by Ctrl+L
             if filter.should_focus_search {
                 search_response.request_focus();
                 filter.should_focus_search = false;
             }
-            
+
             // If Enter is pressed in the search input, surrender focus
             if search_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 ui.memory_mut(|mem| mem.surrender_focus(search_id));
             }
-            
+
             if search_response.changed() {
                 events.push(FilterBarEvent::SearchChanged);
             }
-            
+
             // Checkbox
             let checkbox_response = ui.checkbox(&mut filter.case_insensitive, "Case insensitive");
-            
+
             if checkbox_response.changed() {
                 events.push(FilterBarEvent::CaseInsensitiveToggled);
             }
-            
+
             if ui.button("Clear").clicked() {
                 events.push(FilterBarEvent::ClearClicked);
             }
-            
+
             // Display regex validation status
             if let Some(ref error) = filter.regex_error {
                 ui.colored_label(Color32::RED, format!("❌ {}", error));
@@ -111,7 +114,7 @@ impl FilterBar {
                 ui.colored_label(Color32::GREEN, "✓ Valid regex");
             }
         });
-        
+
         events
     }
 }

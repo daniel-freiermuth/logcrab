@@ -16,12 +16,12 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+mod bookmark_panel;
 mod filter_bar;
 mod histogram;
 mod log_table;
-mod bookmark_panel;
 
-pub use filter_bar::{FilterBar, FilterBarEvent, FavoriteFilter};
+pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
+pub use filter_bar::{FavoriteFilter, FilterBar, FilterBarEvent};
 pub use histogram::Histogram;
 pub use log_table::{LogTable, LogTableEvent};
-pub use bookmark_panel::{BookmarkPanel, BookmarkPanelEvent, BookmarkData};

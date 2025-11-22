@@ -18,7 +18,7 @@
 
 use crate::parser::line::LogLine;
 use chrono::{DateTime, Local};
-use egui::{Color32, text::LayoutJob, TextFormat};
+use egui::{text::LayoutJob, Color32, TextFormat};
 use regex::{Regex, RegexBuilder};
 
 /// Represents a single filter view with its own search criteria and cached results
@@ -52,7 +52,7 @@ impl FilterState {
             should_focus_search: false,
         }
     }
-    
+
     /// Update the search regex based on current search text
     pub fn update_search_regex(&mut self) {
         if self.search_text.is_empty() {
@@ -75,7 +75,7 @@ impl FilterState {
         }
         self.filter_dirty = true;
     }
-    
+
     /// Check if a line matches the current search criteria
     pub fn matches_search(&self, line: &LogLine) -> bool {
         if let Some(ref regex) = self.search_regex {
@@ -84,7 +84,7 @@ impl FilterState {
             true
         }
     }
-    
+
     /// Rebuild the filtered indices based on current filter criteria
     pub fn rebuild_filtered_indices(
         &mut self,
@@ -95,40 +95,48 @@ impl FilterState {
     ) -> Option<usize> {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
-        
+
         self.filtered_indices.clear();
         self.filtered_indices.reserve(lines.len() / 10);
-        
+
         for (idx, line) in lines.iter().enumerate() {
             if line.anomaly_score >= min_score_filter && self.matches_search(line) {
                 self.filtered_indices.push(idx);
             }
         }
         self.filter_dirty = false;
-        
+
         // Find selected line in filtered results
         if let Some(selected_line_idx) = selected_line_index {
-            if let Some(position) = self.filtered_indices.iter().position(|&idx| idx == selected_line_idx) {
+            if let Some(position) = self
+                .filtered_indices
+                .iter()
+                .position(|&idx| idx == selected_line_idx)
+            {
                 return Some(position);
             }
-            
+
             if let Some(selected_ts) = selected_timestamp {
                 return self.find_closest_timestamp_index(lines, selected_ts);
             }
         }
-        
+
         None
     }
-    
+
     /// Find the closest line by timestamp in the filtered results
-    pub fn find_closest_timestamp_index(&self, lines: &[LogLine], target_ts: DateTime<Local>) -> Option<usize> {
+    pub fn find_closest_timestamp_index(
+        &self,
+        lines: &[LogLine],
+        target_ts: DateTime<Local>,
+    ) -> Option<usize> {
         if self.filtered_indices.is_empty() {
             return None;
         }
-        
+
         let mut closest_idx = 0;
         let mut min_diff = i64::MAX;
-        
+
         for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
             if let Some(line_ts) = lines[line_idx].timestamp {
                 let diff = (line_ts.timestamp() - target_ts.timestamp()).abs();
@@ -138,17 +146,17 @@ impl FilterState {
                 }
             }
         }
-        
+
         Some(closest_idx)
     }
-    
+
     /// Highlight search matches in text with background color
     pub fn highlight_matches(&self, text: &str, base_color: Color32) -> LayoutJob {
         let mut job = LayoutJob::default();
-        
+
         if let Some(ref regex) = self.search_regex {
             let mut last_end = 0;
-            
+
             for mat in regex.find_iter(text) {
                 if mat.start() > last_end {
                     job.append(
@@ -160,7 +168,7 @@ impl FilterState {
                         },
                     );
                 }
-                
+
                 job.append(
                     mat.as_str(),
                     0.0,
@@ -170,10 +178,10 @@ impl FilterState {
                         ..Default::default()
                     },
                 );
-                
+
                 last_end = mat.end();
             }
-            
+
             if last_end < text.len() {
                 job.append(
                     &text[last_end..],
@@ -194,7 +202,7 @@ impl FilterState {
                 },
             );
         }
-        
+
         job
     }
 }
@@ -204,7 +212,7 @@ mod tests {
     use super::*;
     use crate::parser::line::LogLine;
     use chrono::TimeZone;
-    
+
     fn create_test_line(message: &str, score: f64) -> LogLine {
         LogLine {
             raw: message.to_string(),
@@ -215,38 +223,38 @@ mod tests {
             line_number: 1,
         }
     }
-    
+
     #[test]
     fn test_filter_state_search() {
         let mut state = FilterState::new(Color32::YELLOW);
-        
+
         state.search_text = "ERROR".to_string();
         state.update_search_regex();
-        
+
         assert!(state.search_regex.is_some());
         assert!(state.regex_error.is_none());
-        
+
         let line = create_test_line("ERROR: Something failed", 50.0);
         assert!(state.matches_search(&line));
-        
+
         let line2 = create_test_line("INFO: All good", 20.0);
         assert!(!state.matches_search(&line2));
     }
-    
+
     #[test]
     fn test_rebuild_filtered_indices() {
         let mut state = FilterState::new(Color32::YELLOW);
-        
+
         let lines = vec![
             create_test_line("ERROR: First", 80.0),
             create_test_line("INFO: Second", 20.0),
             create_test_line("ERROR: Third", 90.0),
         ];
-        
+
         state.search_text = "ERROR".to_string();
         state.update_search_regex();
         state.rebuild_filtered_indices(&lines, 0.0, None, None);
-        
+
         assert_eq!(state.filtered_indices.len(), 2);
         assert_eq!(state.filtered_indices[0], 0);
         assert_eq!(state.filtered_indices[1], 2);

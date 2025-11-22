@@ -30,25 +30,25 @@ pub enum PaneDirection {
 pub enum InputAction {
     /// Move selection by delta (positive = down, negative = up)
     MoveSelection(i32),
-    
+
     /// Toggle bookmark on the selected line
     ToggleBookmark,
-    
+
     /// Focus the search input for a specific filter
     FocusSearch(usize),
-    
+
     /// Create a new filter tab
     NewFilterTab,
-    
+
     /// Close the currently active tab
     CloseTab,
-    
+
     /// Jump to the top of the current view (Vim gg)
     JumpToTop,
-    
+
     /// Jump to the bottom of the current view (Vim G)
     JumpToBottom,
-    
+
     /// Navigate to a neighboring pane
     NavigatePane(PaneDirection),
 }
