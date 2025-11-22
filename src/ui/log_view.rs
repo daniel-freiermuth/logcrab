@@ -92,6 +92,7 @@ impl LogView {
     }
 
     pub fn add_filter(&mut self) {
+        log::debug!("Adding new filter (index: {})", self.filters.len());
         // Cycle through different highlight colors
         let colors = [
             Color32::YELLOW,
@@ -201,6 +202,8 @@ impl LogView {
     }
 
     pub fn set_lines(&mut self, lines: Vec<LogLine>) {
+        log::info!("Setting {} log lines, requesting background filtering for {} filters", 
+                   lines.len(), self.filters.len());
         self.lines = Arc::new(lines);
         // Request background filtering for all filters
         for filter in &mut self.filters {
@@ -221,8 +224,12 @@ impl LogView {
         self.bookmarks.clear();
 
         if let Some(ref path) = self.crab_file {
+            log::debug!("Loading .crab file: {:?}", path);
             if let Ok(file_content) = fs::read_to_string(path) {
                 if let Ok(crab_data) = serde_json::from_str::<CrabFile>(&file_content) {
+                    log::info!("Loaded .crab file with {} bookmarks, {} filters", 
+                              crab_data.bookmarks.len(), crab_data.filters.len());
+                    
                     // Load bookmarks
                     for bookmark in crab_data.bookmarks {
                         self.bookmarks.insert(bookmark.line_index, bookmark);
@@ -241,14 +248,20 @@ impl LogView {
                         self.filters[i].is_favorite = saved_filter.is_favorite;
                         self.filters[i].name = saved_filter.name.clone();
                         self.filters[i].update_search_regex();
+                        log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
                     }
+                } else {
+                    log::warn!("Failed to parse .crab file: {:?}", path);
                 }
+            } else {
+                log::debug!(".crab file does not exist yet: {:?}", path);
             }
         }
     }
 
     fn save_crab_file(&self) {
         if let Some(ref path) = self.crab_file {
+            log::debug!("Saving .crab file: {:?}", path);
             let crab_data = CrabFile {
                 bookmarks: self.bookmarks.values().cloned().collect(),
                 filters: self
@@ -264,7 +277,11 @@ impl LogView {
             };
 
             if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
-                let _ = fs::write(path, json);
+                match fs::write(path, json) {
+                    Ok(_) => log::debug!("Successfully saved .crab file with {} bookmarks, {} filters", 
+                                        self.bookmarks.len(), self.filters.len()),
+                    Err(e) => log::error!("Failed to save .crab file: {}", e),
+                }
             }
         }
     }
@@ -277,19 +294,23 @@ impl LogView {
                 None
             };
 
+            let bookmark_name = format!(
+                "Line {}",
+                if line_index < self.lines.len() {
+                    self.lines[line_index].line_number.to_string()
+                } else {
+                    line_index.to_string()
+                }
+            );
+            
+            log::debug!("Adding bookmark: {}", bookmark_name);
             e.insert(Bookmark {
                 line_index,
-                name: format!(
-                    "Line {}",
-                    if line_index < self.lines.len() {
-                        self.lines[line_index].line_number.to_string()
-                    } else {
-                        line_index.to_string()
-                    }
-                ),
+                name: bookmark_name,
                 timestamp,
             });
         } else {
+            log::debug!("Removing bookmark at line {}", line_index);
             self.bookmarks.remove(&line_index);
         }
         self.save_crab_file();

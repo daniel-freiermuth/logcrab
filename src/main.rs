@@ -51,18 +51,32 @@ struct Args {
 }
 
 fn main() -> eframe::Result<()> {
+    // Initialize logger with default level INFO
+    // Set RUST_LOG environment variable to override (e.g., RUST_LOG=debug)
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    
+    log::info!("LogCrab starting up (version {})", env!("CARGO_PKG_VERSION"));
+    
     #[cfg(feature = "ram-profiling")]
     let _profiler = {
         let args_early = Args::parse();
+        log::info!("RAM profiling enabled, output: {:?}", args_early.profile_output);
         dhat::Profiler::builder()
             .file_name(args_early.profile_output.clone())
             .build()
     };
 
     #[cfg(feature = "cpu-profiling")]
-    puffin::set_scopes_on(true);
+    {
+        puffin::set_scopes_on(true);
+        log::info!("CPU profiling enabled");
+    }
 
     let args = Args::parse();
+    
+    if let Some(ref file) = args.file {
+        log::info!("Opening file from command line: {:?}", file);
+    }
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

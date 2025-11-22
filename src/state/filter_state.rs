@@ -216,7 +216,7 @@ impl FilterState {
                 self.filtered_indices = result.filtered_indices;
                 self.filter_dirty = false;
                 if self.is_filtering {
-                    eprintln!("DEBUG: Set is_filtering=false (result received)");
+                    log::debug!("Completed background filtering (found {} matches)", self.filtered_indices.len());
                 }
                 self.is_filtering = false; // Filtering complete
                 updated = true;
