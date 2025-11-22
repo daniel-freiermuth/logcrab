@@ -17,9 +17,10 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
-use egui::{Color32, RichText, Ui, text::LayoutJob, TextFormat};
-use egui_extras::{TableBuilder, Column};
-use regex::{Regex, RegexBuilder};
+use crate::ui::views::{FilterView, FilterViewEvent, BookmarksView, BookmarksViewEvent};
+use crate::ui::components::BookmarkData;
+use egui::{Color32, Ui};
+
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -171,12 +172,6 @@ impl LogView {
         self.selected_timestamp = self.lines[last_line_index].timestamp;
     }
     
-    pub fn remove_filter(&mut self, index: usize) {
-        if self.filters.len() > 1 && index < self.filters.len() {
-            self.filters.remove(index);
-        }
-    }
-    
     pub fn filter_count(&self) -> usize {
         self.filters.len()
     }
@@ -190,10 +185,6 @@ impl LogView {
             filter.name = name;
             self.save_crab_file();
         }
-    }
-    
-    pub fn is_bookmarks_panel_visible(&self) -> bool {
-        self.show_bookmarks_panel
     }
     
     pub fn set_lines(&mut self, lines: Vec<LogLine>) {
@@ -283,17 +274,6 @@ impl LogView {
         self.save_crab_file();
     }
     
-    fn rename_bookmark(&mut self, line_index: usize, new_name: String) {
-        if let Some(bookmark) = self.bookmarks.get_mut(&line_index) {
-            bookmark.name = new_name;
-            self.save_crab_file();
-        }
-    }
-    
-    pub fn toggle_bookmarks_panel(&mut self) {
-        self.show_bookmarks_panel = !self.show_bookmarks_panel;
-    }
-    
     /// Toggle bookmark for the currently selected line
     pub fn toggle_bookmark_for_selected(&mut self) {
         if let Some(selected_idx) = self.selected_line_index {
@@ -308,172 +288,72 @@ impl LogView {
             return;
         }
         
-        // Display custom name if set, otherwise default
-        let display_name = self.filters[filter_index].name.clone()
-            .unwrap_or_else(|| format!("Filter View {}", filter_index + 1));
-        ui.heading(&display_name);
+        // Convert bookmarks HashMap to simple HashMap<usize, String> for the component
+        let bookmarked_lines: HashMap<usize, String> = self.bookmarks.iter()
+            .map(|(&idx, bookmark)| (idx, bookmark.name.clone()))
+            .collect();
         
-        // Name and Star buttons
-        ui.horizontal(|ui| {
-            // Edit name button
-            if ui.small_button("✏").on_hover_text("Edit filter name").clicked() {
-                // Prompt for new name
-                if let Some(current_name) = &self.filters[filter_index].name {
-                    self.bookmark_name_input = current_name.clone();
-                } else {
-                    self.bookmark_name_input = format!("Filter {}", filter_index + 1);
+        // Collect filter data needed for favorites (avoiding borrow issues)
+        let all_filters_data: Vec<(String, bool, bool)> = self.filters.iter()
+            .map(|f| (f.search_text.clone(), f.case_insensitive, f.is_favorite))
+            .collect();
+        
+        // Temporarily take out the filter we're rendering
+        let mut current_filter = std::mem::replace(
+            &mut self.filters[filter_index], 
+            FilterState::new(Color32::YELLOW)
+        );
+        
+        // Create a temporary filters list for favorites lookup
+        let temp_filters: Vec<FilterState> = all_filters_data.iter().map(|(search, case_ins, fav)| {
+            let mut f = FilterState::new(Color32::YELLOW);
+            f.search_text = search.clone();
+            f.case_insensitive = *case_ins;
+            f.is_favorite = *fav;
+            f
+        }).collect();
+        
+        // Render using FilterView
+        let events = FilterView::render(
+            ui,
+            &self.lines,
+            &mut current_filter,
+            filter_index,
+            &temp_filters,
+            self.selected_line_index,
+            self.selected_timestamp,
+            &bookmarked_lines,
+            self.min_score_filter,
+        );
+        
+        // Put the filter back
+        self.filters[filter_index] = current_filter;
+        
+        // Handle events
+        for event in events {
+            match event {
+                FilterViewEvent::LineSelected { line_index, timestamp } => {
+                    self.selected_line_index = Some(line_index);
+                    self.selected_timestamp = timestamp;
                 }
-                self.editing_bookmark = Some(filter_index + 10000); // Use high number to distinguish from bookmarks
-            }
-            
-            let star_text = if self.filters[filter_index].is_favorite { "⭐" } else { "☆" };
-            if ui.button(star_text).on_hover_text("Toggle favorite filter").clicked() {
-                self.filters[filter_index].is_favorite = !self.filters[filter_index].is_favorite;
-                self.save_crab_file();
-            }
-        });
-        
-        ui.separator();
-        
-        // Search bar with favorite filters dropdown
-        ui.horizontal(|ui| {
-            ui.label("🔍 Search (regex):");
-            
-            // Collect favorite filters
-            let favorites: Vec<(String, bool)> = self.filters.iter()
-                .filter(|f| f.is_favorite && !f.search_text.is_empty())
-                .map(|f| (f.search_text.clone(), f.case_insensitive))
-                .collect();
-            
-            // Dropdown menu for favorites
-            if !favorites.is_empty() {
-                egui::ComboBox::from_id_source(format!("favorites_{}", filter_index))
-                    .selected_text("⭐ Favorites")
-                    .width(100.0)
-                    .show_ui(ui, |ui| {
-                        for (fav_text, fav_case) in favorites {
-                            if ui.selectable_label(false, &fav_text).clicked() {
-                                self.filters[filter_index].search_text = fav_text;
-                                self.filters[filter_index].case_insensitive = fav_case;
-                                self.filters[filter_index].update_search_regex();
-                            }
-                        }
-                    });
-            }
-            
-            // Search input with ID for Ctrl+L focusing
-            let search_id = ui.id().with("search_input");
-            let mut search_response = ui.add(
-                egui::TextEdit::singleline(&mut self.filters[filter_index].search_text)
-                    .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
-                    .desired_width(300.0)
-                    .id(search_id)
-            );
-            
-            // Focus search input if requested by Ctrl+L
-            if self.filters[filter_index].should_focus_search {
-                search_response.request_focus();
-                self.filters[filter_index].should_focus_search = false;
-            }
-            
-            // If Enter is pressed in the search input, surrender focus
-            if search_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                ui.memory_mut(|mem| mem.surrender_focus(search_id));
-            }
-            
-            if search_response.changed() {
-                self.filters[filter_index].update_search_regex();
-            }
-            
-            // Checkbox
-            let checkbox_response = ui.checkbox(&mut self.filters[filter_index].case_insensitive, "Case insensitive");
-            
-            if checkbox_response.changed() {
-                self.filters[filter_index].update_search_regex();
-            }
-            
-            if ui.button("Clear").clicked() {
-                self.filters[filter_index].search_text.clear();
-                self.filters[filter_index].update_search_regex();
-            }
-            
-            if let Some(ref error) = self.filters[filter_index].regex_error {
-                ui.colored_label(Color32::RED, format!("❌ {}", error));
-            } else if self.filters[filter_index].search_regex.is_some() {
-                ui.colored_label(Color32::GREEN, "✓ Valid regex");
-            }
-        });
-        
-        ui.separator();
-        
-        // Rebuild filtered indices if needed
-        let mut scroll_to_row = if self.filters[filter_index].filter_dirty {
-            self.filters[filter_index].rebuild_filtered_indices(
-                &self.lines,
-                self.min_score_filter,
-                self.selected_line_index,
-                self.selected_timestamp,
-            )
-        } else {
-            None
-        };
-        
-        // Check if selection changed
-        if scroll_to_row.is_none() && self.selected_line_index.is_some() {
-            if self.filters[filter_index].last_rendered_selection != self.selected_line_index {
-                eprintln!("Filter {}: Selection changed from {:?} to {:?}", 
-                    filter_index, 
-                    self.filters[filter_index].last_rendered_selection, 
-                    self.selected_line_index);
-                if let Some(selected_idx) = self.selected_line_index {
-                    if let Some(position) = self.filters[filter_index].filtered_indices.iter().position(|&idx| idx == selected_idx) {
-                        eprintln!("Filter {}: Found exact line at position {}, will scroll", filter_index, position);
-                        scroll_to_row = Some(position);
+                FilterViewEvent::BookmarkToggled { line_index } => {
+                    self.toggle_bookmark(line_index);
+                }
+                FilterViewEvent::FilterNameEditRequested => {
+                    // Prompt for new name
+                    if let Some(current_name) = &self.filters[filter_index].name {
+                        self.bookmark_name_input = current_name.clone();
                     } else {
-                        // Line not in filtered results - try to find closest by timestamp
-                        if let Some(selected_ts) = self.selected_timestamp {
-                            if let Some(closest_pos) = self.filters[filter_index].find_closest_timestamp_index(&self.lines, selected_ts) {
-                                eprintln!("Filter {}: Line not in results, scrolling to closest timestamp at position {}", 
-                                    filter_index, closest_pos);
-                                scroll_to_row = Some(closest_pos);
-                            } else {
-                                eprintln!("Filter {}: No timestamp match found (total filtered: {})", 
-                                    filter_index, 
-                                    self.filters[filter_index].filtered_indices.len());
-                            }
-                        } else {
-                            eprintln!("Filter {}: Line not in filtered results and no timestamp available", 
-                                filter_index);
-                        }
-                        // Mark as processed so we don't keep checking on every render
-                        self.filters[filter_index].last_rendered_selection = self.selected_line_index;
+                        self.bookmark_name_input = format!("Filter {}", filter_index + 1);
                     }
+                    self.editing_bookmark = Some(filter_index + 10000); // Use high number to distinguish from bookmarks
+                }
+                FilterViewEvent::FavoriteToggled => {
+                    self.filters[filter_index].is_favorite = !self.filters[filter_index].is_favorite;
+                    self.save_crab_file();
                 }
             }
         }
-        
-        // Stats
-        let total_lines = self.lines.len();
-        let visible_lines = self.filters[filter_index].filtered_indices.len();
-        
-        ui.horizontal(|ui| {
-            ui.label(format!("Total lines: {}", total_lines));
-            ui.separator();
-            ui.label(format!("Visible: {}", visible_lines));
-            if self.filters[filter_index].search_regex.is_some() {
-                ui.separator();
-                ui.colored_label(Color32::LIGHT_BLUE, format!("🔍 {} matches", visible_lines));
-            }
-        });
-        
-        ui.separator();
-        
-        // Render histogram
-        self.render_histogram(ui, filter_index);
-        
-        ui.separator();
-        
-        self.render_filter_table(ui, filter_index, scroll_to_row);
         
         // Handle filter name editing dialog
         if let Some(editing_id) = self.editing_bookmark {
@@ -510,522 +390,59 @@ impl LogView {
         }
     }
     
-    fn render_histogram(&mut self, ui: &mut Ui, filter_index: usize) {
-        if self.lines.is_empty() {
-            return;
-        }
-        
-        // Get time range from filtered lines only
-        let filtered_indices = &self.filters[filter_index].filtered_indices;
-        if filtered_indices.is_empty() {
-            ui.label("No logs match the current filter");
-            return;
-        }
-        
-        let first_ts = filtered_indices.iter()
-            .find_map(|&idx| self.lines[idx].timestamp);
-        let last_ts = filtered_indices.iter().rev()
-            .find_map(|&idx| self.lines[idx].timestamp);
-        
-        if first_ts.is_none() || last_ts.is_none() {
-            ui.label("No timestamps available for histogram");
-            return;
-        }
-        
-        let start_time = first_ts.unwrap();
-        let end_time = last_ts.unwrap();
-        let time_range = (end_time.timestamp() - start_time.timestamp()).max(1);
-        
-        const NUM_BUCKETS: usize = 100;
-        let bucket_size = time_range as f64 / NUM_BUCKETS as f64;
-        
-        // Count lines per bucket (only filtered lines)
-        let mut buckets = vec![0usize; NUM_BUCKETS];
-        for &line_idx in &self.filters[filter_index].filtered_indices {
-            if let Some(ts) = self.lines[line_idx].timestamp {
-                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-                let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
-                buckets[bucket_idx] += 1;
-            }
-        }
-        
-        let max_count = *buckets.iter().max().unwrap_or(&1);
-        
-        // Calculate selected line position if present
-        let selected_bucket = if let Some(sel_idx) = self.selected_line_index {
-            if sel_idx < self.lines.len() {
-                if let Some(sel_ts) = self.lines[sel_idx].timestamp {
-                    let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
-                    // Only show indicator if the selected time is within this filter's time range
-                    if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
-                        Some(((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        
-        // Render histogram
-        let desired_size = egui::vec2(ui.available_width(), 60.0);
-        let (response, painter) = ui.allocate_painter(desired_size, egui::Sense::click());
-        let rect = response.rect;
-        
-        // Draw background
-        painter.rect_filled(rect, 0.0, Color32::from_gray(20));
-        
-        let bar_width = rect.width() / NUM_BUCKETS as f32;
-        
-        // Draw bars
-        for (i, &count) in buckets.iter().enumerate() {
-            if count > 0 {
-                let x = rect.min.x + i as f32 * bar_width;
-                let height = (count as f32 / max_count as f32) * rect.height();
-                let y = rect.max.y - height;
-                
-                let bar_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, y),
-                    egui::vec2(bar_width.max(1.0), height),
-                );
-                
-                // Color based on whether this bucket is selected
-                let color = if Some(i) == selected_bucket {
-                    Color32::from_rgb(255, 200, 100) // Orange for selected
-                } else {
-                    Color32::from_rgb(100, 150, 255) // Blue for normal
-                };
-                
-                painter.rect_filled(bar_rect, 0.0, color);
-            }
-        }
-        
-        // Draw selected line indicator
-        if let Some(bucket_idx) = selected_bucket {
-            let x = rect.min.x + bucket_idx as f32 * bar_width + bar_width / 2.0;
-            painter.vline(x, rect.y_range(), (2.0, Color32::RED));
-        }
-        
-        // Handle clicks to jump to time
-        if response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let rel_x = (pos.x - rect.min.x) / rect.width();
-                let bucket_idx = (rel_x * NUM_BUCKETS as f32) as usize;
-                
-                if bucket_idx < NUM_BUCKETS {
-                    // Find first line in this bucket
-                    let target_time = start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
-                    
-                    // Find closest filtered line to this time
-                    let mut closest_idx = None;
-                    let mut min_diff = i64::MAX;
-                    
-                    for &line_idx in &self.filters[filter_index].filtered_indices {
-                        if let Some(ts) = self.lines[line_idx].timestamp {
-                            let diff = (ts.timestamp() - target_time).abs();
-                            if diff < min_diff {
-                                min_diff = diff;
-                                closest_idx = Some(line_idx);
-                            }
-                        }
-                    }
-                    
-                    if let Some(idx) = closest_idx {
-                        self.selected_line_index = Some(idx);
-                        self.selected_timestamp = self.lines[idx].timestamp;
-                    }
-                }
-            }
-        }
-        
-        // Show time range below
-        ui.horizontal(|ui| {
-            ui.label(format!("Timeline: {} → {}", 
-                start_time.format("%H:%M:%S"),
-                end_time.format("%H:%M:%S")
-            ));
-            if let Some(sel_idx) = self.selected_line_index {
-                if sel_idx < self.lines.len() {
-                    if let Some(sel_ts) = self.lines[sel_idx].timestamp {
-                        ui.separator();
-                        ui.colored_label(Color32::YELLOW, format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")));
-                    }
-                }
-            }
-        });
-    }
-    
-    fn render_filter_table(&mut self, ui: &mut Ui, filter_index: usize, scroll_to_row: Option<usize>) {
-        let visible_lines = self.filters[filter_index].filtered_indices.len();
-        
-        egui::ScrollArea::horizontal()
-            .id_source(format!("filtered_scroll_{}", filter_index))
-            .show(ui, |ui| {
-                #[cfg(feature = "cpu-profiling")]
-                puffin::profile_scope!("filtered_table");
-                
-                let mut table = TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(false)
-                    .sense(egui::Sense::click())
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .vscroll(true)
-                    .max_scroll_height(f32::INFINITY)
-                    .column(Column::initial(60.0).resizable(true).clip(true))
-                    .column(Column::initial(110.0).resizable(true).clip(true))
-                    .column(Column::remainder().resizable(true).clip(true))
-                    .column(Column::initial(70.0).resizable(true).clip(true));
-                
-                if let Some(row_idx) = scroll_to_row {
-                    table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
-                    self.filters[filter_index].last_rendered_selection = self.selected_line_index;
-                }
-                
-                table.header(20.0, |mut header| {
-                    header.col(|ui| { ui.strong("Line"); });
-                    header.col(|ui| { ui.strong("Timestamp"); });
-                    header.col(|ui| { ui.strong("Message"); });
-                    header.col(|ui| { ui.strong("Score"); });
-                })
-                .body(|body| {
-                    body.rows(18.0, visible_lines, |mut row| {
-                        let row_index = row.index();
-                        let line_idx = self.filters[filter_index].filtered_indices[row_index];
-                        let line = &self.lines[line_idx];
-                        
-                        let is_selected = self.selected_line_index == Some(line_idx);
-                        let is_bookmarked = self.bookmarks.contains_key(&line_idx);
-                        let color = score_to_color(line.anomaly_score);
-                        let line_number = line.line_number;
-                        let timestamp_str = if let Some(ts) = line.timestamp {
-                            ts.format("%H:%M:%S%.3f").to_string()
-                        } else {
-                            "-".to_string()
-                        };
-                        let message = line.message.clone();
-                        let anomaly_score = line.anomaly_score;
-                        let timestamp = line.timestamp;
-                        
-                        let mut row_clicked = false;
-                        let mut row_right_clicked = false;
-                        
-                        let bookmark_name = if is_bookmarked {
-                            self.bookmarks.get(&line_idx).map(|b| b.name.as_str())
-                        } else {
-                            None
-                        };
-                        
-                        let bookmark_icon = if is_bookmarked { "★ " } else { "" };
-                        let line_text = if is_selected {
-                            format!("▶ {}{}", bookmark_icon, line_number)
-                        } else {
-                            format!("{}{}", bookmark_icon, line_number)
-                        };
-                        
-                        self.render_table_cell(&mut row, filter_index, is_bookmarked, is_selected, &line_text, color, line_idx, "line", &mut row_clicked, &mut row_right_clicked, bookmark_name, &line.raw);
-                        
-                        row.col(|ui| {
-                            if is_bookmarked {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            } else if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
-                            }
-                            
-                            let job = self.filters[filter_index].highlight_matches(&timestamp_str, color);
-                            ui.label(job);
-                            
-                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("ts"), egui::Sense::click());
-                            let response = response.on_hover_text(&line.raw);
-                            if response.clicked() { row_clicked = true; }
-                            if response.secondary_clicked() { row_right_clicked = true; }
-                        });
-                        
-                        row.col(|ui| {
-                            if is_bookmarked {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            } else if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
-                            }
-                            
-                            let job = self.filters[filter_index].highlight_matches(&message, color);
-                            ui.label(job);
-                            
-                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("msg"), egui::Sense::click());
-                            let response = response.on_hover_text(&line.raw);
-                            if response.clicked() { row_clicked = true; }
-                            if response.secondary_clicked() { row_right_clicked = true; }
-                        });
-                        
-                        row.col(|ui| {
-                            if is_bookmarked {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            } else if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
-                            }
-                            
-                            let text = RichText::new(format!("{:.1}", anomaly_score)).strong().color(color);
-                            ui.label(text);
-                            
-                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(filter_index).with("score"), egui::Sense::click());
-                            let response = response.on_hover_text(&line.raw);
-                            if response.clicked() { row_clicked = true; }
-                            if response.secondary_clicked() { row_right_clicked = true; }
-                        });
-                        
-                        if row_right_clicked {
-                            self.toggle_bookmark(line_idx);
-                        } else if row_clicked {
-                            self.selected_line_index = Some(line_idx);
-                            self.selected_timestamp = timestamp;
-                        }
-                    });
-                });
-            });
-    }
-    
-    fn render_table_cell(&self, row: &mut egui_extras::TableRow, _filter_index: usize, is_bookmarked: bool, is_selected: bool, text: &str, color: Color32, line_idx: usize, id_suffix: &str, row_clicked: &mut bool, row_right_clicked: &mut bool, bookmark_name: Option<&str>, raw_line: &str) {
-        row.col(|ui| {
-            if is_bookmarked {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-            } else if is_selected {
-                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(60, 60, 80));
-            }
-            
-            let text = if is_selected {
-                RichText::new(text).color(color).strong()
-            } else {
-                RichText::new(text).color(color)
-            };
-            let label_response = ui.label(text);
-            
-            // Show tooltip with bookmark name if this is the line number column and it's bookmarked
-            if id_suffix == "line" && is_bookmarked {
-                if let Some(name) = bookmark_name {
-                    label_response.on_hover_text(format!("📑 Bookmark: {}", name));
-                }
-            }
-            
-            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with(id_suffix), egui::Sense::click());
-            // Show full raw line on hover for all cells
-            let response = response.on_hover_text(raw_line);
-            
-            if response.clicked() { *row_clicked = true; }
-            if response.secondary_clicked() { *row_right_clicked = true; }
-        });
-    }
     
     pub fn render_bookmarks(&mut self, ui: &mut Ui) {
-        ui.heading("Bookmarks");
-        ui.separator();
-        
-        if self.bookmarks.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.0);
-                ui.label("No bookmarks yet");
-                ui.label("Right-click on any line to bookmark it");
-            });
-            return;
-        }
-        
-        let mut bookmarks: Vec<_> = self.bookmarks.values().cloned().collect();
+        // Convert bookmarks to BookmarkData format
+        let mut bookmarks: Vec<BookmarkData> = self.bookmarks.values()
+            .map(|b| BookmarkData {
+                line_index: b.line_index,
+                name: b.name.clone(),
+                timestamp: b.timestamp,
+            })
+            .collect();
         bookmarks.sort_by_key(|b| b.line_index);
         
-        let mut to_delete = None;
-        let mut to_jump = None;
-        let mut to_rename = None;
+        // Render using BookmarksView
+        let events = BookmarksView::render(
+            ui,
+            &self.lines,
+            bookmarks,
+            self.selected_line_index,
+            self.editing_bookmark,
+            &mut self.bookmark_name_input,
+        );
+        
+        // Handle events
         let mut should_save = false;
-        
-        ui.label(format!("Total bookmarks: {}", bookmarks.len()));
-        ui.separator();
-        
-        egui::ScrollArea::horizontal()
-            .id_source("bookmarks_scroll")
-            .show(ui, |ui| {
-                let mut table = TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(false)
-                    .sense(egui::Sense::click())
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .vscroll(true)
-                    .max_scroll_height(f32::INFINITY)
-                    .column(Column::initial(60.0).resizable(true).clip(true))
-                    .column(Column::initial(110.0).resizable(true).clip(true))
-                    .column(Column::initial(200.0).resizable(true).clip(true))
-                    .column(Column::remainder().resizable(true).clip(true))
-                    .column(Column::initial(80.0).resizable(true).clip(true));
-                
-                table.header(20.0, |mut header| {
-                    header.col(|ui| { ui.strong("Line"); });
-                    header.col(|ui| { ui.strong("Timestamp"); });
-                    header.col(|ui| { ui.strong("Name"); });
-                    header.col(|ui| { ui.strong("Message"); });
-                    header.col(|ui| { ui.strong("Actions"); });
-                })
-                .body(|body| {
-                    body.rows(18.0, bookmarks.len(), |mut row| {
-                        let row_index = row.index();
-                        let bookmark = &bookmarks[row_index];
-                        let line_idx = bookmark.line_index;
-                        
-                        let is_selected = self.selected_line_index == Some(line_idx);
-                        let color = if line_idx < self.lines.len() {
-                            score_to_color(self.lines[line_idx].anomaly_score)
-                        } else {
-                            Color32::WHITE
-                        };
-                        
-                        let line_number = if line_idx < self.lines.len() {
-                            self.lines[line_idx].line_number
-                        } else {
-                            line_idx
-                        };
-                        
-                        let timestamp_str = if let Some(ts) = bookmark.timestamp {
-                            ts.format("%H:%M:%S%.3f").to_string()
-                        } else {
-                            "-".to_string()
-                        };
-                        
-                        let message = if line_idx < self.lines.len() {
-                            self.lines[line_idx].message.clone()
-                        } else {
-                            String::new()
-                        };
-                        
-                        let mut row_clicked = false;
-                        
-                        // Line number
-                        row.col(|ui| {
-                            if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            }
-                            let text = if is_selected {
-                                RichText::new(format!("★ ▶ {}", line_number)).color(color).strong()
-                            } else {
-                                RichText::new(format!("★ {}", line_number)).color(color)
-                            };
-                            ui.label(text);
-                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_line"), egui::Sense::click());
-                            if response.clicked() { row_clicked = true; }
-                        });
-                        
-                        // Timestamp
-                        row.col(|ui| {
-                            if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            }
-                            ui.label(RichText::new(&timestamp_str).color(color));
-                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_ts"), egui::Sense::click());
-                            if response.clicked() { row_clicked = true; }
-                        });
-                        
-                        // Name
-                        row.col(|ui| {
-                            if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            }
-                            
-                            // Editable name field
-                            if self.editing_bookmark == Some(line_idx) {
-                                let response = ui.add(
-                                    egui::TextEdit::singleline(&mut self.bookmark_name_input)
-                                        .desired_width(ui.available_width() - 50.0)
-                                );
-                                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                    if !self.bookmark_name_input.is_empty() {
-                                        if let Some(b) = self.bookmarks.get_mut(&line_idx) {
-                                            b.name = self.bookmark_name_input.clone();
-                                            should_save = true;
-                                        }
-                                    }
-                                    self.editing_bookmark = None;
-                                    self.bookmark_name_input.clear();
-                                }
-                                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                    self.editing_bookmark = None;
-                                    self.bookmark_name_input.clear();
-                                }
-                            } else {
-                                ui.label(RichText::new(&bookmark.name).color(color).strong());
-                                let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_name"), egui::Sense::click());
-                                if response.double_clicked() {
-                                    to_rename = Some(line_idx);
-                                } else if response.clicked() {
-                                    row_clicked = true;
-                                }
-                            }
-                        });
-                        
-                        // Message
-                        row.col(|ui| {
-                            if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            }
-                            ui.label(RichText::new(&message).color(color));
-                            let response = ui.interact(ui.max_rect(), ui.id().with(line_idx).with("bm_msg"), egui::Sense::click());
-                            if response.clicked() { row_clicked = true; }
-                        });
-                        
-                        // Actions
-                        row.col(|ui| {
-                            if is_selected {
-                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, Color32::from_rgb(100, 80, 30));
-                            }
-                            ui.horizontal(|ui| {
-                                if ui.small_button("✏").on_hover_text("Rename").clicked() {
-                                    to_rename = Some(line_idx);
-                                }
-                                if ui.small_button("🗑").on_hover_text("Delete").clicked() {
-                                    to_delete = Some(line_idx);
-                                }
-                            });
-                        });
-                        
-                        if row_clicked {
-                            to_jump = Some((line_idx, bookmark.timestamp));
-                        }
-                    });
-                });
-            });
-        
-        // Handle rename action
-        if let Some(line_idx) = to_rename {
-            self.editing_bookmark = Some(line_idx);
-            if let Some(bookmark) = self.bookmarks.get(&line_idx) {
-                self.bookmark_name_input = bookmark.name.clone();
+        for event in events {
+            match event {
+                BookmarksViewEvent::BookmarkClicked { line_index, timestamp } => {
+                    self.selected_line_index = Some(line_index);
+                    self.selected_timestamp = timestamp;
+                }
+                BookmarksViewEvent::BookmarkDeleted { line_index } => {
+                    self.bookmarks.remove(&line_index);
+                    should_save = true;
+                }
+                BookmarksViewEvent::BookmarkRenamed { line_index, new_name } => {
+                    if let Some(b) = self.bookmarks.get_mut(&line_index) {
+                        b.name = new_name;
+                        should_save = true;
+                    }
+                    self.editing_bookmark = None;
+                    self.bookmark_name_input.clear();
+                }
+                BookmarksViewEvent::StartRenaming { line_index } => {
+                    self.editing_bookmark = Some(line_index);
+                    if let Some(bookmark) = self.bookmarks.get(&line_index) {
+                        self.bookmark_name_input = bookmark.name.clone();
+                    }
+                }
             }
-        }
-        
-        // Apply actions
-        if let Some(line_idx) = to_delete {
-            self.bookmarks.remove(&line_idx);
-            should_save = true;
-        }
-        
-        if let Some((line_idx, timestamp)) = to_jump {
-            self.selected_line_index = Some(line_idx);
-            self.selected_timestamp = timestamp;
         }
         
         if should_save {
             self.save_crab_file();
         }
-    }
-}
-
-fn score_to_color(score: f64) -> Color32 {
-    if score >= 80.0 {
-        Color32::from_rgb(255, 100, 100)
-    } else if score >= 60.0 {
-        Color32::from_rgb(255, 180, 100)
-    } else if score >= 30.0 {
-        Color32::from_rgb(255, 200, 200)
-    } else {
-        Color32::LIGHT_GRAY
     }
 }
