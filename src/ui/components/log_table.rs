@@ -34,16 +34,37 @@ pub enum LogTableEvent {
     },
 }
 
-/// Convert anomaly score to color
+/// Convert anomaly score to color with continuous gradient
 pub fn score_to_color(score: f64) -> Color32 {
-    if score >= 8.0 {
-        Color32::from_rgb(255, 50, 50) // Bright red
-    } else if score >= 6.0 {
-        Color32::from_rgb(255, 150, 50) // Orange
-    } else if score >= 4.0 {
-        Color32::from_rgb(255, 255, 100) // Yellow
+    // Normalize score to 0.0-1.0 range
+    let normalized = (score / 100.0).clamp(0.0, 1.0);
+    
+    if normalized < 0.3 {
+        // Low scores: light gray to white
+        let t = normalized / 0.3;
+        let gray = (150.0 + t * 105.0) as u8; // 150 -> 255
+        Color32::from_rgb(gray, gray, gray)
+    } else if normalized < 0.6 {
+        // Medium-low scores: white to yellow
+        let t = (normalized - 0.3) / 0.3;
+        let r = 255;
+        let g = 255;
+        let b = (255.0 * (1.0 - t)) as u8; // 255 -> 0
+        Color32::from_rgb(r, g, b)
+    } else if normalized < 0.8 {
+        // Medium-high scores: yellow to orange
+        let t = (normalized - 0.6) / 0.2;
+        let r = 255;
+        let g = (255.0 * (1.0 - t * 0.4)) as u8; // 255 -> 153
+        let b = 0;
+        Color32::from_rgb(r, g, b)
     } else {
-        Color32::from_rgb(180, 180, 180) // Light gray
+        // High scores: orange to red
+        let t = (normalized - 0.8) / 0.2;
+        let r = 255;
+        let g = (153.0 * (1.0 - t)) as u8; // 153 -> 0
+        let b = 0;
+        Color32::from_rgb(r, g, b)
     }
 }
 
