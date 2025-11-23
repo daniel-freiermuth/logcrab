@@ -103,7 +103,7 @@ impl LogCrabApp {
             show_anomaly_explanation: false,
             add_tab_after: None,
             show_shortcuts_window: false,
-            shortcut_bindings: KeyboardBindings::default(), // Vim-style (j/k) by default
+            shortcut_bindings: KeyboardBindings::load(), // Load from disk or use defaults
             pending_rebind: None,
             focus_search_next_frame: None,
             request_new_filter_tab: false,
@@ -358,11 +358,16 @@ impl LogCrabApp {
             _ => None,
         };
 
-        let (actions, events_to_remove) = self.shortcut_bindings.process_input(
+        let (actions, events_to_remove, shortcuts_changed) = self.shortcut_bindings.process_input(
             raw_input,
             &mut self.pending_rebind,
             active_filter_index,
         );
+
+        // Save shortcuts if they were changed
+        if shortcuts_changed {
+            let _ = self.shortcut_bindings.save();
+        }
 
         // Execute all generated actions
         for action in actions {

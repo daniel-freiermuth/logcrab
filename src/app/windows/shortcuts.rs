@@ -32,6 +32,8 @@ pub fn render_shortcuts_window(
                     {
                         *shortcut_bindings = KeyboardBindings::default();
                         *pending_rebind = None;
+                        // Save the reset bindings
+                        let _ = shortcut_bindings.save();
                     }
                 });
             });

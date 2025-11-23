@@ -18,10 +18,11 @@
 
 use super::actions::{InputAction, PaneDirection};
 use keybinds::Keybinds;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Keyboard shortcut actions that can be rebound
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShortcutAction {
     MoveUp,
     MoveDown,
@@ -108,6 +109,76 @@ pub struct KeyboardBindings {
 }
 
 impl KeyboardBindings {
+    /// Get the config file path for storing shortcuts (public for debugging)
+    pub fn config_path() -> Option<std::path::PathBuf> {
+        if let Some(config_dir) = dirs::config_dir() {
+            let app_config = config_dir.join("logcrab");
+            Some(app_config.join("shortcuts.json"))
+        } else {
+            None
+        }
+    }
+
+    /// Save current shortcuts to disk
+    pub fn save(&self) -> Result<(), String> {
+        let path = Self::config_path().ok_or("Could not determine config directory")?;
+        
+        // Create directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        }
+        
+        // Serialize bindings to JSON
+        let json = serde_json::to_string_pretty(&self.bindings)
+            .map_err(|e| format!("Failed to serialize shortcuts: {}", e))?;
+        
+        // Write to file
+        std::fs::write(&path, json)
+            .map_err(|e| format!("Failed to write shortcuts file: {}", e))?;
+        
+        log::info!("Saved keyboard shortcuts to {:?}", path);
+        Ok(())
+    }
+
+    /// Load shortcuts from disk, falling back to defaults if not found
+    pub fn load() -> Self {
+        // Try to load from file
+        if let Some(path) = Self::config_path() {
+            if path.exists() {
+                log::info!("Loading keyboard shortcuts from {:?}", path);
+                if let Ok(contents) = std::fs::read_to_string(&path) {
+                    if let Ok(bindings) = serde_json::from_str::<HashMap<ShortcutAction, String>>(&contents) {
+                        // Create a new dispatcher and bind all loaded shortcuts
+                        let mut dispatcher = Keybinds::default();
+                        let mut valid_bindings = HashMap::new();
+                        
+                        for (action, binding) in bindings {
+                            if dispatcher.bind(&binding, action).is_ok() {
+                                valid_bindings.insert(action, binding);
+                            }
+                        }
+                        
+                        // Also bind arrow keys for movement (in addition to j/k)
+                        let _ = dispatcher.bind("Up", ShortcutAction::MoveUp);
+                        let _ = dispatcher.bind("Down", ShortcutAction::MoveDown);
+                        
+                        log::info!("Loaded {} custom keyboard shortcuts", valid_bindings.len());
+                        return Self {
+                            dispatcher,
+                            bindings: valid_bindings,
+                        };
+                    }
+                }
+            } else {
+                log::info!("No custom keyboard shortcuts found, using defaults");
+            }
+        }
+        
+        // If loading failed, return default bindings
+        Self::default()
+    }
+
     /// Get the shortcut string for a specific action
     pub fn get_shortcut(&self, action: ShortcutAction) -> &str {
         self.bindings.get(&action).map(|s| s.as_str()).unwrap_or("")
@@ -125,14 +196,16 @@ impl KeyboardBindings {
     }
 
     /// Process input from egui and return actions to execute
+    /// Returns (actions to execute, events to consume, shortcuts_changed flag)
     pub fn process_input(
         &mut self,
         raw_input: &egui::RawInput,
         pending_rebind: &mut Option<ShortcutAction>,
         active_filter_index: Option<usize>,
-    ) -> (Vec<InputAction>, Vec<usize>) {
+    ) -> (Vec<InputAction>, Vec<usize>, bool) {
         let mut actions = Vec::new();
         let mut events_to_consume = Vec::new();
+        let mut shortcuts_changed = false;
         
         for (idx, event) in raw_input.events.iter().enumerate() {
             if let egui::Event::Key {
@@ -145,7 +218,9 @@ impl KeyboardBindings {
                 // Handle rebinding mode first
                 if let Some(action) = pending_rebind.take() {
                     let shortcut_str = Self::format_key_combo(*key, *modifiers);
-                    let _ = self.set_shortcut(action, &shortcut_str);
+                    if self.set_shortcut(action, &shortcut_str).is_ok() {
+                        shortcuts_changed = true;
+                    }
                     events_to_consume.push(idx);
                     continue;
                 }
@@ -162,7 +237,7 @@ impl KeyboardBindings {
             }
         }
         
-        (actions, events_to_consume)
+        (actions, events_to_consume, shortcuts_changed)
     }
 
     /// Convert a ShortcutAction to an InputAction
