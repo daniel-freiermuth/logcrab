@@ -383,8 +383,14 @@ impl LogCrabApp {
         for action in actions {
             match action {
                 InputAction::MoveSelection(delta) => {
-                    if let Some(TabType::Filter(idx)) = focused_tab {
-                        self.log_view.move_selection_in_filter(idx, delta);
+                    match focused_tab {
+                        Some(TabType::Filter(idx)) => {
+                            self.log_view.move_selection_in_filter(idx, delta);
+                        }
+                        Some(TabType::Bookmarks) => {
+                            self.log_view.move_selection_in_bookmarks(delta);
+                        }
+                        None => {}
                     }
                 }
                 InputAction::ToggleBookmark => {
@@ -429,13 +435,25 @@ impl LogCrabApp {
                     }
                 }
                 InputAction::JumpToTop => {
-                    if let Some(TabType::Filter(idx)) = focused_tab {
-                        self.log_view.jump_to_top_in_filter(idx);
+                    match focused_tab {
+                        Some(TabType::Filter(idx)) => {
+                            self.log_view.jump_to_top_in_filter(idx);
+                        }
+                        Some(TabType::Bookmarks) => {
+                            self.log_view.jump_to_top_in_bookmarks();
+                        }
+                        None => {}
                     }
                 }
                 InputAction::JumpToBottom => {
-                    if let Some(TabType::Filter(idx)) = focused_tab {
-                        self.log_view.jump_to_bottom_in_filter(idx);
+                    match focused_tab {
+                        Some(TabType::Filter(idx)) => {
+                            self.log_view.jump_to_bottom_in_filter(idx);
+                        }
+                        Some(TabType::Bookmarks) => {
+                            self.log_view.jump_to_bottom_in_bookmarks();
+                        }
+                        None => {}
                     }
                 }
                 InputAction::NavigatePane(direction) => {

@@ -186,6 +186,61 @@ impl LogView {
         self.selected_timestamp = self.lines[last_line_index].timestamp;
     }
 
+    /// Move selection in bookmarks view
+    pub fn move_selection_in_bookmarks(&mut self, delta: i32) {
+        if self.bookmarks.is_empty() {
+            return;
+        }
+
+        // Get sorted list of bookmark indices
+        let mut bookmark_indices: Vec<usize> = self.bookmarks.keys().copied().collect();
+        bookmark_indices.sort_unstable();
+
+        // Find current position in bookmark list
+        let current_pos = if let Some(sel) = self.selected_line_index {
+            bookmark_indices
+                .iter()
+                .position(|&idx| idx == sel)
+                .unwrap_or(if delta >= 0 { 0 } else { bookmark_indices.len() - 1 })
+        } else if delta >= 0 {
+            0
+        } else {
+            bookmark_indices.len() - 1
+        };
+
+        let new_pos = if delta < 0 {
+            current_pos.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            (current_pos + delta as usize).min(bookmark_indices.len() - 1)
+        };
+
+        let new_line_index = bookmark_indices[new_pos];
+        self.selected_line_index = Some(new_line_index);
+        self.selected_timestamp = self.lines.get(new_line_index).and_then(|l| l.timestamp);
+    }
+
+    /// Jump to the first bookmark (Vim-style gg)
+    pub fn jump_to_top_in_bookmarks(&mut self) {
+        if self.bookmarks.is_empty() {
+            return;
+        }
+
+        let first_index = *self.bookmarks.keys().min().unwrap();
+        self.selected_line_index = Some(first_index);
+        self.selected_timestamp = self.lines.get(first_index).and_then(|l| l.timestamp);
+    }
+
+    /// Jump to the last bookmark (Vim-style G)
+    pub fn jump_to_bottom_in_bookmarks(&mut self) {
+        if self.bookmarks.is_empty() {
+            return;
+        }
+
+        let last_index = *self.bookmarks.keys().max().unwrap();
+        self.selected_line_index = Some(last_index);
+        self.selected_timestamp = self.lines.get(last_index).and_then(|l| l.timestamp);
+    }
+
     pub fn filter_count(&self) -> usize {
         self.filters.len()
     }
