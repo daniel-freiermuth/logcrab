@@ -132,35 +132,38 @@ pub struct KeyboardBindings {
 impl KeyboardBindings {
     /// Load shortcuts from global config
     pub fn load(config: &GlobalConfig) -> Self {
-        let mut dispatcher = Keybinds::default();
-        let mut bindings = HashMap::new();
-        
-        if !config.shortcuts.is_empty() {
+        let bindings = if !config.shortcuts.is_empty() {
             log::info!("Loading {} keyboard shortcuts from config", config.shortcuts.len());
-            
-            // Bind all shortcuts from config
-            for (action, binding) in &config.shortcuts {
-                if dispatcher.bind(binding, *action).is_ok() {
-                    bindings.insert(*action, binding.clone());
-                }
-            }
+            config.shortcuts.clone()
         } else {
             log::info!("No custom keyboard shortcuts found, using defaults");
             
             // Use defaults for all actions
+            let mut bindings = HashMap::new();
             for action in ShortcutAction::all() {
-                let binding = action.default_binding();
-                if let Ok(()) = dispatcher.bind(binding, *action) {
-                    bindings.insert(*action, binding.to_string());
-                }
+                bindings.insert(*action, action.default_binding().to_string());
             }
+            bindings
+        };
+        
+        let dispatcher = Self::rebuild_dispatcher(&bindings);
+        Self { dispatcher, bindings }
+    }
+
+    /// Rebuild the dispatcher from the current bindings
+    fn rebuild_dispatcher(bindings: &HashMap<ShortcutAction, String>) -> Keybinds<ShortcutAction> {
+        let mut dispatcher = Keybinds::default();
+        
+        // Bind all shortcuts from the bindings map
+        for (action, binding) in bindings {
+            let _ = dispatcher.bind(binding, *action);
         }
         
         // Also bind arrow keys for movement (in addition to j/k)
         let _ = dispatcher.bind("Up", ShortcutAction::MoveUp);
         let _ = dispatcher.bind("Down", ShortcutAction::MoveDown);
         
-        Self { dispatcher, bindings }
+        dispatcher
     }
 
     /// Save shortcuts to global config
@@ -176,12 +179,16 @@ impl KeyboardBindings {
 
     /// Set the shortcut for a specific action
     pub fn set_shortcut(&mut self, action: ShortcutAction, shortcut_str: &str) -> Result<(), String> {
-        // Try to parse and bind the new shortcut
-        self.dispatcher.bind(shortcut_str, action)
+        // Validate the shortcut string by parsing it as a KeySeq
+        shortcut_str.parse::<keybinds::KeySeq>()
             .map_err(|e| format!("Invalid keybind: {}", e))?;
         
-        // Update our stored binding
+        // Update the bindings map
         self.bindings.insert(action, shortcut_str.to_string());
+        
+        // Rebuild the entire dispatcher from the updated bindings
+        self.dispatcher = Self::rebuild_dispatcher(&self.bindings);
+        
         Ok(())
     }
 
@@ -413,21 +420,14 @@ impl KeyboardBindings {
 
 impl Default for KeyboardBindings {
     fn default() -> Self {
-        let mut dispatcher = Keybinds::default();
         let mut bindings = HashMap::new();
 
         // Bind all default shortcuts
         for action in ShortcutAction::all() {
-            let binding = action.default_binding();
-            if let Ok(()) = dispatcher.bind(binding, *action) {
-                bindings.insert(*action, binding.to_string());
-            }
+            bindings.insert(*action, action.default_binding().to_string());
         }
 
-        // Also bind arrow keys for movement (in addition to j/k)
-        let _ = dispatcher.bind("Up", ShortcutAction::MoveUp);
-        let _ = dispatcher.bind("Down", ShortcutAction::MoveDown);
-
+        let dispatcher = Self::rebuild_dispatcher(&bindings);
         Self { dispatcher, bindings }
     }
 }
