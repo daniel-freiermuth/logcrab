@@ -168,14 +168,6 @@ impl KeyboardBindings {
             }
         }
 
-        // Also support arrow keys (hardcoded, always work)
-        if input.key_pressed(egui::Key::ArrowUp) {
-            actions.push(InputAction::MoveSelection(-1));
-        }
-        if input.key_pressed(egui::Key::ArrowDown) {
-            actions.push(InputAction::MoveSelection(1));
-        }
-
         actions
     }
 
@@ -389,6 +381,10 @@ impl Default for KeyboardBindings {
                 bindings.insert(action, binding.to_string());
             }
         }
+
+        // Also bind arrow keys for movement (in addition to j/k)
+        let _ = dispatcher.bind("Up", ShortcutAction::MoveUp);
+        let _ = dispatcher.bind("Down", ShortcutAction::MoveDown);
 
         Self { dispatcher, bindings }
     }
