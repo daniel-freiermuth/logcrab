@@ -51,9 +51,11 @@ struct Args {
 }
 
 fn main() -> eframe::Result<()> {
-    // Initialize logger with default level INFO
+    // Initialize logger with millisecond precision timestamps
     // Set RUST_LOG environment variable to override (e.g., RUST_LOG=debug)
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
     
     log::info!("LogCrab starting up (version {})", env!("CARGO_PKG_VERSION"));
     
