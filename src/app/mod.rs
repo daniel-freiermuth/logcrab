@@ -7,7 +7,7 @@ pub use tabs::{TabContent, TabType};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use egui_dock::{DockArea, DockState};
+use egui_dock::{DockArea, DockState, Node};
 
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{InputAction, KeyboardBindings, PaneDirection, ShortcutAction};
@@ -47,9 +47,6 @@ pub struct LogCrabApp {
     /// Request to add a tab after a specific node
     add_tab_after: Option<egui_dock::NodeIndex>,
 
-    /// Currently active tab
-    active_tab: Option<TabType>,
-
     /// Whether to show the keyboard shortcuts window
     show_shortcuts_window: bool,
 
@@ -67,9 +64,6 @@ pub struct LogCrabApp {
 
     /// Request to create a new bookmarks tab
     request_new_bookmarks_tab: bool,
-
-    /// Request to close the active tab
-    close_active_tab: bool,
 
     /// Request to navigate to a neighboring pane
     navigate_pane_direction: Option<PaneDirection>,
@@ -108,14 +102,12 @@ impl LogCrabApp {
             dock_state,
             show_anomaly_explanation: false,
             add_tab_after: None,
-            active_tab: None,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::default(), // Vim-style (j/k) by default
             pending_rebind: None,
             focus_search_next_frame: None,
             request_new_filter_tab: false,
             request_new_bookmarks_tab: false,
-            close_active_tab: false,
             navigate_pane_direction: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
@@ -303,18 +295,9 @@ impl LogCrabApp {
                 &mut LogCrabTabViewer {
                     log_view: &mut self.log_view,
                     add_tab_after: &mut self.add_tab_after,
-                    active_tab: &mut self.active_tab,
                     focus_search_next_frame: &mut self.focus_search_next_frame,
-                    close_active_tab: &mut self.close_active_tab,
                 },
             );
-
-            // If a tab was just closed, update active_tab to the currently focused tab
-            if self.active_tab.is_none() {
-                if let Some((_, tab)) = self.dock_state.find_active_focused() {
-                    self.active_tab = Some(tab.tab_type.clone());
-                }
-            }
         }
     }
 
@@ -345,10 +328,9 @@ impl LogCrabApp {
 
             // Focus the search input in the new tab
             self.focus_search_next_frame = Some(filter_index);
-            self.active_tab = Some(TabType::Filter(filter_index));
         }
 
-        // Handle new bookmarks tab request (Ctrl+B)
+        // Handle new bookmarks tab request
         if self.request_new_bookmarks_tab {
             self.request_new_bookmarks_tab = false;
 
@@ -356,9 +338,6 @@ impl LogCrabApp {
                 tab_type: TabType::Bookmarks,
                 title: "Bookmarks".to_string(),
             });
-
-            // Update active tab to the new bookmarks tab
-            self.active_tab = Some(TabType::Bookmarks);
         }
     }
 
@@ -369,7 +348,12 @@ impl LogCrabApp {
             return;
         }
 
-        let active_filter_index = match &self.active_tab {
+        // Get the currently focused tab directly from dock state
+        let focused_tab = self
+            .dock_state
+            .find_active_focused()
+            .map(|(_, tab)| tab.tab_type.clone());
+        let active_filter_index = match &focused_tab {
             Some(TabType::Filter(idx)) => Some(*idx),
             _ => None,
         };
@@ -383,8 +367,8 @@ impl LogCrabApp {
         for action in actions {
             match action {
                 InputAction::MoveSelection(delta) => {
-                    if let Some(TabType::Filter(idx)) = &self.active_tab {
-                        self.log_view.move_selection_in_filter(*idx, delta);
+                    if let Some(TabType::Filter(idx)) = focused_tab {
+                        self.log_view.move_selection_in_filter(idx, delta);
                     }
                 }
                 InputAction::ToggleBookmark => {
@@ -400,19 +384,26 @@ impl LogCrabApp {
                     self.request_new_bookmarks_tab = true;
                 }
                 InputAction::CloseTab => {
-                    // Allow closing both filter and bookmark tabs
-                    if self.active_tab.is_some() {
-                        self.close_active_tab = true;
+                    // Close the currently focused/active tab (the one the user is viewing)
+                    // focused_leaf() returns which pane has keyboard focus
+                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
+                        let tree = &self.dock_state[surface_idx];
+                        
+                        // Each pane (leaf node) can have multiple tabs, but only one is "active" (visible).
+                        // The 'active' field tells us which tab is currently displayed in this pane.
+                        if let Node::Leaf { active, .. } = &tree[node_idx] {
+                            self.dock_state.remove_tab((surface_idx, node_idx, *active));
+                        }
                     }
                 }
                 InputAction::JumpToTop => {
-                    if let Some(TabType::Filter(idx)) = &self.active_tab {
-                        self.log_view.jump_to_top_in_filter(*idx);
+                    if let Some(TabType::Filter(idx)) = focused_tab {
+                        self.log_view.jump_to_top_in_filter(idx);
                     }
                 }
                 InputAction::JumpToBottom => {
-                    if let Some(TabType::Filter(idx)) = &self.active_tab {
-                        self.log_view.jump_to_bottom_in_filter(*idx);
+                    if let Some(TabType::Filter(idx)) = focused_tab {
+                        self.log_view.jump_to_bottom_in_filter(idx);
                     }
                 }
                 InputAction::NavigatePane(direction) => {
@@ -435,11 +426,6 @@ impl LogCrabApp {
                 // If we found a neighbor, focus it
                 if let Some(neighbor_idx) = neighbor {
                     tree.set_focused_node(neighbor_idx);
-
-                    // Update active_tab to match the newly focused tab
-                    if let Some((_, tab)) = self.dock_state.find_active_focused() {
-                        self.active_tab = Some(tab.tab_type.clone());
-                    }
                 }
             }
         }

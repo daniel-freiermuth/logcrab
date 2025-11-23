@@ -10,6 +10,7 @@ pub enum TabType {
 }
 
 /// Tab content for dock system
+#[derive(PartialEq)]
 pub struct TabContent {
     pub tab_type: TabType,
     pub title: String,
@@ -19,9 +20,7 @@ pub struct TabContent {
 pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogView,
     pub add_tab_after: &'a mut Option<egui_dock::NodeIndex>,
-    pub active_tab: &'a mut Option<TabType>,
     pub focus_search_next_frame: &'a mut Option<usize>,
-    pub close_active_tab: &'a mut bool,
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -74,21 +73,6 @@ impl TabViewer for LogCrabTabViewer<'_> {
         }
     }
 
-    fn force_close(&mut self, tab: &mut Self::Tab) -> bool {
-        // Close the tab if it's the active tab and close_active_tab flag is set
-        if *self.close_active_tab {
-            if let Some(ref active) = self.active_tab {
-                if &tab.tab_type == active {
-                    // Clear both the active tab and the close flag
-                    *self.active_tab = None;
-                    *self.close_active_tab = false;
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         // Render content
         match &tab.tab_type {
@@ -104,13 +88,6 @@ impl TabViewer for LogCrabTabViewer<'_> {
             TabType::Bookmarks => {
                 self.log_view.render_bookmarks(ui);
             }
-        }
-
-        // CRITICAL: Only update active_tab if the pointer is CURRENTLY in this UI's bounds
-        // AND a click/press just happened in this frame
-        // This prevents the last-rendered-tab from always winning
-        if ui.ui_contains_pointer() && ui.input(|i| i.pointer.any_pressed()) {
-            *self.active_tab = Some(tab.tab_type.clone());
         }
     }
 }
