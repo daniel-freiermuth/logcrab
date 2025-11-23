@@ -54,4 +54,7 @@ pub enum InputAction {
 
     /// Navigate to a neighboring pane
     NavigatePane(PaneDirection),
+
+    /// Cycle to the next tab in the active pane
+    CycleTab,
 }

@@ -396,6 +396,22 @@ impl LogCrabApp {
                         }
                     }
                 }
+                InputAction::CycleTab => {
+                    // Cycle to the next tab in the active pane
+                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
+                        let surface = &mut self.dock_state[surface_idx];
+                        
+                        // Get the number of tabs and current active tab
+                        if let Node::Leaf { active, tabs, .. } = &mut surface[node_idx] {
+                            let tab_count = tabs.len();
+                            if tab_count > 1 {
+                                // Cycle to next tab (wrap around to 0 if at the end)
+                                let next_tab = (active.0 + 1) % tab_count;
+                                *active = egui_dock::TabIndex(next_tab);
+                            }
+                        }
+                    }
+                }
                 InputAction::JumpToTop => {
                     if let Some(TabType::Filter(idx)) = focused_tab {
                         self.log_view.jump_to_top_in_filter(idx);

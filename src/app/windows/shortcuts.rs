@@ -46,6 +46,7 @@ pub fn render_shortcuts_window(
                 ShortcutAction::NewFilterTab,
                 ShortcutAction::NewBookmarksTab,
                 ShortcutAction::CloseTab,
+                ShortcutAction::CycleTab,
                 ShortcutAction::JumpToTop,
                 ShortcutAction::JumpToBottom,
                 ShortcutAction::FocusPaneLeft,
@@ -114,6 +115,9 @@ pub fn render_shortcuts_window(
                         ),
                         ShortcutAction::FocusPaneRight => format_shortcut(
                             &shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneRight),
+                        ),
+                        ShortcutAction::CycleTab => format_shortcut(
+                            &shortcut_bindings.get_shortcut(ShortcutAction::CycleTab),
                         ),
                     };
 

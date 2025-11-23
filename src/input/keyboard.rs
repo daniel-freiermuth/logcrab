@@ -35,6 +35,7 @@ pub enum ShortcutAction {
     FocusPaneDown,
     FocusPaneUp,
     FocusPaneRight,
+    CycleTab,
 }
 
 impl ShortcutAction {
@@ -53,6 +54,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneDown => "Focus Pane Down",
             ShortcutAction::FocusPaneUp => "Focus Pane Up",
             ShortcutAction::FocusPaneRight => "Focus Pane Right",
+            ShortcutAction::CycleTab => "Cycle to Next Tab",
         }
     }
 
@@ -71,6 +73,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneDown => "Move focus to the pane below (Vim-style: Shift+J)",
             ShortcutAction::FocusPaneUp => "Move focus to the pane above (Vim-style: Shift+K)",
             ShortcutAction::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
+            ShortcutAction::CycleTab => "Cycle to the next tab in the active pane",
         }
     }
 }
@@ -88,6 +91,7 @@ pub struct KeyboardBindings {
     focus_pane_down: egui::KeyboardShortcut,
     focus_pane_up: egui::KeyboardShortcut,
     focus_pane_right: egui::KeyboardShortcut,
+    cycle_tab: egui::KeyboardShortcut,
 
     // State for Vim-style gg detection
     last_g_press_time: Option<Instant>,
@@ -108,6 +112,7 @@ impl KeyboardBindings {
             ShortcutAction::FocusPaneDown => self.focus_pane_down,
             ShortcutAction::FocusPaneUp => self.focus_pane_up,
             ShortcutAction::FocusPaneRight => self.focus_pane_right,
+            ShortcutAction::CycleTab => self.cycle_tab,
             // Hardcoded shortcuts don't have rebindable keys
             ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom => {
                 egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::G)
@@ -129,6 +134,7 @@ impl KeyboardBindings {
             ShortcutAction::FocusPaneDown => self.focus_pane_down = shortcut,
             ShortcutAction::FocusPaneUp => self.focus_pane_up = shortcut,
             ShortcutAction::FocusPaneRight => self.focus_pane_right = shortcut,
+            ShortcutAction::CycleTab => self.cycle_tab = shortcut,
             // Hardcoded shortcuts cannot be changed
             ShortcutAction::JumpToTop | ShortcutAction::JumpToBottom => {}
         }
@@ -180,6 +186,12 @@ impl KeyboardBindings {
             && input.key_pressed(self.close_tab.logical_key)
         {
             actions.push(InputAction::CloseTab);
+        }
+        
+        if input.modifiers.matches_exact(self.cycle_tab.modifiers)
+            && input.key_pressed(self.cycle_tab.logical_key)
+        {
+            actions.push(InputAction::CycleTab);
         }
 
         // Focus search input (only works in filter tabs)
@@ -298,6 +310,7 @@ impl Default for KeyboardBindings {
             focus_pane_down: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::J),
             focus_pane_up: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::K),
             focus_pane_right: egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::L),
+            cycle_tab: egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::PageDown),
             last_g_press_time: None,
         }
     }
