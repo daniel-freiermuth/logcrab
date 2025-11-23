@@ -1,5 +1,6 @@
 use egui_dock::TabViewer;
 
+use crate::config::GlobalConfig;
 use crate::ui::LogView;
 
 /// Type of tab content in the dock system
@@ -21,6 +22,7 @@ pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogView,
     pub add_tab_after: &'a mut Option<egui_dock::NodeIndex>,
     pub focus_search_next_frame: &'a mut Option<usize>,
+    pub global_config: &'a mut GlobalConfig,
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -83,7 +85,7 @@ impl TabViewer for LogCrabTabViewer<'_> {
                     *self.focus_search_next_frame = None;
                 }
 
-                self.log_view.render_filter(ui, *index);
+                self.log_view.render_filter(ui, *index, self.global_config);
             }
             TabType::Bookmarks => {
                 self.log_view.render_bookmarks(ui);

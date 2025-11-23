@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use super::actions::{InputAction, PaneDirection};
+use crate::config::GlobalConfig;
 use keybinds::Keybinds;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,6 +42,26 @@ pub enum ShortcutAction {
 }
 
 impl ShortcutAction {
+    /// Get all shortcut actions
+    pub const fn all() -> &'static [ShortcutAction] {
+        &[
+            ShortcutAction::MoveUp,
+            ShortcutAction::MoveDown,
+            ShortcutAction::ToggleBookmark,
+            ShortcutAction::FocusSearch,
+            ShortcutAction::NewFilterTab,
+            ShortcutAction::NewBookmarksTab,
+            ShortcutAction::CloseTab,
+            ShortcutAction::JumpToTop,
+            ShortcutAction::JumpToBottom,
+            ShortcutAction::FocusPaneLeft,
+            ShortcutAction::FocusPaneDown,
+            ShortcutAction::FocusPaneUp,
+            ShortcutAction::FocusPaneRight,
+            ShortcutAction::CycleTab,
+        ]
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             ShortcutAction::MoveUp => "Move Selection Up",
@@ -109,74 +130,43 @@ pub struct KeyboardBindings {
 }
 
 impl KeyboardBindings {
-    /// Get the config file path for storing shortcuts (public for debugging)
-    pub fn config_path() -> Option<std::path::PathBuf> {
-        if let Some(config_dir) = dirs::config_dir() {
-            let app_config = config_dir.join("logcrab");
-            Some(app_config.join("shortcuts.json"))
-        } else {
-            None
-        }
-    }
-
-    /// Save current shortcuts to disk
-    pub fn save(&self) -> Result<(), String> {
-        let path = Self::config_path().ok_or("Could not determine config directory")?;
+    /// Load shortcuts from global config
+    pub fn load(config: &GlobalConfig) -> Self {
+        let mut dispatcher = Keybinds::default();
+        let mut bindings = HashMap::new();
         
-        // Create directory if it doesn't exist
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {}", e))?;
-        }
-        
-        // Serialize bindings to JSON
-        let json = serde_json::to_string_pretty(&self.bindings)
-            .map_err(|e| format!("Failed to serialize shortcuts: {}", e))?;
-        
-        // Write to file
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write shortcuts file: {}", e))?;
-        
-        log::info!("Saved keyboard shortcuts to {:?}", path);
-        Ok(())
-    }
-
-    /// Load shortcuts from disk, falling back to defaults if not found
-    pub fn load() -> Self {
-        // Try to load from file
-        if let Some(path) = Self::config_path() {
-            if path.exists() {
-                log::info!("Loading keyboard shortcuts from {:?}", path);
-                if let Ok(contents) = std::fs::read_to_string(&path) {
-                    if let Ok(bindings) = serde_json::from_str::<HashMap<ShortcutAction, String>>(&contents) {
-                        // Create a new dispatcher and bind all loaded shortcuts
-                        let mut dispatcher = Keybinds::default();
-                        let mut valid_bindings = HashMap::new();
-                        
-                        for (action, binding) in bindings {
-                            if dispatcher.bind(&binding, action).is_ok() {
-                                valid_bindings.insert(action, binding);
-                            }
-                        }
-                        
-                        // Also bind arrow keys for movement (in addition to j/k)
-                        let _ = dispatcher.bind("Up", ShortcutAction::MoveUp);
-                        let _ = dispatcher.bind("Down", ShortcutAction::MoveDown);
-                        
-                        log::info!("Loaded {} custom keyboard shortcuts", valid_bindings.len());
-                        return Self {
-                            dispatcher,
-                            bindings: valid_bindings,
-                        };
-                    }
+        if !config.shortcuts.is_empty() {
+            log::info!("Loading {} keyboard shortcuts from config", config.shortcuts.len());
+            
+            // Bind all shortcuts from config
+            for (action, binding) in &config.shortcuts {
+                if dispatcher.bind(binding, *action).is_ok() {
+                    bindings.insert(*action, binding.clone());
                 }
-            } else {
-                log::info!("No custom keyboard shortcuts found, using defaults");
+            }
+        } else {
+            log::info!("No custom keyboard shortcuts found, using defaults");
+            
+            // Use defaults for all actions
+            for action in ShortcutAction::all() {
+                let binding = action.default_binding();
+                if let Ok(()) = dispatcher.bind(binding, *action) {
+                    bindings.insert(*action, binding.to_string());
+                }
             }
         }
         
-        // If loading failed, return default bindings
-        Self::default()
+        // Also bind arrow keys for movement (in addition to j/k)
+        let _ = dispatcher.bind("Up", ShortcutAction::MoveUp);
+        let _ = dispatcher.bind("Down", ShortcutAction::MoveDown);
+        
+        Self { dispatcher, bindings }
+    }
+
+    /// Save shortcuts to global config
+    pub fn save_to_config(&self, config: &mut GlobalConfig) {
+        config.shortcuts = self.bindings.clone();
+        log::info!("Saved {} keyboard shortcuts to config", self.bindings.len());
     }
 
     /// Get the shortcut string for a specific action
@@ -427,27 +417,10 @@ impl Default for KeyboardBindings {
         let mut bindings = HashMap::new();
 
         // Bind all default shortcuts
-        let all_actions = [
-            ShortcutAction::MoveUp,
-            ShortcutAction::MoveDown,
-            ShortcutAction::ToggleBookmark,
-            ShortcutAction::FocusSearch,
-            ShortcutAction::NewFilterTab,
-            ShortcutAction::NewBookmarksTab,
-            ShortcutAction::CloseTab,
-            ShortcutAction::JumpToTop,
-            ShortcutAction::JumpToBottom,
-            ShortcutAction::FocusPaneLeft,
-            ShortcutAction::FocusPaneDown,
-            ShortcutAction::FocusPaneUp,
-            ShortcutAction::FocusPaneRight,
-            ShortcutAction::CycleTab,
-        ];
-
-        for action in all_actions {
+        for action in ShortcutAction::all() {
             let binding = action.default_binding();
-            if let Ok(()) = dispatcher.bind(binding, action) {
-                bindings.insert(action, binding.to_string());
+            if let Ok(()) = dispatcher.bind(binding, *action) {
+                bindings.insert(*action, binding.to_string());
             }
         }
 

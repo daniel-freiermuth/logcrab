@@ -15,6 +15,7 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
+use crate::config::GlobalConfig;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
 use crate::ui::components::BookmarkData;
@@ -41,7 +42,6 @@ struct Bookmark {
 struct SavedFilter {
     search_text: String,
     case_insensitive: bool,
-    is_favorite: bool,
     #[serde(default)]
     name: Option<String>,
 }
@@ -245,7 +245,6 @@ impl LogView {
                         // Restore filter settings
                         self.filters[i].search_text = saved_filter.search_text.clone();
                         self.filters[i].case_insensitive = saved_filter.case_insensitive;
-                        self.filters[i].is_favorite = saved_filter.is_favorite;
                         self.filters[i].name = saved_filter.name.clone();
                         self.filters[i].update_search_regex();
                         log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
@@ -270,7 +269,6 @@ impl LogView {
                     .map(|f| SavedFilter {
                         search_text: f.search_text.clone(),
                         case_insensitive: f.case_insensitive,
-                        is_favorite: f.is_favorite,
                         name: f.name.clone(),
                     })
                     .collect(),
@@ -324,7 +322,7 @@ impl LogView {
     }
 
     /// Render a specific filter view
-    pub fn render_filter(&mut self, ui: &mut Ui, filter_index: usize) {
+    pub fn render_filter(&mut self, ui: &mut Ui, filter_index: usize, global_config: &mut GlobalConfig) {
         if filter_index >= self.filters.len() {
             ui.label("Invalid filter index");
             return;
@@ -337,12 +335,17 @@ impl LogView {
             .map(|(&idx, bookmark)| (idx, bookmark.name.clone()))
             .collect();
 
-        // Collect filter data needed for favorites (avoiding borrow issues)
-        let all_filters_data: Vec<(String, bool, bool)> = self
-            .filters
-            .iter()
-            .map(|f| (f.search_text.clone(), f.case_insensitive, f.is_favorite))
-            .collect();
+        // Get current filter's search text for favorite checking
+        let current_search = self.filters[filter_index].search_text.clone();
+        let current_case_insensitive = self.filters[filter_index].case_insensitive;
+        
+        // Check if current filter matches any global favorite
+        let is_favorite = global_config.favorite_filters.iter().any(|f| {
+            f.search_text == current_search && f.case_insensitive == current_case_insensitive
+        });
+        
+        // Update the filter's favorite status (for UI display only, not saved to .crab)
+        self.filters[filter_index].is_favorite = is_favorite;
 
         // Temporarily take out the filter we're rendering
         let mut current_filter = std::mem::replace(
@@ -350,14 +353,15 @@ impl LogView {
             FilterState::new(Color32::YELLOW),
         );
 
-        // Create a temporary filters list for favorites lookup
-        let temp_filters: Vec<FilterState> = all_filters_data
+        // Use global favorites instead of per-file favorites
+        let temp_filters: Vec<FilterState> = global_config
+            .favorite_filters
             .iter()
-            .map(|(search, case_ins, fav)| {
+            .map(|fav| {
                 let mut f = FilterState::new(Color32::YELLOW);
-                f.search_text = search.clone();
-                f.case_insensitive = *case_ins;
-                f.is_favorite = *fav;
+                f.search_text = fav.search_text.clone();
+                f.case_insensitive = fav.case_insensitive;
+                f.is_favorite = true;
                 f
             })
             .collect();
@@ -401,9 +405,32 @@ impl LogView {
                     self.editing_bookmark = Some(filter_index + 10000); // Use high number to distinguish from bookmarks
                 }
                 FilterViewEvent::FavoriteToggled => {
-                    self.filters[filter_index].is_favorite =
-                        !self.filters[filter_index].is_favorite;
-                    self.save_crab_file();
+                    let search_text = self.filters[filter_index].search_text.clone();
+                    let case_insensitive = self.filters[filter_index].case_insensitive;
+                    
+                    // Check if this filter is already a favorite
+                    if let Some(pos) = global_config.favorite_filters.iter().position(|f| {
+                        f.search_text == search_text && f.case_insensitive == case_insensitive
+                    }) {
+                        // Remove from favorites
+                        global_config.favorite_filters.remove(pos);
+                        self.filters[filter_index].is_favorite = false;
+                        log::info!("Removed favorite: '{}'", search_text);
+                    } else {
+                        // Add to favorites
+                        let name = self.filters[filter_index].name.clone()
+                            .unwrap_or_else(|| search_text.clone());
+                        global_config.favorite_filters.push(crate::config::FavoriteFilter {
+                            name,
+                            search_text,
+                            case_insensitive,
+                        });
+                        self.filters[filter_index].is_favorite = true;
+                        log::info!("Added favorite: '{}'", self.filters[filter_index].search_text);
+                    }
+                    
+                    // Save global config
+                    let _ = global_config.save();
                 }
             }
         }

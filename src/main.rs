@@ -16,6 +16,7 @@
 /// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 mod anomaly;
 mod app;
+mod config;
 mod core;
 mod input;
 mod parser;

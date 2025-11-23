@@ -1,3 +1,4 @@
+use crate::config::GlobalConfig;
 use crate::input::{KeyboardBindings, ShortcutAction};
 
 /// Render the keyboard shortcuts configuration window
@@ -6,6 +7,7 @@ pub fn render_shortcuts_window(
     open: &mut bool,
     shortcut_bindings: &mut KeyboardBindings,
     pending_rebind: &mut Option<ShortcutAction>,
+    global_config: &mut GlobalConfig,
 ) {
     egui::Window::new("⌨ Keyboard Shortcuts")
         .open(open)
@@ -33,31 +35,15 @@ pub fn render_shortcuts_window(
                         *shortcut_bindings = KeyboardBindings::default();
                         *pending_rebind = None;
                         // Save the reset bindings
-                        let _ = shortcut_bindings.save();
+                        shortcut_bindings.save_to_config(global_config);
+                        let _ = global_config.save();
                     }
                 });
             });
             ui.add_space(6.0);
 
             // Iterate over all shortcut actions
-            let actions = [
-                ShortcutAction::MoveUp,
-                ShortcutAction::MoveDown,
-                ShortcutAction::ToggleBookmark,
-                ShortcutAction::FocusSearch,
-                ShortcutAction::NewFilterTab,
-                ShortcutAction::NewBookmarksTab,
-                ShortcutAction::CloseTab,
-                ShortcutAction::CycleTab,
-                ShortcutAction::JumpToTop,
-                ShortcutAction::JumpToBottom,
-                ShortcutAction::FocusPaneLeft,
-                ShortcutAction::FocusPaneRight,
-                ShortcutAction::FocusPaneUp,
-                ShortcutAction::FocusPaneDown,
-            ];
-
-            for (i, action) in actions.iter().enumerate() {
+            for (i, action) in ShortcutAction::all().iter().enumerate() {
                 if i > 0 {
                     ui.add_space(8.0);
                 }

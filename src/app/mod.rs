@@ -9,6 +9,7 @@ use std::sync::mpsc::Receiver;
 
 use egui_dock::{DockArea, DockState, Node};
 
+use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{InputAction, KeyboardBindings, PaneDirection, ShortcutAction};
 use crate::ui::LogView;
@@ -50,6 +51,9 @@ pub struct LogCrabApp {
     /// Whether to show the keyboard shortcuts window
     show_shortcuts_window: bool,
 
+    /// Global configuration (shortcuts, favorites, etc.)
+    global_config: GlobalConfig,
+
     /// Keyboard shortcut bindings
     shortcut_bindings: KeyboardBindings,
 
@@ -87,6 +91,9 @@ impl LogCrabApp {
             },
         ]);
 
+        // Load global configuration
+        let global_config = GlobalConfig::load();
+
         LogCrabApp {
             log_view: LogView::new(),
             current_file: None,
@@ -103,7 +110,8 @@ impl LogCrabApp {
             show_anomaly_explanation: false,
             add_tab_after: None,
             show_shortcuts_window: false,
-            shortcut_bindings: KeyboardBindings::load(), // Load from disk or use defaults
+            shortcut_bindings: KeyboardBindings::load(&global_config),
+            global_config,
             pending_rebind: None,
             focus_search_next_frame: None,
             request_new_filter_tab: false,
@@ -296,6 +304,7 @@ impl LogCrabApp {
                     log_view: &mut self.log_view,
                     add_tab_after: &mut self.add_tab_after,
                     focus_search_next_frame: &mut self.focus_search_next_frame,
+                    global_config: &mut self.global_config,
                 },
             );
         }
@@ -366,7 +375,8 @@ impl LogCrabApp {
 
         // Save shortcuts if they were changed
         if shortcuts_changed {
-            let _ = self.shortcut_bindings.save();
+            self.shortcut_bindings.save_to_config(&mut self.global_config);
+            let _ = self.global_config.save();
         }
 
         // Execute all generated actions
@@ -511,6 +521,7 @@ impl eframe::App for LogCrabApp {
                 &mut self.show_shortcuts_window,
                 &mut self.shortcut_bindings,
                 &mut self.pending_rebind,
+                &mut self.global_config,
             );
         }
 
