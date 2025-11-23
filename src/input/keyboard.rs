@@ -93,7 +93,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneDown => "J",
             ShortcutAction::FocusPaneUp => "K",
             ShortcutAction::FocusPaneRight => "L",
-            ShortcutAction::CycleTab => "Ctrl+PageDown",
+            ShortcutAction::CycleTab => "Ctrl+Tab",
         }
     }
 }
