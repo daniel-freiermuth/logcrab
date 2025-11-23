@@ -342,7 +342,7 @@ impl LogCrabApp {
     }
 
     /// Process keyboard shortcuts and execute actions
-    fn process_keyboard_input(&mut self, ctx: &egui::Context) {
+    fn process_keyboard_input(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         // Global keyboard shortcut handling (navigation). Skip if a text input wants keyboard.
         if ctx.wants_keyboard_input() {
             return;
@@ -358,10 +358,11 @@ impl LogCrabApp {
             _ => None,
         };
 
-        let actions = ctx.input(|i| {
-            self.shortcut_bindings
-                .process_input(i, &mut self.pending_rebind, active_filter_index)
-        });
+        let (actions, events_to_remove) = self.shortcut_bindings.process_input(
+            raw_input,
+            &mut self.pending_rebind,
+            active_filter_index,
+        );
 
         // Execute all generated actions
         for action in actions {
@@ -427,6 +428,11 @@ impl LogCrabApp {
                 }
             }
         }
+
+        // Remove consumed events in reverse order
+        for idx in events_to_remove.into_iter().rev() {
+            raw_input.events.remove(idx);
+        }
     }
 
     /// Handle pane navigation (Shift+HJKL)
@@ -449,6 +455,10 @@ impl LogCrabApp {
 }
 
 impl eframe::App for LogCrabApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.process_keyboard_input(ctx, raw_input);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
@@ -481,9 +491,6 @@ impl eframe::App for LogCrabApp {
 
         // Handle post-frame operations
         self.handle_tab_operations();
-
-        // Process keyboard input
-        self.process_keyboard_input(ctx);
 
         // Handle pane navigation
         self.handle_pane_navigation();

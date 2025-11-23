@@ -127,30 +127,14 @@ impl KeyboardBindings {
     /// Process input from egui and return actions to execute
     pub fn process_input(
         &mut self,
-        input: &egui::InputState,
+        raw_input: &egui::RawInput,
         pending_rebind: &mut Option<ShortcutAction>,
         active_filter_index: Option<usize>,
-    ) -> Vec<InputAction> {
+    ) -> (Vec<InputAction>, Vec<usize>) {
         let mut actions = Vec::new();
-
-        // If rebinding in progress, capture first pressed key
-        if let Some(action) = *pending_rebind {
-            if let Some(event) = input.events.iter().find_map(|e| match e {
-                egui::Event::Key {
-                    key, pressed: true, modifiers, ..
-                } => Some((key, modifiers)),
-                _ => None,
-            }) {
-                // Format the key combo as a string for keybinds
-                let shortcut_str = Self::format_key_combo(*event.0, *event.1);
-                let _ = self.set_shortcut(action, &shortcut_str);
-                *pending_rebind = None;
-            }
-            return actions; // Don't process other actions while rebinding
-        }
-
-        // Convert egui events to keybinds format and dispatch
-        for event in &input.events {
+        let mut events_to_consume = Vec::new();
+        
+        for (idx, event) in raw_input.events.iter().enumerate() {
             if let egui::Event::Key {
                 key,
                 pressed: true,
@@ -158,17 +142,27 @@ impl KeyboardBindings {
                 ..
             } = event
             {
+                // Handle rebinding mode first
+                if let Some(action) = pending_rebind.take() {
+                    let shortcut_str = Self::format_key_combo(*key, *modifiers);
+                    let _ = self.set_shortcut(action, &shortcut_str);
+                    events_to_consume.push(idx);
+                    continue;
+                }
+
                 // Convert egui key to keybinds format
                 if let Some(key_input) = Self::egui_to_keybinds(*key, *modifiers) {
                     if let Some(shortcut_action) = self.dispatcher.dispatch(key_input) {
                         // Convert ShortcutAction to InputAction
                         Self::action_to_input(shortcut_action, active_filter_index, &mut actions);
+                        // Mark this event for consumption
+                        events_to_consume.push(idx);
                     }
                 }
             }
         }
-
-        actions
+        
+        (actions, events_to_consume)
     }
 
     /// Convert a ShortcutAction to an InputAction
