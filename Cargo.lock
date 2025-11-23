@@ -2175,6 +2175,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keybinds"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a039c6f55b34108f8ec8caa617cbaa17232ff08ccc9e3d656a41ec974e09d322"
+dependencies = [
+ "bitflags 2.10.0",
+ "smallvec",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2292,6 +2302,7 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "env_logger",
+ "keybinds",
  "lazy_static",
  "log",
  "puffin",

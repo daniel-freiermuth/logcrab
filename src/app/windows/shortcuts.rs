@@ -63,63 +63,8 @@ pub fn render_shortcuts_window(
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
 
-                    // Helper function to format keyboard shortcut
-                    let format_shortcut = |shortcut: &egui::KeyboardShortcut| -> String {
-                        let modifiers_text = if shortcut.modifiers.ctrl {
-                            "Ctrl+"
-                        } else if shortcut.modifiers.shift {
-                            "Shift+"
-                        } else if shortcut.modifiers.alt {
-                            "Alt+"
-                        } else if shortcut.modifiers.mac_cmd {
-                            "Cmd+"
-                        } else {
-                            ""
-                        };
-                        format!("{}{:?}", modifiers_text, shortcut.logical_key)
-                    };
-
-                    // All bindings are now KeyboardShortcuts
-                    let key_text = match action {
-                        ShortcutAction::MoveUp => {
-                            format_shortcut(&shortcut_bindings.get_shortcut(ShortcutAction::MoveUp))
-                        }
-                        ShortcutAction::MoveDown => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::MoveDown),
-                        ),
-                        ShortcutAction::ToggleBookmark => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::ToggleBookmark),
-                        ),
-                        ShortcutAction::FocusSearch => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::FocusSearch),
-                        ),
-                        ShortcutAction::NewFilterTab => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::NewFilterTab),
-                        ),
-                        ShortcutAction::NewBookmarksTab => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::NewBookmarksTab),
-                        ),
-                        ShortcutAction::CloseTab => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::CloseTab),
-                        ),
-                        ShortcutAction::JumpToTop => "gg".to_string(),
-                        ShortcutAction::JumpToBottom => "G".to_string(),
-                        ShortcutAction::FocusPaneLeft => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneLeft),
-                        ),
-                        ShortcutAction::FocusPaneDown => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneDown),
-                        ),
-                        ShortcutAction::FocusPaneUp => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneUp),
-                        ),
-                        ShortcutAction::FocusPaneRight => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::FocusPaneRight),
-                        ),
-                        ShortcutAction::CycleTab => format_shortcut(
-                            &shortcut_bindings.get_shortcut(ShortcutAction::CycleTab),
-                        ),
-                    };
+                    // Get the key binding string directly
+                    let key_text = shortcut_bindings.get_shortcut(*action).to_string();
 
                     let badge_color = if *pending_rebind == Some(*action) {
                         egui::Color32::from_rgb(255, 200, 100)
