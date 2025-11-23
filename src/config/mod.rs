@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Global user configuration stored in config directory
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalConfig {
     /// Keyboard shortcuts
     #[serde(default)]
@@ -93,14 +93,5 @@ impl GlobalConfig {
         
         log::info!("Saved global config to {:?}", path);
         Ok(())
-    }
-}
-
-impl Default for GlobalConfig {
-    fn default() -> Self {
-        Self {
-            shortcuts: HashMap::new(),
-            favorite_filters: Vec::new(),
-        }
     }
 }
