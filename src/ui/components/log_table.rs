@@ -264,7 +264,6 @@ impl LogTable {
                 ui.id().with(line_idx).with(filter_index).with("line"),
                 egui::Sense::click(),
             );
-            let response = response.on_hover_text(&line.raw);
 
             if response.clicked() {
                 *row_clicked = true;
@@ -317,7 +316,6 @@ impl LogTable {
                 ui.id().with(line_idx).with(filter_index).with("ts"),
                 egui::Sense::click(),
             );
-            let response = response.on_hover_text(&line.raw);
             if response.clicked() {
                 *row_clicked = true;
             }
@@ -410,7 +408,6 @@ impl LogTable {
                 ui.id().with(line_idx).with(filter_index).with("score"),
                 egui::Sense::click(),
             );
-            let response = response.on_hover_text(&line.raw);
             if response.clicked() {
                 *row_clicked = true;
             }
