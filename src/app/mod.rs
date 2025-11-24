@@ -69,6 +69,9 @@ pub struct LogCrabApp {
     /// Request to create a new bookmarks tab
     request_new_bookmarks_tab: bool,
 
+    /// Filter index to remove (set by on_close callback)
+    filter_to_remove: Option<usize>,
+
     /// Request to navigate to a neighboring pane
     navigate_pane_direction: Option<PaneDirection>,
 
@@ -116,6 +119,7 @@ impl LogCrabApp {
             focus_search_next_frame: None,
             request_new_filter_tab: false,
             request_new_bookmarks_tab: false,
+            filter_to_remove: None,
             navigate_pane_direction: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
@@ -305,6 +309,7 @@ impl LogCrabApp {
                     add_tab_after: &mut self.add_tab_after,
                     focus_search_next_frame: &mut self.focus_search_next_frame,
                     global_config: &mut self.global_config,
+                    filter_to_remove: &mut self.filter_to_remove,
                 },
             );
         }
@@ -347,6 +352,20 @@ impl LogCrabApp {
                 tab_type: TabType::Bookmarks,
                 title: "Bookmarks".to_string(),
             });
+        }
+
+        // Handle filter removal (must be done after DockArea to avoid borrowing issues)
+        if let Some(filter_index) = self.filter_to_remove.take() {
+            self.log_view.remove_filter(filter_index);
+            
+            // Update all filter tab indices that are greater than the removed index
+            for (_, tab) in self.dock_state.iter_all_tabs_mut() {
+                if let TabType::Filter(idx) = &mut tab.tab_type {
+                    if *idx > filter_index {
+                        *idx -= 1;
+                    }
+                }
+            }
         }
     }
 

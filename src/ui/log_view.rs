@@ -107,6 +107,14 @@ impl LogView {
         self.save_crab_file();
     }
 
+    pub fn remove_filter(&mut self, index: usize) {
+        if index < self.filters.len() {
+            log::debug!("Removing filter at index: {}", index);
+            self.filters.remove(index);
+            self.save_crab_file();
+        }
+    }
+
     /// Check if any filter is currently processing in the background
     pub fn is_any_filter_active(&self) -> bool {
         self.filters.iter().any(|f| f.is_filtering)

@@ -23,6 +23,7 @@ pub struct LogCrabTabViewer<'a> {
     pub add_tab_after: &'a mut Option<egui_dock::NodeIndex>,
     pub focus_search_next_frame: &'a mut Option<usize>,
     pub global_config: &'a mut GlobalConfig,
+    pub filter_to_remove: &'a mut Option<usize>,
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -91,5 +92,15 @@ impl TabViewer for LogCrabTabViewer<'_> {
                 self.log_view.render_bookmarks(ui);
             }
         }
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        // When closing a filter tab, mark it for removal
+        // We can't remove it here because we need to update all other tabs' indices
+        if let TabType::Filter(index) = &tab.tab_type {
+            *self.filter_to_remove = Some(*index);
+        }
+        // Return true to allow the tab to be closed
+        true
     }
 }
