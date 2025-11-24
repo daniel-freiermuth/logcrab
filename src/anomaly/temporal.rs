@@ -97,7 +97,7 @@ impl AnomalyScorer for TemporalScorer {
             .or_insert(0) += 1;
 
         // Clean up old entries periodically
-        if self.recent_timestamps.len() % 1000 == 0 {
+        if self.recent_timestamps.len().is_multiple_of(1000) {
             self.clean_old_entries(current_time);
         }
     }
