@@ -38,6 +38,7 @@ pub enum FilterViewEvent {
     },
     FilterNameEditRequested,
     FavoriteToggled,
+    FilterModified, // Filter search text or case sensitivity changed
 }
 
 /// Orchestrates the filter view UI using reusable components
@@ -110,15 +111,18 @@ impl FilterView {
                 FilterBarEvent::SearchChanged => {
                     filter.update_search_regex();
                     filter.request_filter_update(Arc::clone(lines), min_score_filter);
+                    events.push(FilterViewEvent::FilterModified);
                 }
                 FilterBarEvent::CaseInsensitiveToggled => {
                     filter.update_search_regex();
                     filter.request_filter_update(Arc::clone(lines), min_score_filter);
+                    events.push(FilterViewEvent::FilterModified);
                 }
                 FilterBarEvent::ClearClicked => {
                     filter.search_text.clear();
                     filter.update_search_regex();
                     filter.request_filter_update(Arc::clone(lines), min_score_filter);
+                    events.push(FilterViewEvent::FilterModified);
                 }
                 FilterBarEvent::FavoriteSelected {
                     search_text,
@@ -128,6 +132,7 @@ impl FilterView {
                     filter.case_insensitive = case_insensitive;
                     filter.update_search_regex();
                     filter.request_filter_update(Arc::clone(lines), min_score_filter);
+                    events.push(FilterViewEvent::FilterModified);
                 }
             }
         }

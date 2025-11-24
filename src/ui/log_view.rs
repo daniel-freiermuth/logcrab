@@ -104,6 +104,7 @@ impl LogView {
         ];
         let color = colors[self.filters.len() % colors.len()];
         self.filters.push(FilterState::new(color));
+        self.save_crab_file();
     }
 
     /// Check if any filter is currently processing in the background
@@ -486,6 +487,10 @@ impl LogView {
                     
                     // Save global config
                     let _ = global_config.save();
+                }
+                FilterViewEvent::FilterModified => {
+                    // Filter search text or case sensitivity changed, save to .crab file
+                    self.save_crab_file();
                 }
             }
         }
