@@ -19,7 +19,7 @@
 use crate::parser::line::LogLine;
 use chrono::{DateTime, Local};
 use egui::{text::LayoutJob, Color32, TextFormat};
-use regex::{Regex, RegexBuilder};
+use fancy_regex::Regex;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
 
@@ -94,10 +94,13 @@ impl GlobalFilterWorker {
                 puffin::profile_scope!("build_regex");
                 
                 if !request.search_text.is_empty() {
-                    match RegexBuilder::new(&request.search_text)
-                        .case_insensitive(request.case_insensitive)
-                        .build()
-                    {
+                    // Use fancy-regex with (?i) inline flag for case-insensitive matching
+                    let pattern = if request.case_insensitive {
+                        format!("(?i){}", request.search_text)
+                    } else {
+                        request.search_text.clone()
+                    };
+                    match Regex::new(&pattern) {
                         Ok(r) => Some(r),
                         Err(e) => {
                             log::warn!("Failed to build regex for '{}': {}", request.search_text, e);
@@ -123,7 +126,10 @@ impl GlobalFilterWorker {
                     
                     // Check search filter
                     if let Some(ref regex) = search_regex {
-                        if !regex.is_match(&line.message) && !regex.is_match(&line.raw) {
+                        // fancy-regex returns Result<bool>, handle it
+                        let matches = regex.is_match(&line.message).unwrap_or(false) 
+                                   || regex.is_match(&line.raw).unwrap_or(false);
+                        if !matches {
                             continue;
                         }
                     }
@@ -207,10 +213,13 @@ impl FilterState {
             self.search_regex = None;
             self.regex_error = None;
         } else {
-            match RegexBuilder::new(&self.search_text)
-                .case_insensitive(self.case_insensitive)
-                .build()
-            {
+            // Use fancy-regex with (?i) inline flag for case-insensitive matching
+            let pattern = if self.case_insensitive {
+                format!("(?i){}", self.search_text)
+            } else {
+                self.search_text.clone()
+            };
+            match Regex::new(&pattern) {
                 Ok(regex) => {
                     self.search_regex = Some(regex);
                     self.regex_error = None;
@@ -279,7 +288,8 @@ impl FilterState {
     /// Check if a line matches the current search criteria
     pub fn matches_search(&self, line: &LogLine) -> bool {
         if let Some(ref regex) = self.search_regex {
-            regex.is_match(&line.message) || regex.is_match(&line.raw)
+            regex.is_match(&line.message).unwrap_or(false) 
+                || regex.is_match(&line.raw).unwrap_or(false)
         } else {
             true
         }
@@ -358,7 +368,7 @@ impl FilterState {
         if let Some(ref regex) = self.search_regex {
             let mut last_end = 0;
 
-            for mat in regex.find_iter(text) {
+            for mat in regex.find_iter(text).flatten() {
                 if mat.start() > last_end {
                     job.append(
                         &text[last_end..mat.start()],

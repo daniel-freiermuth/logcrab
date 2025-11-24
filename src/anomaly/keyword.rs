@@ -1,7 +1,7 @@
 use crate::anomaly::scorer::AnomalyScorer;
 use crate::parser::line::LogLine;
 use lazy_static::lazy_static;
-use regex::Regex;
+use fancy_regex::Regex;
 
 lazy_static! {
     // Keywords that indicate potential issues (case-insensitive)
@@ -37,22 +37,22 @@ impl KeywordScorer {
         let mut score: f64 = 0.0;
 
         // ERROR keywords = highest priority
-        if ERROR_KEYWORDS.is_match(message) {
+        if ERROR_KEYWORDS.is_match(message).unwrap_or(false) {
             score = score.max(1.0);
         }
 
         // FAILURE keywords = high priority
-        if FAILURE_KEYWORDS.is_match(message) {
+        if FAILURE_KEYWORDS.is_match(message).unwrap_or(false) {
             score = score.max(0.8);
         }
 
         // WARNING keywords = medium priority
-        if WARNING_KEYWORDS.is_match(message) {
+        if WARNING_KEYWORDS.is_match(message).unwrap_or(false) {
             score = score.max(0.6);
         }
 
         // ISSUE keywords = lower priority
-        if ISSUE_KEYWORDS.is_match(message) {
+        if ISSUE_KEYWORDS.is_match(message).unwrap_or(false) {
             score = score.max(0.4);
         }
 

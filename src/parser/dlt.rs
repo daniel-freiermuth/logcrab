@@ -1,7 +1,7 @@
 use super::line::LogLine;
 use chrono::{DateTime, Local, NaiveDateTime};
 use lazy_static::lazy_static;
-use regex::Regex;
+use fancy_regex::Regex;
 
 lazy_static! {
     // DLT format examples:
@@ -24,7 +24,7 @@ lazy_static! {
 
 pub fn parse_dlt(raw: String, line_number: usize) -> Option<LogLine> {
     // Try pattern with square brackets for message
-    if let Some(caps) = DLT_PATTERN.captures(&raw) {
+    if let Ok(Some(caps)) = DLT_PATTERN.captures(&raw) {
         let timestamp = parse_dlt_timestamp(&caps[1]);
         let message = caps[2].to_string();
         let mut line = LogLine::new(raw, line_number);
@@ -34,7 +34,7 @@ pub fn parse_dlt(raw: String, line_number: usize) -> Option<LogLine> {
     }
 
     // Try simple pattern with full timestamp
-    if let Some(caps) = DLT_SIMPLE.captures(&raw) {
+    if let Ok(Some(caps)) = DLT_SIMPLE.captures(&raw) {
         let timestamp = parse_dlt_timestamp(&caps[1]);
         let message = caps[2].to_string();
         let mut line = LogLine::new(raw, line_number);
@@ -44,7 +44,7 @@ pub fn parse_dlt(raw: String, line_number: usize) -> Option<LogLine> {
     }
 
     // Try time-only pattern
-    if let Some(caps) = DLT_TIME_ONLY.captures(&raw) {
+    if let Ok(Some(caps)) = DLT_TIME_ONLY.captures(&raw) {
         let timestamp = parse_dlt_timestamp(&caps[1]);
         let message = caps[2].to_string();
         let mut line = LogLine::new(raw, line_number);

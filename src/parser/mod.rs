@@ -5,7 +5,7 @@ pub mod logcat;
 
 use lazy_static::lazy_static;
 use line::LogLine;
-use regex::Regex;
+use fancy_regex::Regex;
 
 lazy_static! {
     // Normalization patterns

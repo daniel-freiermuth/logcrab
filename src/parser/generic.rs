@@ -1,7 +1,7 @@
 use super::line::LogLine;
 use chrono::{DateTime, Datelike, Local};
 use lazy_static::lazy_static;
-use regex::Regex;
+use fancy_regex::Regex;
 
 lazy_static! {
     // ISO 8601: 2025-11-20T14:23:45.123Z or 2025-11-20 14:23:45.123
@@ -30,7 +30,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
     let mut remaining = raw.as_str();
 
     // Try to extract timestamp - try various formats
-    if let Some(caps) = ISO_TIMESTAMP.captures(remaining) {
+    if let Ok(Some(caps)) = ISO_TIMESTAMP.captures(remaining) {
         if let Ok(dt) = DateTime::parse_from_rfc3339(&caps[1]) {
             timestamp = Some(dt.with_timezone(&Local));
             remaining = remaining[caps[0].len()..].trim_start();
@@ -38,7 +38,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
             timestamp = Some(dt.with_timezone(&Local));
             remaining = remaining[caps[0].len()..].trim_start();
         }
-    } else if let Some(caps) = BRACKETED_TIMESTAMP.captures(remaining) {
+    } else if let Ok(Some(caps)) = BRACKETED_TIMESTAMP.captures(remaining) {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S%.3f")
         {
             timestamp = Some(DateTime::from_naive_utc_and_offset(
@@ -47,7 +47,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
             ));
             remaining = remaining[caps[0].len()..].trim_start();
         }
-    } else if let Some(caps) = LOGCAT_TIMESTAMP.captures(remaining) {
+    } else if let Ok(Some(caps)) = LOGCAT_TIMESTAMP.captures(remaining) {
         // Logcat format: MM-DD HH:MM:SS.mmm (no year!)
         let current_year = Local::now().year();
         let timestamp_str = format!("{}-{}", current_year, &caps[1]);
@@ -60,7 +60,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
             ));
             remaining = remaining[caps[0].len()..].trim_start();
         }
-    } else if let Some(caps) = SYSLOG_TIMESTAMP.captures(remaining) {
+    } else if let Ok(Some(caps)) = SYSLOG_TIMESTAMP.captures(remaining) {
         // Parse syslog format (assuming current year)
         let current_year = Local::now().year();
         let ts_str = format!("{} {}", current_year, &caps[1]);

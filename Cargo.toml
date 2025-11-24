@@ -18,7 +18,7 @@ egui_extras = "0.28"
 egui_dock = "0.13"
 keybinds = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
-regex = "1.10"
+fancy-regex = "0.13"
 lazy_static = "1.4"
 ahash = "0.8"
 rfd = "0.14"

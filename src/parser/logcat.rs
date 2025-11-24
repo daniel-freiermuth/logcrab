@@ -1,7 +1,7 @@
 use super::line::LogLine;
 use chrono::{DateTime, Datelike, Local, NaiveDateTime};
 use lazy_static::lazy_static;
-use regex::Regex;
+use fancy_regex::Regex;
 
 lazy_static! {
     // Just extract timestamp - everything after it is the message
@@ -12,7 +12,7 @@ lazy_static! {
 
 pub fn parse_logcat(raw: String, line_number: usize) -> Option<LogLine> {
     // Extract timestamp and treat everything after it as the message
-    if let Some(caps) = LOGCAT_TIMESTAMP.captures(&raw) {
+    if let Ok(Some(caps)) = LOGCAT_TIMESTAMP.captures(&raw) {
         let message = caps[2].to_string();
         let timestamp = parse_logcat_timestamp(&caps[1]);
         let mut line = LogLine::new(raw, line_number);
