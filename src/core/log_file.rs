@@ -22,13 +22,18 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 /// Messages sent during background file loading
 pub enum LoadMessage {
     Progress(f32, String),
-    Complete(Vec<LogLine>, PathBuf),
+    Complete(Arc<Vec<LogLine>>, PathBuf),
     Error(String),
+    /// Sent periodically during scoring with progress updates
+    ScoringProgress(f32, String),
+    /// Sent when scoring is complete with updated lines
+    ScoringComplete(Arc<Vec<LogLine>>),
 }
 
 /// Handles asynchronous loading and processing of log files
@@ -48,6 +53,7 @@ impl LogFileLoader {
     }
 
     fn process_file_background(path: PathBuf, tx: Sender<LoadMessage>, ctx: egui::Context) {
+        let start_time = std::time::Instant::now();
         log::debug!("Starting background file processing for: {:?}", path);
         
         // Get file size for progress tracking
@@ -68,6 +74,7 @@ impl LogFileLoader {
         }
 
         // Read file with lossy UTF-8 conversion to handle non-UTF8 characters
+        let read_start = std::time::Instant::now();
         let mut file = file.unwrap();
         let mut buffer = Vec::new();
         if let Err(e) = file.read_to_end(&mut buffer) {
@@ -76,29 +83,32 @@ impl LogFileLoader {
             return;
         }
 
-        log::debug!("Read {} bytes from file", buffer.len());
+        let read_duration = read_start.elapsed();
+        log::info!("File I/O took {:?} to read {} bytes", read_duration, buffer.len());
         
         // Convert to UTF-8 with lossy conversion (replaces invalid UTF-8 with � character)
+        let utf8_start = std::time::Instant::now();
         let content = String::from_utf8_lossy(&buffer);
+        log::info!("UTF-8 conversion took {:?}", utf8_start.elapsed());
 
         let mut scorer = create_default_scorer();
         let mut lines = Vec::new();
-        let mut raw_scores = Vec::new();
 
         let mut bytes_read: usize = 0;
 
-        // First pass: parse and score
+        // First pass: parse lines WITHOUT scoring for fast display
         #[cfg(feature = "cpu-profiling")]
-        puffin::profile_scope!("parse_and_score");
+        puffin::profile_scope!("parse_lines");
 
+        let parse_start = std::time::Instant::now();
         let mut file_line_number = 0;
         for line_buffer in content.lines() {
             file_line_number += 1;
             bytes_read += line_buffer.len() + 1; // +1 for newline
 
-            // Update progress based on bytes read (first 80% of total progress)
+            // Update progress - now we can use the full 100% for parsing
             if file_line_number % 500 == 0 {
-                let progress = 0.8 * (bytes_read as f32 / file_size).min(1.0);
+                let progress = (bytes_read as f32 / file_size).min(1.0);
                 let _ = tx.send(LoadMessage::Progress(
                     progress,
                     format!("Loading {}... ({} lines)", path.display(), lines.len()),
@@ -115,22 +125,64 @@ impl LogFileLoader {
                 None => continue, // Skip lines without timestamp
             };
 
-            let mut log_line = log_line;
-
-            // Score before updating (key requirement!)
-            let score = scorer.score(&log_line);
-            log_line.anomaly_score = score;
-            raw_scores.push(score);
-
-            // Update scorer state
-            scorer.update(&log_line);
-
             lines.push(log_line);
         }
 
-        let _ = tx.send(LoadMessage::Progress(
+        let parse_duration = parse_start.elapsed();
+        log::info!("Parsing took {:?} to process {} lines from {:?}", parse_duration, lines.len(), path);
+        
+        // Wrap in Arc for cheap cloning
+        let arc_start = std::time::Instant::now();
+        let lines_arc = Arc::new(lines);
+        log::info!("Arc wrapping took {:?}", arc_start.elapsed());
+        
+        // Send the parsed lines immediately so user can start working
+        // Arc clone is cheap (just increments reference count)
+        let send_start = std::time::Instant::now();
+        let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path.clone()));
+        ctx.request_repaint();
+        log::info!("Sending Complete message took {:?}", send_start.elapsed());
+        log::info!("Total time to display file: {:?}", start_time.elapsed());
+
+        // Now calculate anomaly scores in the background
+        let score_start = std::time::Instant::now();
+        log::debug!("Starting background anomaly scoring for {} lines", lines_arc.len());
+
+        // Get mutable access to score the lines
+        let unwrap_start = std::time::Instant::now();
+        let mut lines = Arc::try_unwrap(lines_arc).unwrap_or_else(|arc| {
+            log::warn!("Arc::try_unwrap failed, cloning {} lines for scoring", arc.len());
+            (*arc).clone()
+        });
+        log::info!("Arc::try_unwrap took {:?}", unwrap_start.elapsed());
+
+        let mut raw_scores = Vec::new();
+
+        // Score all lines
+        #[cfg(feature = "cpu-profiling")]
+        puffin::profile_scope!("score_lines");
+
+        let total_lines = lines.len();
+        for (idx, log_line) in lines.iter_mut().enumerate() {
+            // Update progress every 1000 lines
+            if idx % 1000 == 0 {
+                let progress = idx as f32 / total_lines as f32;
+                let _ = tx.send(LoadMessage::ScoringProgress(
+                    progress * 0.8,
+                    format!("Scoring... ({}/{})", idx, total_lines),
+                ));
+                ctx.request_repaint();
+            }
+
+            let score = scorer.score(log_line);
+            log_line.anomaly_score = score;
+            raw_scores.push(score);
+            scorer.update(log_line);
+        }
+
+        let _ = tx.send(LoadMessage::ScoringProgress(
             0.8,
-            format!("Normalizing scores for {}...", path.display()),
+            "Normalizing scores...".to_string(),
         ));
         ctx.request_repaint();
 
@@ -140,9 +192,9 @@ impl LogFileLoader {
 
         let normalized_scores = normalize_scores(&raw_scores);
 
-        let _ = tx.send(LoadMessage::Progress(
+        let _ = tx.send(LoadMessage::ScoringProgress(
             0.9,
-            format!("Finalizing {}...", path.display()),
+            "Finalizing scores...".to_string(),
         ));
         ctx.request_repaint();
 
@@ -172,14 +224,16 @@ impl LogFileLoader {
             );
         }
 
-        log::debug!("Finalizing {} log lines", lines.len());
+        log::debug!("Finalizing {} log lines with normalized scores", lines.len());
 
         for (line, &norm_score) in lines.iter_mut().zip(normalized_scores.iter()) {
             line.anomaly_score = norm_score;
         }
 
-        log::info!("File processing complete for: {:?}", path);
-        let _ = tx.send(LoadMessage::Complete(lines, path));
+        let score_duration = score_start.elapsed();
+        log::info!("Anomaly scoring took {:?} for {:?}", score_duration, path);
+        log::info!("Total processing time: {:?}", start_time.elapsed());
+        let _ = tx.send(LoadMessage::ScoringComplete(Arc::new(lines)));
         ctx.request_repaint();
     }
 }

@@ -265,10 +265,10 @@ impl LogView {
         }
     }
 
-    pub fn set_lines(&mut self, lines: Vec<LogLine>) {
+    pub fn set_lines(&mut self, lines: Arc<Vec<LogLine>>) {
         log::info!("Setting {} log lines, requesting background filtering for {} filters", 
                    lines.len(), self.filters.len());
-        self.lines = Arc::new(lines);
+        self.lines = lines;
         // Request background filtering for all filters
         for filter in &mut self.filters {
             filter.request_filter_update(Arc::clone(&self.lines), self.min_score_filter);

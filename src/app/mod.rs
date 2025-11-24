@@ -160,11 +160,23 @@ impl LogCrabApp {
 
                         self.current_file = Some(path.clone());
                         self.status_message = format!(
-                            "Loaded {} successfully with {} lines",
-                            path.display(),
+                            "Loaded {} lines - calculating anomaly scores in background...",
                             self.log_view.lines.len()
                         );
                         self.is_loading = false;
+                        self.load_progress = 0.0;
+                        // Keep receiver open for scoring progress
+                    }
+                    LoadMessage::ScoringProgress(progress, status) => {
+                        self.load_progress = progress;
+                        self.status_message = status;
+                    }
+                    LoadMessage::ScoringComplete(lines) => {
+                        self.log_view.set_lines(lines);
+                        self.status_message = format!(
+                            "Ready. {} lines loaded with anomaly scores",
+                            self.log_view.lines.len()
+                        );
                         self.load_progress = 1.0;
                         should_clear_receiver = true;
                     }
