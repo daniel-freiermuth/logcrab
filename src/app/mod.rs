@@ -442,6 +442,26 @@ impl LogCrabApp {
                         }
                     }
                 }
+                InputAction::ReverseCycleTab => {
+                    // Cycle to the previous tab in the active pane
+                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
+                        let surface = &mut self.dock_state[surface_idx];
+                        
+                        // Get the number of tabs and current active tab
+                        if let Node::Leaf { active, tabs, .. } = &mut surface[node_idx] {
+                            let tab_count = tabs.len();
+                            if tab_count > 1 {
+                                // Cycle to previous tab (wrap around to last if at the beginning)
+                                let prev_tab = if active.0 == 0 {
+                                    tab_count - 1
+                                } else {
+                                    active.0 - 1
+                                };
+                                *active = egui_dock::TabIndex(prev_tab);
+                            }
+                        }
+                    }
+                }
                 InputAction::JumpToTop => {
                     match focused_tab {
                         Some(TabType::Filter(idx)) => {

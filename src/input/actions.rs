@@ -57,4 +57,7 @@ pub enum InputAction {
 
     /// Cycle to the next tab in the active pane
     CycleTab,
+
+    /// Cycle to the previous tab in the active pane
+    ReverseCycleTab,
 }

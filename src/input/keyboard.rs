@@ -172,6 +172,7 @@ pub enum ShortcutAction {
     FocusPaneUp,
     FocusPaneRight,
     CycleTab,
+    ReverseCycleTab,
 }
 
 impl ShortcutAction {
@@ -192,6 +193,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneUp,
             ShortcutAction::FocusPaneRight,
             ShortcutAction::CycleTab,
+            ShortcutAction::ReverseCycleTab,
         ]
     }
 
@@ -211,6 +213,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneUp => "Focus Pane Up",
             ShortcutAction::FocusPaneRight => "Focus Pane Right",
             ShortcutAction::CycleTab => "Cycle to Next Tab",
+            ShortcutAction::ReverseCycleTab => "Cycle to Previous Tab",
         }
     }
 
@@ -230,6 +233,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneUp => "Move focus to the pane above (Vim-style: Shift+K)",
             ShortcutAction::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
             ShortcutAction::CycleTab => "Cycle to the next tab in the active pane",
+            ShortcutAction::ReverseCycleTab => "Cycle to the previous tab in the active pane",
         }
     }
 
@@ -249,6 +253,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneUp => "K",
             ShortcutAction::FocusPaneRight => "L",
             ShortcutAction::CycleTab => "Ctrl+Tab",
+            ShortcutAction::ReverseCycleTab => "Ctrl+Shift+Tab",
         }
     }
 }
@@ -389,6 +394,7 @@ impl KeyboardBindings {
             ShortcutAction::FocusPaneUp => actions.push(InputAction::NavigatePane(PaneDirection::Up)),
             ShortcutAction::FocusPaneRight => actions.push(InputAction::NavigatePane(PaneDirection::Right)),
             ShortcutAction::CycleTab => actions.push(InputAction::CycleTab),
+            ShortcutAction::ReverseCycleTab => actions.push(InputAction::ReverseCycleTab),
         }
     }
 }
