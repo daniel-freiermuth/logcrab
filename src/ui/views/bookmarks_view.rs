@@ -38,6 +38,7 @@ pub enum BookmarksViewEvent {
     StartRenaming {
         line_index: usize,
     },
+    CancelRenaming,
 }
 
 /// Orchestrates the bookmarks view UI using the BookmarkPanel component
@@ -88,6 +89,7 @@ impl BookmarksView {
                 BookmarkPanelEvent::StartRenaming { line_index } => {
                     BookmarksViewEvent::StartRenaming { line_index }
                 }
+                BookmarkPanelEvent::CancelRenaming => BookmarksViewEvent::CancelRenaming,
             })
             .collect()
     }

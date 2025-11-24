@@ -591,6 +591,10 @@ impl LogView {
                         self.bookmark_name_input = bookmark.name.clone();
                     }
                 }
+                BookmarksViewEvent::CancelRenaming => {
+                    self.editing_bookmark = None;
+                    self.bookmark_name_input.clear();
+                }
             }
         }
 

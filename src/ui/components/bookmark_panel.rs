@@ -46,6 +46,7 @@ pub enum BookmarkPanelEvent {
     StartRenaming {
         line_index: usize,
     },
+    CancelRenaming,
 }
 
 /// Convert anomaly score to color
@@ -107,7 +108,7 @@ impl BookmarkPanel {
                     .column(Column::initial(110.0).resizable(true).clip(true))
                     .column(Column::initial(200.0).resizable(true).clip(true))
                     .column(Column::remainder().resizable(true).clip(true))
-                    .column(Column::initial(80.0).resizable(true).clip(true));
+                    .column(Column::initial(40.0).resizable(false).clip(true));
 
                 table
                     .header(20.0, |mut header| {
@@ -124,7 +125,7 @@ impl BookmarkPanel {
                             ui.strong("Message");
                         });
                         header.col(|ui| {
-                            ui.strong("Actions");
+                            ui.strong("");
                         });
                     })
                     .body(|body| {
@@ -219,22 +220,36 @@ impl BookmarkPanel {
 
                                 // Editable name field
                                 if editing_bookmark == Some(line_idx) {
-                                    let response = ui.add(
-                                        egui::TextEdit::singleline(bookmark_name_input)
-                                            .desired_width(ui.available_width() - 50.0),
-                                    );
-                                    if response.lost_focus()
-                                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                        && !bookmark_name_input.is_empty()
-                                    {
+                                    let text_edit = egui::TextEdit::singleline(bookmark_name_input)
+                                        .desired_width(ui.available_width());
+                                    
+                                    let id = ui.id().with("bm_edit").with(line_idx);
+                                    let response = ui.add(text_edit.id(id));
+                                    
+                                    // Request focus and select all on first frame
+                                    let was_focused = ui.memory(|mem| mem.has_focus(id));
+                                    if !was_focused {
+                                        response.request_focus();
+                                        // Select all text by setting cursor range
+                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
+                                            let ccursor_start = egui::text::CCursor::new(0);
+                                            let ccursor_end = egui::text::CCursor::new(bookmark_name_input.len());
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(ccursor_start, ccursor_end)));
+                                            state.store(ui.ctx(), id);
+                                        }
+                                    }
+                                    
+                                    // Save on Enter
+                                    let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                    if enter_pressed && !bookmark_name_input.is_empty() {
                                         events.push(BookmarkPanelEvent::BookmarkRenamed {
                                             line_index: line_idx,
                                             new_name: bookmark_name_input.clone(),
                                         });
                                     }
                                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                        // Clear editing state - will be handled by parent
-                                        bookmark_name_input.clear();
+                                        // Signal to cancel editing
+                                        events.push(BookmarkPanelEvent::CancelRenaming);
                                     }
                                 } else {
                                     ui.label(RichText::new(&bookmark.name).color(color).strong());
@@ -243,7 +258,10 @@ impl BookmarkPanel {
                                         ui.id().with(line_idx).with("bm_name"),
                                         egui::Sense::click(),
                                     );
-                                    if response.double_clicked() {
+                                    
+                                    // Start editing on double-click or Enter key
+                                    let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                    if response.double_clicked() || (is_selected && enter_pressed) {
                                         events.push(BookmarkPanelEvent::StartRenaming {
                                             line_index: line_idx,
                                         });
@@ -273,7 +291,7 @@ impl BookmarkPanel {
                                 }
                             });
 
-                            // Actions
+                            // Delete button
                             row.col(|ui| {
                                 if is_selected {
                                     ui.painter().rect_filled(
@@ -282,18 +300,11 @@ impl BookmarkPanel {
                                         Color32::from_rgb(100, 80, 30),
                                     );
                                 }
-                                ui.horizontal(|ui| {
-                                    if ui.small_button("✏").on_hover_text("Rename").clicked() {
-                                        events.push(BookmarkPanelEvent::StartRenaming {
-                                            line_index: line_idx,
-                                        });
-                                    }
-                                    if ui.small_button("🗑").on_hover_text("Delete").clicked() {
-                                        events.push(BookmarkPanelEvent::BookmarkDeleted {
-                                            line_index: line_idx,
-                                        });
-                                    }
-                                });
+                                if ui.small_button("🗑").on_hover_text("Delete").clicked() {
+                                    events.push(BookmarkPanelEvent::BookmarkDeleted {
+                                        line_index: line_idx,
+                                    });
+                                }
                             });
 
                             if row_clicked {
