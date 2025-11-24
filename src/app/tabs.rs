@@ -1,3 +1,4 @@
+use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
@@ -53,12 +54,12 @@ impl TabViewer for LogCrabTabViewer<'_> {
 
             if ui.button("✏ Rename").clicked() {
                 // Will be handled in the main UI
-                ui.close_menu();
+                ui.close();
             }
 
             if ui.button("🗑 Clear Name").clicked() {
                 self.log_view.set_filter_name(*index, None);
-                ui.close_menu();
+                ui.close();
             }
         }
     }
@@ -72,7 +73,7 @@ impl TabViewer for LogCrabTabViewer<'_> {
         ui.set_min_width(120.0);
         if ui.button("➕ Filter Tab").clicked() {
             *self.add_tab_after = Some(node);
-            ui.close_menu();
+            ui.close();
         }
     }
 
@@ -94,13 +95,13 @@ impl TabViewer for LogCrabTabViewer<'_> {
         }
     }
 
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+    fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
         // When closing a filter tab, mark it for removal
         // We can't remove it here because we need to update all other tabs' indices
         if let TabType::Filter(index) = &tab.tab_type {
             *self.filter_to_remove = Some(*index);
         }
-        // Return true to allow the tab to be closed
-        true
+        // Return Close to allow the tab to be closed
+        OnCloseResponse::Close
     }
 }

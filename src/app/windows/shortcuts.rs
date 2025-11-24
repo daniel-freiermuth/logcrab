@@ -60,10 +60,10 @@ pub fn render_shortcuts_window(
                         ui.visuals().code_bg_color
                     };
 
-                    egui::Frame::none()
+                    egui::Frame::new()
                         .fill(badge_color)
-                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                        .rounding(egui::Rounding::same(4.0))
+                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .corner_radius(egui::CornerRadius::same(4))
                         .stroke(egui::Stroke::new(1.0, ui.visuals().window_stroke.color))
                         .show(ui, |ui| {
                             ui.label(egui::RichText::new(&key_text).size(13.0).strong());

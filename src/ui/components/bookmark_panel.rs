@@ -95,7 +95,7 @@ impl BookmarkPanel {
         ui.separator();
 
         egui::ScrollArea::horizontal()
-            .id_source("bookmarks_scroll")
+            .id_salt("bookmarks_scroll")
             .show(ui, |ui| {
                 let table = TableBuilder::new(ui)
                     .striped(true)

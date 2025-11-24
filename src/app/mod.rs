@@ -205,7 +205,7 @@ impl LogCrabApp {
                 {
                     self.load_file(path, ctx.clone());
                 }
-                ui.close_menu();
+                ui.close();
             }
 
             if ui.button("Quit").clicked() {
@@ -221,7 +221,7 @@ impl LogCrabApp {
                     tab_type: TabType::Filter(filter_index),
                     title: format!("Filter {}", filter_index + 1),
                 });
-                ui.close_menu();
+                ui.close();
             }
 
             if ui.button("Add Bookmarks Tab").clicked() {
@@ -229,23 +229,23 @@ impl LogCrabApp {
                     tab_type: TabType::Bookmarks,
                     title: "Bookmarks".to_string(),
                 });
-                ui.close_menu();
+                ui.close();
             }
         });
 
         ui.menu_button("Help", |ui| {
             if ui.button("About").clicked() {
                 self.status_message = "LogCrab 🦀 - Log Anomaly Explorer v0.1.0".to_string();
-                ui.close_menu();
+                ui.close();
             }
 
             if ui.button("Anomaly Score Calculation").clicked() {
                 self.show_anomaly_explanation = true;
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Keyboard Shortcuts").clicked() {
                 self.show_shortcuts_window = true;
-                ui.close_menu();
+                ui.close();
             }
         });
 
@@ -451,9 +451,10 @@ impl LogCrabApp {
                         let tree = &self.dock_state[surface_idx];
                         
                         // Each pane (leaf node) can have multiple tabs, but only one is "active" (visible).
-                        // The 'active' field tells us which tab is currently displayed in this pane.
-                        if let Node::Leaf { active, .. } = &tree[node_idx] {
-                            self.dock_state.remove_tab((surface_idx, node_idx, *active));
+                        // Get the active tab index from the leaf node
+                        if let Node::Leaf(leaf) = &tree[node_idx] {
+                            let active = leaf.active;
+                            self.dock_state.remove_tab((surface_idx, node_idx, active));
                         }
                     }
                 }
@@ -463,12 +464,13 @@ impl LogCrabApp {
                         let surface = &mut self.dock_state[surface_idx];
                         
                         // Get the number of tabs and current active tab
-                        if let Node::Leaf { active, tabs, .. } = &mut surface[node_idx] {
-                            let tab_count = tabs.len();
+                        if let Node::Leaf(leaf) = &mut surface[node_idx] {
+                            let tab_count = leaf.tabs.len();
                             if tab_count > 1 {
+                                let active = leaf.active;
                                 // Cycle to next tab (wrap around to 0 if at the end)
                                 let next_tab = (active.0 + 1) % tab_count;
-                                *active = egui_dock::TabIndex(next_tab);
+                                leaf.active = egui_dock::TabIndex(next_tab);
                             }
                         }
                     }
@@ -479,16 +481,17 @@ impl LogCrabApp {
                         let surface = &mut self.dock_state[surface_idx];
                         
                         // Get the number of tabs and current active tab
-                        if let Node::Leaf { active, tabs, .. } = &mut surface[node_idx] {
-                            let tab_count = tabs.len();
+                        if let Node::Leaf(leaf) = &mut surface[node_idx] {
+                            let tab_count = leaf.tabs.len();
                             if tab_count > 1 {
+                                let active = leaf.active;
                                 // Cycle to previous tab (wrap around to last if at the beginning)
                                 let prev_tab = if active.0 == 0 {
                                     tab_count - 1
                                 } else {
                                     active.0 - 1
                                 };
-                                *active = egui_dock::TabIndex(prev_tab);
+                                leaf.active = egui_dock::TabIndex(prev_tab);
                             }
                         }
                     }

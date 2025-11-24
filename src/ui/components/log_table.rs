@@ -88,7 +88,7 @@ impl LogTable {
         let visible_lines = filter.filtered_indices.len();
 
         egui::ScrollArea::horizontal()
-            .id_source(format!("filtered_scroll_{}", filter_index))
+            .id_salt(format!("filtered_scroll_{}", filter_index))
             .show(ui, |ui| {
                 #[cfg(feature = "cpu-profiling")]
                 puffin::profile_scope!("filtered_table");

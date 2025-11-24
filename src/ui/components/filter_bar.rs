@@ -57,7 +57,7 @@ impl FilterBar {
 
             // Dropdown menu for favorites
             if !favorites.is_empty() {
-                egui::ComboBox::from_id_source(format!("favorites_{}", filter_index))
+                egui::ComboBox::from_id_salt(format!("favorites_{}", filter_index))
                     .selected_text("⭐ Favorites")
                     .width(100.0)
                     .show_ui(ui, |ui| {
