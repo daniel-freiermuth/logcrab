@@ -352,8 +352,16 @@ impl LogCrabApp {
 
     /// Process keyboard shortcuts and execute actions
     fn process_keyboard_input(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        // Global keyboard shortcut handling (navigation). Skip if a text input wants keyboard.
-        if ctx.wants_keyboard_input() {
+        // Skip keyboard shortcuts if text input is focused AND no modifiers are pressed
+        // This allows shortcuts like Ctrl+w to work even in text fields
+        let has_modifiers = raw_input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key { modifiers, .. } if modifiers.ctrl || modifiers.alt || modifiers.command
+            )
+        });
+        
+        if ctx.wants_keyboard_input() && !has_modifiers {
             return;
         }
 
