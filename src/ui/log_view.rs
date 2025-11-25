@@ -116,7 +116,13 @@ impl LogView {
     }
 
     /// Check if any filter is currently processing in the background
-    pub fn is_any_filter_active(&self) -> bool {
+    /// Also checks for completed filter results to update status
+    pub fn is_any_filter_active(&mut self) -> bool {
+        // Check all filters for completed results, even if they're not being rendered
+        for filter in &mut self.filters {
+            filter.check_filter_results();
+        }
+        // Return true if any filter is still processing
         self.filters.iter().any(|f| f.is_filtering)
     }
 
@@ -280,6 +286,15 @@ impl LogView {
         self.crab_file = Some(crab_path.clone());
         let initial_filter_count = self.filters.len();
         self.load_crab_file();
+        
+        // Request filter updates for any newly loaded or restored filters
+        // This ensures filters loaded from .crab file start background filtering immediately
+        for filter in &mut self.filters {
+            if filter.filter_dirty {
+                filter.request_filter_update(Arc::clone(&self.lines), self.min_score_filter);
+            }
+        }
+        
         // Return how many filters we have after loading
         self.filters.len().saturating_sub(initial_filter_count)
     }

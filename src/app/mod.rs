@@ -267,7 +267,7 @@ impl LogCrabApp {
     }
 
     /// Render bottom status panel
-    fn render_status_panel(&self, ui: &mut egui::Ui) {
+    fn render_status_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(&self.status_message);
 
