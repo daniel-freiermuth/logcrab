@@ -53,6 +53,13 @@ struct CrabFile {
     filters: Vec<SavedFilter>,
 }
 
+/// What is currently being edited (for rename dialogs)
+#[derive(Debug, Clone, Copy)]
+enum EditingTarget {
+    Bookmark(usize),  // line_index
+    Filter(usize),    // filter_index
+}
+
 pub struct LogView {
     pub lines: Arc<Vec<LogLine>>,
     pub min_score_filter: f64,
@@ -67,7 +74,7 @@ pub struct LogView {
     crab_file: Option<PathBuf>,
     // UI state
     bookmark_name_input: String,
-    editing_bookmark: Option<usize>,
+    editing_target: Option<EditingTarget>,
 }
 
 impl LogView {
@@ -87,7 +94,7 @@ impl LogView {
             bookmarks: HashMap::new(),
             crab_file: None,
             bookmark_name_input: String::new(),
-            editing_bookmark: None,
+            editing_target: None,
         }
     }
 
@@ -481,7 +488,7 @@ impl LogView {
                     } else {
                         self.bookmark_name_input = format!("Filter {}", filter_index + 1);
                     }
-                    self.editing_bookmark = Some(filter_index + 10000); // Use high number to distinguish from bookmarks
+                    self.editing_target = Some(EditingTarget::Filter(filter_index));
                 }
                 FilterViewEvent::FavoriteToggled => {
                     let search_text = self.filters[filter_index].search_text.clone();
@@ -519,42 +526,39 @@ impl LogView {
         }
 
         // Handle filter name editing dialog
-        if let Some(editing_id) = self.editing_bookmark {
-            if editing_id >= 10000 {
-                let actual_filter_index = editing_id - 10000;
-                if actual_filter_index == filter_index {
-                    egui::Window::new("Rename Filter")
-                        .collapsible(false)
-                        .resizable(false)
-                        .show(ui.ctx(), |ui| {
-                            ui.label("Enter filter name:");
-                            let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
-                            response.request_focus();
+        if let Some(EditingTarget::Filter(editing_filter_index)) = self.editing_target {
+            if editing_filter_index == filter_index {
+                egui::Window::new("Rename Filter")
+                    .collapsible(false)
+                    .resizable(false)
+                    .show(ui.ctx(), |ui| {
+                        ui.label("Enter filter name:");
+                        let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
+                        response.request_focus();
 
-                            ui.horizontal(|ui| {
-                                if ui.button("Save").clicked()
-                                    || (response.lost_focus()
-                                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                                {
-                                    let new_name = if self.bookmark_name_input.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(self.bookmark_name_input.clone())
-                                    };
-                                    self.set_filter_name(filter_index, new_name);
-                                    self.editing_bookmark = None;
-                                    self.bookmark_name_input.clear();
-                                }
-                                if ui.button("Cancel").clicked()
-                                    || (response.lost_focus()
-                                        && ui.input(|i| i.key_pressed(egui::Key::Escape)))
-                                {
-                                    self.editing_bookmark = None;
-                                    self.bookmark_name_input.clear();
-                                }
-                            });
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked()
+                                || (response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                            {
+                                let new_name = if self.bookmark_name_input.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(self.bookmark_name_input.clone())
+                                };
+                                self.set_filter_name(filter_index, new_name);
+                                self.editing_target = None;
+                                self.bookmark_name_input.clear();
+                            }
+                            if ui.button("Cancel").clicked()
+                                || (response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Escape)))
+                            {
+                                self.editing_target = None;
+                                self.bookmark_name_input.clear();
+                            }
                         });
-                }
+                    });
             }
         }
     }
@@ -572,13 +576,19 @@ impl LogView {
             .collect();
         bookmarks.sort_by_key(|b| b.line_index);
 
+        // Extract the editing line_index if we're editing a bookmark (not a filter)
+        let editing_bookmark = match self.editing_target {
+            Some(EditingTarget::Bookmark(line_index)) => Some(line_index),
+            _ => None,
+        };
+
         // Render using BookmarksView
         let events = BookmarksView::render(
             ui,
             &self.lines,
             bookmarks,
             self.selected_line_index,
-            self.editing_bookmark,
+            editing_bookmark,
             &mut self.bookmark_name_input,
         );
 
@@ -605,17 +615,17 @@ impl LogView {
                         b.name = new_name;
                         should_save = true;
                     }
-                    self.editing_bookmark = None;
+                    self.editing_target = None;
                     self.bookmark_name_input.clear();
                 }
                 BookmarksViewEvent::StartRenaming { line_index } => {
-                    self.editing_bookmark = Some(line_index);
+                    self.editing_target = Some(EditingTarget::Bookmark(line_index));
                     if let Some(bookmark) = self.bookmarks.get(&line_index) {
                         self.bookmark_name_input = bookmark.name.clone();
                     }
                 }
                 BookmarksViewEvent::CancelRenaming => {
-                    self.editing_bookmark = None;
+                    self.editing_target = None;
                     self.bookmark_name_input.clear();
                 }
             }
