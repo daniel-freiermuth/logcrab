@@ -48,13 +48,56 @@ impl Histogram {
             return None;
         }
 
+        // Validate filtered_indices to prevent index out of bounds
+        let max_valid_index = lines.len().saturating_sub(1);
+        let invalid_indices: Vec<_> = filtered_indices
+            .iter()
+            .filter(|&&idx| idx >= lines.len())
+            .collect();
+        
+        if !invalid_indices.is_empty() {
+            log::warn!(
+                "Found {} invalid indices in filtered_indices (max valid: {}, total lines: {}). First few invalid indices: {:?}",
+                invalid_indices.len(),
+                max_valid_index,
+                lines.len(),
+                invalid_indices.iter().take(5).collect::<Vec<_>>()
+            );
+            // Filter out invalid indices for safety
+            let valid_filtered_indices: Vec<_> = filtered_indices
+                .iter()
+                .filter(|&&idx| idx < lines.len())
+                .copied()
+                .collect();
+            
+            if valid_filtered_indices.is_empty() {
+                ui.label("No valid filtered indices available");
+                return None;
+            }
+            
+            // Continue with valid indices
+            return Self::render_internal(ui, lines, &valid_filtered_indices, selected_line_index);
+        }
+
+        Self::render_internal(ui, lines, filtered_indices, selected_line_index)
+    }
+
+    fn render_internal(
+        ui: &mut Ui,
+        lines: &[LogLine],
+        filtered_indices: &[usize],
+        selected_line_index: Option<usize>,
+    ) -> Option<HistogramClickEvent> {
+
         // Get time range from filtered lines only
         let first_ts = filtered_indices
             .iter()
+            .filter(|&&idx| idx < lines.len())
             .find_map(|&idx| lines[idx].timestamp);
         let last_ts = filtered_indices
             .iter()
             .rev()
+            .filter(|&&idx| idx < lines.len())
             .find_map(|&idx| lines[idx].timestamp);
 
         if first_ts.is_none() || last_ts.is_none() {
@@ -72,10 +115,12 @@ impl Histogram {
         // Count lines per bucket (only filtered lines)
         let mut buckets = vec![0usize; NUM_BUCKETS];
         for &line_idx in filtered_indices {
-            if let Some(ts) = lines[line_idx].timestamp {
-                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-                let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
-                buckets[bucket_idx] += 1;
+            if line_idx < lines.len() {
+                if let Some(ts) = lines[line_idx].timestamp {
+                    let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+                    let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
+                    buckets[bucket_idx] += 1;
+                }
             }
         }
 
@@ -158,20 +203,24 @@ impl Histogram {
                     let mut min_diff = i64::MAX;
 
                     for &line_idx in filtered_indices {
-                        if let Some(ts) = lines[line_idx].timestamp {
-                            let diff = (ts.timestamp() - target_time).abs();
-                            if diff < min_diff {
-                                min_diff = diff;
-                                closest_idx = Some(line_idx);
+                        if line_idx < lines.len() {
+                            if let Some(ts) = lines[line_idx].timestamp {
+                                let diff = (ts.timestamp() - target_time).abs();
+                                if diff < min_diff {
+                                    min_diff = diff;
+                                    closest_idx = Some(line_idx);
+                                }
                             }
                         }
                     }
 
                     if let Some(idx) = closest_idx {
-                        click_event = Some(HistogramClickEvent {
-                            line_index: idx,
-                            timestamp: lines[idx].timestamp,
-                        });
+                        if idx < lines.len() {
+                            click_event = Some(HistogramClickEvent {
+                                line_index: idx,
+                                timestamp: lines[idx].timestamp,
+                            });
+                        }
                     }
                 }
             }
