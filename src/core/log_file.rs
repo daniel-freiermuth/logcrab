@@ -17,7 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
-use crate::parser::{line::LogLine, parse_line};
+use crate::parser::{line::LogLine, parse_line, dlt};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -85,6 +85,36 @@ impl LogFileLoader {
 
         let read_duration = read_start.elapsed();
         log::info!("File I/O took {:?} to read {} bytes", read_duration, buffer.len());
+        
+        // Check if this is a DLT binary file by extension or magic bytes
+        let is_dlt_file = path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("dlt"))
+            .unwrap_or(false);
+        
+        // If it's a DLT file, parse it differently
+        if is_dlt_file {
+            log::info!("Detected DLT binary file, using dlt-core parser");
+            let _ = tx.send(LoadMessage::Progress(
+                0.5,
+                format!("Parsing DLT binary file {}...", path.display()),
+            ));
+            ctx.request_repaint();
+            
+            match dlt::parse_dlt_file(&path) {
+                Ok(lines) => {
+                    log::info!("Successfully parsed {} DLT messages", lines.len());
+                    // Continue with the scoring process
+                    Self::score_and_send_lines(lines, path, tx, ctx, start_time);
+                    return;
+                }
+                Err(e) => {
+                    log::error!("Failed to parse DLT file: {}", e);
+                    let _ = tx.send(LoadMessage::Error(format!("Failed to parse DLT file: {}", e)));
+                    return;
+                }
+            }
+        }
         
         // Convert to UTF-8 with lossy conversion (replaces invalid UTF-8 with � character)
         let utf8_start = std::time::Instant::now();
@@ -225,6 +255,68 @@ impl LogFileLoader {
         }
 
         log::debug!("Finalizing {} log lines with normalized scores", lines.len());
+
+        for (line, &norm_score) in lines.iter_mut().zip(normalized_scores.iter()) {
+            line.anomaly_score = norm_score;
+        }
+
+        let score_duration = score_start.elapsed();
+        log::info!("Anomaly scoring took {:?} for {:?}", score_duration, path);
+        log::info!("Total processing time: {:?}", start_time.elapsed());
+        let _ = tx.send(LoadMessage::ScoringComplete(Arc::new(lines)));
+        ctx.request_repaint();
+    }
+
+    /// Helper to score and send lines (used for both text and DLT files)
+    fn score_and_send_lines(
+        lines: Vec<LogLine>,
+        path: PathBuf,
+        tx: Sender<LoadMessage>,
+        ctx: egui::Context,
+        start_time: std::time::Instant,
+    ) {
+        // Wrap in Arc and send immediately
+        let lines_arc = Arc::new(lines);
+        let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path.clone()));
+        ctx.request_repaint();
+        log::info!("Total time to display file: {:?}", start_time.elapsed());
+
+        // Now calculate anomaly scores in the background
+        let score_start = std::time::Instant::now();
+        log::debug!("Starting background anomaly scoring for {} lines", lines_arc.len());
+
+        let mut lines = Arc::try_unwrap(lines_arc).unwrap_or_else(|arc| {
+            log::warn!("Arc::try_unwrap failed, cloning {} lines for scoring", arc.len());
+            (*arc).clone()
+        });
+
+        let mut scorer = create_default_scorer();
+        let mut raw_scores = Vec::new();
+        let total_lines = lines.len();
+
+        for (idx, log_line) in lines.iter_mut().enumerate() {
+            if idx % 1000 == 0 {
+                let progress = idx as f32 / total_lines as f32;
+                let _ = tx.send(LoadMessage::ScoringProgress(
+                    progress * 0.8,
+                    format!("Scoring... ({}/{})", idx, total_lines),
+                ));
+                ctx.request_repaint();
+            }
+
+            let score = scorer.score(log_line);
+            log_line.anomaly_score = score;
+            raw_scores.push(score);
+            scorer.update(log_line);
+        }
+
+        let _ = tx.send(LoadMessage::ScoringProgress(
+            0.8,
+            "Normalizing scores...".to_string(),
+        ));
+        ctx.request_repaint();
+
+        let normalized_scores = normalize_scores(&raw_scores);
 
         for (line, &norm_score) in lines.iter_mut().zip(normalized_scores.iter()) {
             line.anomaly_score = norm_score;

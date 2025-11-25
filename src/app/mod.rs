@@ -210,7 +210,7 @@ impl LogCrabApp {
         ui.menu_button("File", |ui| {
             if ui.button("Open Log File...").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Log Files", &["log", "txt"])
+                    .add_filter("Log Files", &["log", "txt", "dlt"])
                     .add_filter("All Files", &["*"])
                     .pick_file()
                 {
@@ -315,7 +315,7 @@ impl LogCrabApp {
                     ui.add(progress_bar);
                 } else if ui.button("Open Log File").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Log Files", &["log", "txt"])
+                        .add_filter("Log Files", &["log", "txt", "dlt"])
                         .add_filter("All Files", &["*"])
                         .pick_file()
                     {

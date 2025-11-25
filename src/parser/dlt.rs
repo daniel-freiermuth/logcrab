@@ -1,110 +1,86 @@
 use super::line::LogLine;
-use chrono::{DateTime, Local, NaiveDateTime};
-use lazy_static::lazy_static;
-use fancy_regex::Regex;
+use chrono::{Local, TimeZone};
+use std::fs::File;
+use std::path::Path;
+use dlt_core::dlt::{Message, MessageType};
+use dlt_core::read::{DltMessageReader, read_message};
 
-lazy_static! {
-    // DLT format examples:
-    // 2024/11/20 14:23:45.123456 12345 ECU1 APID CTID log info V 1 [Message text]
-    // Timestamp can also be in format: 14:23:45.123456 or other variations
-    static ref DLT_PATTERN: Regex = Regex::new(
-        r"^(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+|\d{2}:\d{2}:\d{2}\.\d+)\s+.*?\[(.*?)\]\s*$"
-    ).unwrap();
-
-    // Alternative DLT format with timestamp at the beginning
-    static ref DLT_SIMPLE: Regex = Regex::new(
-        r"^(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+(.*)$"
-    ).unwrap();
-
-    // Time-only format (HH:MM:SS.microseconds)
-    static ref DLT_TIME_ONLY: Regex = Regex::new(
-        r"^(\d{2}:\d{2}:\d{2}\.\d+)\s+(.*)$"
-    ).unwrap();
-}
-
-pub fn parse_dlt(raw: String, line_number: usize) -> Option<LogLine> {
-    // Try pattern with square brackets for message
-    if let Ok(Some(caps)) = DLT_PATTERN.captures(&raw) {
-        let timestamp = parse_dlt_timestamp(&caps[1]);
-        let message = caps[2].to_string();
-        let mut line = LogLine::new(raw, line_number);
-        line.message = message;
-        line.timestamp = timestamp;
-        return Some(line);
+/// Parse a DLT binary file and return log lines
+pub fn parse_dlt_file<P: AsRef<Path>>(path: P) -> Result<Vec<LogLine>, String> {
+    let file = File::open(path).map_err(|e| format!("Failed to open DLT file: {}", e))?;
+    let mut reader = DltMessageReader::new(file, true);
+    let mut lines = Vec::new();
+    let mut line_number = 1;
+    loop {
+        match read_message(&mut reader, None) {
+            Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
+                let log_line = convert_dlt_message(&msg, line_number);
+                lines.push(log_line);
+                line_number += 1;
+            }
+            Ok(Some(_)) => {
+                // Ignore other variants
+            }
+            Ok(None) => break,
+            Err(e) => {
+                log::warn!("Failed to parse DLT message: {:?}", e);
+                // Continue parsing despite errors
+            }
+        }
     }
-
-    // Try simple pattern with full timestamp
-    if let Ok(Some(caps)) = DLT_SIMPLE.captures(&raw) {
-        let timestamp = parse_dlt_timestamp(&caps[1]);
-        let message = caps[2].to_string();
-        let mut line = LogLine::new(raw, line_number);
-        line.message = message;
-        line.timestamp = timestamp;
-        return Some(line);
-    }
-
-    // Try time-only pattern
-    if let Ok(Some(caps)) = DLT_TIME_ONLY.captures(&raw) {
-        let timestamp = parse_dlt_timestamp(&caps[1]);
-        let message = caps[2].to_string();
-        let mut line = LogLine::new(raw, line_number);
-        line.message = message;
-        line.timestamp = timestamp;
-        return Some(line);
-    }
-
-    None
-}
-
-fn parse_dlt_timestamp(s: &str) -> Option<DateTime<Local>> {
-    // Try full timestamp format: 2024/11/20 14:23:45.123456
-    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S%.f") {
-        return Some(DateTime::from_naive_utc_and_offset(
-            naive,
-            *Local::now().offset(),
-        ));
-    }
-
-    // Try time-only format: 14:23:45.123456 (assume today's date)
-    if let Ok(time) = chrono::NaiveTime::parse_from_str(s, "%H:%M:%S%.f") {
-        let today = Local::now().date_naive();
-        let naive_dt = today.and_time(time);
-        return Some(DateTime::from_naive_utc_and_offset(
-            naive_dt,
-            *Local::now().offset(),
-        ));
-    }
-
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_dlt_with_brackets() {
-        let raw =
-            "2024/11/20 14:23:45.123456 12345 ECU1 APID CTID log info V 1 [Application started]"
-                .to_string();
-        let line = parse_dlt(raw, 1).unwrap();
-        assert!(line.timestamp.is_some());
-        assert_eq!(line.message, "Application started");
-    }
-
-    #[test]
-    fn test_dlt_simple() {
-        let raw = "2024/11/20 14:23:45.123456 Application started successfully".to_string();
-        let line = parse_dlt(raw, 1).unwrap();
-        assert!(line.timestamp.is_some());
-        assert_eq!(line.message, "Application started successfully");
-    }
-
-    #[test]
-    fn test_dlt_time_only() {
-        let raw = "14:23:45.123456 System initialization complete".to_string();
-        let line = parse_dlt(raw, 1).unwrap();
-        assert!(line.timestamp.is_some());
-        assert_eq!(line.message, "System initialization complete");
+    if lines.is_empty() {
+        Err("No valid DLT messages found in file".to_string())
+    } else {
+        log::info!("Parsed {} DLT messages", lines.len());
+        Ok(lines)
     }
 }
+
+// No parse_dlt_buffer needed; handled by parse_dlt_file
+
+/// Convert a dlt_core::dlt::Message to LogLine
+fn convert_dlt_message(msg: &Message, line_number: usize) -> LogLine {
+    // Extract timestamp (if available) from header
+    let timestamp = msg.header.timestamp.and_then(|ts| {
+        // ts is in 0.1 ms since epoch
+        let seconds = ts as u64 / 10000;
+        let nanos = ((ts as u64 % 10000) * 100_000) as u32;
+        Local.timestamp_opt(seconds as i64, nanos).single()
+    });
+
+    // Extract the payload as message (PayloadContent)
+    let message = match &msg.payload {
+        dlt_core::dlt::PayloadContent::Verbose(args) => format!("{:?}", args),
+        dlt_core::dlt::PayloadContent::NonVerbose(_id, data) => format!("{:?}", data),
+        dlt_core::dlt::PayloadContent::ControlMsg(_id, data) => format!("ControlMsg: {:?}", data),
+        dlt_core::dlt::PayloadContent::NetworkTrace(data) => format!("NetworkTrace: {:?}", data),
+    };
+
+    // Build the raw line representation
+    let raw = if let Some(ext_header) = &msg.extended_header {
+        format!(
+            "{} {} {} {}",
+            ext_header.application_id,
+            ext_header.context_id,
+            format_message_info(&ext_header.message_type),
+            message
+        )
+    } else {
+        message.clone()
+    };
+
+    let mut line = LogLine::new(raw, line_number);
+    line.message = message;
+    line.timestamp = timestamp;
+    line
+}
+
+/// Format message info (log level, type, etc.)
+fn format_message_info(msg_type: &MessageType) -> String {
+    match msg_type {
+        MessageType::Log(level) => format!("[{:?}]", level),
+        other => format!("[{:?}]", other),
+    }
+}
+
+
