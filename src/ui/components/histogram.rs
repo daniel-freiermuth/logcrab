@@ -190,25 +190,50 @@ impl Histogram {
         let mut click_event = None;
         if response.clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let rel_x = (pos.x - rect.min.x) / rect.width();
-                let bucket_idx = (rel_x * NUM_BUCKETS as f32) as usize;
+                // Calculate which bucket was clicked based on bar positions
+                let relative_x = pos.x - rect.min.x;
+                let bucket_idx = ((relative_x / bar_width).floor() as usize).min(NUM_BUCKETS - 1);
 
-                if bucket_idx < NUM_BUCKETS {
-                    // Find first line in this bucket
-                    let target_time =
-                        start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
+                if bucket_idx < NUM_BUCKETS && relative_x >= 0.0 {
+                    // Find the time range for this bucket
+                    let bucket_start_time = start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
+                    let bucket_end_time = start_time.timestamp() + ((bucket_idx + 1) as f64 * bucket_size) as i64;
 
-                    // Find closest filtered line to this time
+                    // Calculate the exact time that corresponds to where the user clicked
+                    let click_time_in_bucket = bucket_start_time + 
+                        ((relative_x % bar_width) / bar_width * bucket_size as f32) as i64;
+
+                    // Find the line closest to the exact click position
                     let mut closest_idx = None;
                     let mut min_diff = i64::MAX;
 
                     for &line_idx in filtered_indices {
                         if line_idx < lines.len() {
                             if let Some(ts) = lines[line_idx].timestamp {
-                                let diff = (ts.timestamp() - target_time).abs();
-                                if diff < min_diff {
-                                    min_diff = diff;
-                                    closest_idx = Some(line_idx);
+                                let ts_value = ts.timestamp();
+                                // Only consider lines that are actually in this bucket
+                                if ts_value >= bucket_start_time && ts_value < bucket_end_time {
+                                    let diff = (ts_value - click_time_in_bucket).abs();
+                                    if diff < min_diff {
+                                        min_diff = diff;
+                                        closest_idx = Some(line_idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // If no line found in the exact bucket, fall back to bucket center
+                    if closest_idx.is_none() {
+                        let bucket_center_time = bucket_start_time + (bucket_end_time - bucket_start_time) / 2;
+                        for &line_idx in filtered_indices {
+                            if line_idx < lines.len() {
+                                if let Some(ts) = lines[line_idx].timestamp {
+                                    let diff = (ts.timestamp() - bucket_center_time).abs();
+                                    if diff < min_diff {
+                                        min_diff = diff;
+                                        closest_idx = Some(line_idx);
+                                    }
                                 }
                             }
                         }
