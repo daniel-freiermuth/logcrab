@@ -135,8 +135,18 @@ impl LogCrabApp {
         self.load_receiver = Some(rx);
     }
 
+    /// Update window title to show current file
+    fn update_window_title(&self, ctx: &egui::Context) {
+        let title = if let Some(ref path) = self.current_file {
+            format!("LogCrab - {}", path.file_name().unwrap_or(path.as_os_str()).to_string_lossy())
+        } else {
+            "LogCrab - Log Anomaly Explorer".to_string()
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+    }
+
     /// Process background file loading messages
-    fn process_file_loading(&mut self, _ctx: &egui::Context) {
+    fn process_file_loading(&mut self, ctx: &egui::Context) {
         let mut should_clear_receiver = false;
         if let Some(ref rx) = self.load_receiver {
             while let Ok(msg) = rx.try_recv() {
@@ -159,6 +169,7 @@ impl LogCrabApp {
                         }
 
                         self.current_file = Some(path.clone());
+                        self.update_window_title(ctx);
                         self.status_message = format!(
                             "Loaded {} lines - calculating anomaly scores in background...",
                             self.log_view.lines.len()
@@ -569,6 +580,9 @@ impl eframe::App for LogCrabApp {
 
         // Check for messages from background thread
         self.process_file_loading(ctx);
+
+        // Update window title to show current file (if any)
+        self.update_window_title(ctx);
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
