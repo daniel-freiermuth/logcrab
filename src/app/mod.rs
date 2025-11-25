@@ -571,7 +571,7 @@ impl eframe::App for LogCrabApp {
         self.process_file_loading(ctx);
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 self.render_menu_bar(ui, ctx);
             });
         });
