@@ -81,11 +81,18 @@ fn main() -> eframe::Result<()> {
         log::info!("Opening file from command line: {:?}", file);
     }
 
+    // Load app icon
+    let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../logo.png"))
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to load app icon: {}", e);
+            Default::default()
+        });
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1400.0, 800.0])
             .with_min_inner_size([800.0, 600.0])
-            .with_icon(eframe::icon_data::from_png_bytes(&[]).unwrap_or_default()),
+            .with_icon(icon_data),
         ..Default::default()
     };
 
