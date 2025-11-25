@@ -20,12 +20,15 @@ use crate::parser::line::LogLine;
 use chrono::{DateTime, Local};
 use egui::{text::LayoutJob, Color32, TextFormat};
 use fancy_regex::Regex;
+use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Request to compute filtered indices in background
 #[derive(Clone)]
 struct FilterRequest {
+    filter_id: usize, // Unique identifier for each filter instance
     search_text: String,
     case_insensitive: bool,
     min_score: f64,
@@ -67,101 +70,123 @@ impl GlobalFilterWorker {
         
         log::debug!("Filter worker thread started");
         
-        // Keep processing requests forever
-        while let Ok(mut request) = request_rx.recv() {
+        // Persistent HashMap of pending requests per filter
+        // This allows us to accumulate and update requests while processing others
+        let mut pending_requests: HashMap<usize, FilterRequest> = HashMap::new();
+        
+        // Helper to drain all available requests into the HashMap
+        let drain_pending = |pending: &mut HashMap<usize, FilterRequest>| {
+            while let Ok(request) = request_rx.try_recv() {
+                let filter_id = request.filter_id;
+                if let Some(existing) = pending.get(&filter_id) {
+                    log::trace!("Updating pending request for filter {} (gen {} -> {})", 
+                               filter_id, existing.generation, request.generation);
+                }
+                pending.insert(filter_id, request);
+            }
+        };
+        
+        // Main processing loop
+        while let Ok(first_request) = request_rx.recv() {
             #[cfg(feature = "cpu-profiling")]
             puffin::profile_scope!("process_filter_request");
+            pending_requests.insert(first_request.filter_id, first_request);
             
-            // Check if there are newer requests in the queue
-            // Keep draining until we get the most recent one
-            {
+            // Collect any additional pending requests
+            drain_pending(&mut pending_requests);
+            
+            while pending_requests.len() > 0 {
+                let first_key = *pending_requests.keys().next().unwrap();
+                let request = pending_requests.remove(&first_key).unwrap().clone();
+                let filter_id = request.filter_id;
+            
                 #[cfg(feature = "cpu-profiling")]
-                puffin::profile_scope!("drain_queue");
-                
-                while let Ok(newer_request) = request_rx.try_recv() {
-                    log::trace!("Draining older filter request (generation {})", request.generation);
-                    request = newer_request;
-                }
-            }
-            
+                puffin::profile_scope!("process_single_filter", format!("filter_{}", filter_id));
             log::trace!("Processing filter request (generation {}, search: '{}')", 
                        request.generation, request.search_text);
             
-            // Now process the most recent request
-            // Build regex for search
-            let search_regex = {
-                #[cfg(feature = "cpu-profiling")]
-                puffin::profile_scope!("build_regex");
                 
-                if !request.search_text.is_empty() {
-                    // Use fancy-regex with (?i) inline flag for case-insensitive matching
-                    let pattern = if request.case_insensitive {
-                        format!("(?i){}", request.search_text)
-                    } else {
-                        request.search_text.clone()
-                    };
-                    match Regex::new(&pattern) {
-                        Ok(r) => Some(r),
-                        Err(e) => {
-                            log::warn!("Failed to build regex for '{}': {}", request.search_text, e);
-                            None
-                        }
-                    }
-                } else {
-                    None
-                }
-            };
-            
-            // Filter lines
-            let filtered_indices = {
-                #[cfg(feature = "cpu-profiling")]
-                puffin::profile_scope!("filter_lines", format!("{} lines", request.lines.len()));
-                
-                let mut indices = Vec::with_capacity(request.lines.len() / 10);
-                for (idx, line) in request.lines.iter().enumerate() {
-                    // Check score filter
-                    if line.anomaly_score < request.min_score {
-                        continue;
-                    }
+                // Build regex for search
+                let search_regex = {
+                    #[cfg(feature = "cpu-profiling")]
+                    puffin::profile_scope!("build_regex");
                     
-                    // Check search filter
-                    if let Some(ref regex) = search_regex {
-                        // fancy-regex returns Result<bool>, handle it
-                        let matches = regex.is_match(&line.message).unwrap_or(false) 
-                                   || regex.is_match(&line.raw).unwrap_or(false);
-                        if !matches {
+                    if !request.search_text.is_empty() {
+                        // Use fancy-regex with (?i) inline flag for case-insensitive matching
+                        let pattern = if request.case_insensitive {
+                            format!("(?i){}", request.search_text)
+                        } else {
+                            request.search_text.clone()
+                        };
+                        match Regex::new(&pattern) {
+                            Ok(r) => Some(r),
+                            Err(e) => {
+                                log::warn!("Failed to build regex for '{}': {}", request.search_text, e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                };
+                
+                // Filter lines
+                let filtered_indices = {
+                    #[cfg(feature = "cpu-profiling")]
+                    puffin::profile_scope!("filter_lines", format!("{} lines", request.lines.len()));
+                    
+                    let mut indices = Vec::with_capacity(request.lines.len() / 10);
+                    for (idx, line) in request.lines.iter().enumerate() {
+                        // Check score filter
+                        if line.anomaly_score < request.min_score {
                             continue;
                         }
+                        
+                        // Check search filter
+                        if let Some(ref regex) = search_regex {
+                            // fancy-regex returns Result<bool>, handle it
+                            let matches = regex.is_match(&line.message).unwrap_or(false) 
+                                       || regex.is_match(&line.raw).unwrap_or(false);
+                            if !matches {
+                                continue;
+                            }
+                        }
+                        
+                        indices.push(idx);
                     }
-                    
-                    indices.push(idx);
-                }
-                indices
-            };
-            
-            log::trace!("Filter complete: {} matches (generation {})", 
-                       filtered_indices.len(), request.generation);
-            
-            let result = FilterResult {
-                filtered_indices,
-                generation: request.generation,
-            };
-            
-            // Send result back to the specific filter (ignore errors if filter is gone)
-            {
-                #[cfg(feature = "cpu-profiling")]
-                puffin::profile_scope!("send_result");
+                    indices
+                };
                 
-                let _ = request.result_tx.send(result);
+                // Check one more time if a newer request arrived during processing
+                drain_pending(&mut pending_requests);
+                
+                log::trace!("Filter {} complete: {} matches (generation {})", 
+                           filter_id, filtered_indices.len(), request.generation);
+                
+                let result = FilterResult {
+                    filtered_indices,
+                    generation: request.generation,
+                };
+                
+                // Send result back to the specific filter (ignore errors if filter is gone)
+                {
+                    #[cfg(feature = "cpu-profiling")]
+                    puffin::profile_scope!("send_result");
+                    
+                    let _ = request.result_tx.send(result);
+                }
             }
         }
-        
         log::debug!("Filter worker thread shutting down (channel closed)");
     }
 }
 
+/// Global counter for assigning unique filter IDs
+static NEXT_FILTER_ID: AtomicUsize = AtomicUsize::new(0);
+
 /// Represents a single filter view with its own search criteria and cached results
 pub struct FilterState {
+    filter_id: usize, // Unique identifier for this filter instance
     pub search_text: String,
     pub search_regex: Option<Regex>,
     pub regex_error: Option<String>,
@@ -187,7 +212,11 @@ impl FilterState {
         // Create result channel for this specific filter
         let (result_tx, filter_result_rx) = channel::<FilterResult>();
         
+        // Assign unique filter ID
+        let filter_id = NEXT_FILTER_ID.fetch_add(1, Ordering::Relaxed);
+        
         FilterState {
+            filter_id,
             search_text: String::new(),
             search_regex: None,
             regex_error: None,
@@ -245,10 +274,12 @@ impl FilterState {
         // (min_score filtering is usually fast enough to not need indication)
         if !self.search_text.is_empty() {
             self.is_filtering = true;
-            log::debug!("Started background filtering for search: '{}'", self.search_text);
+            log::debug!("Filter {}: Started background filtering for search: '{}'", 
+                       self.filter_id, self.search_text);
         }
         
         let request = FilterRequest {
+            filter_id: self.filter_id,
             search_text: self.search_text.clone(),
             case_insensitive: self.case_insensitive,
             min_score: min_score_filter,
@@ -275,7 +306,8 @@ impl FilterState {
                 self.filtered_indices = result.filtered_indices;
                 self.filter_dirty = false;
                 if self.is_filtering {
-                    log::debug!("Completed background filtering (found {} matches)", self.filtered_indices.len());
+                    log::debug!("Filter {}: Completed background filtering (found {} matches)", 
+                               self.filter_id, self.filtered_indices.len());
                 }
                 self.is_filtering = false; // Filtering complete
                 updated = true;
