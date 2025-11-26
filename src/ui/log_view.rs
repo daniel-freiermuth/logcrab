@@ -208,6 +208,19 @@ impl LogView {
         self.selected_timestamp = self.lines[last_line_index].timestamp;
     }
 
+    /// Move selection up by one page in a filtered view
+    pub fn page_up_in_filter(&mut self, filter_index: usize) {
+        // A page is approximately 20-30 lines in typical terminal views
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_filter(filter_index, -PAGE_SIZE);
+    }
+
+    /// Move selection down by one page in a filtered view
+    pub fn page_down_in_filter(&mut self, filter_index: usize) {
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_filter(filter_index, PAGE_SIZE);
+    }
+
     /// Move selection in bookmarks view
     pub fn move_selection_in_bookmarks(&mut self, delta: i32) {
         if self.bookmarks.is_empty() {
@@ -261,6 +274,18 @@ impl LogView {
         let last_index = *self.bookmarks.keys().max().unwrap();
         self.selected_line_index = Some(last_index);
         self.selected_timestamp = self.lines.get(last_index).and_then(|l| l.timestamp);
+    }
+
+    /// Move selection up by one page in bookmarks view
+    pub fn page_up_in_bookmarks(&mut self) {
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_bookmarks(-PAGE_SIZE);
+    }
+
+    /// Move selection down by one page in bookmarks view
+    pub fn page_down_in_bookmarks(&mut self) {
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_bookmarks(PAGE_SIZE);
     }
 
     pub fn filter_count(&self) -> usize {

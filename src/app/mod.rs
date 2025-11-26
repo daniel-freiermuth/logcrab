@@ -529,6 +529,28 @@ impl LogCrabApp {
                         None => {}
                     }
                 }
+                InputAction::PageUp => {
+                    match focused_tab {
+                        Some(TabType::Filter(idx)) => {
+                            self.log_view.page_up_in_filter(idx);
+                        }
+                        Some(TabType::Bookmarks) => {
+                            self.log_view.page_up_in_bookmarks();
+                        }
+                        None => {}
+                    }
+                }
+                InputAction::PageDown => {
+                    match focused_tab {
+                        Some(TabType::Filter(idx)) => {
+                            self.log_view.page_down_in_filter(idx);
+                        }
+                        Some(TabType::Bookmarks) => {
+                            self.log_view.page_down_in_bookmarks();
+                        }
+                        None => {}
+                    }
+                }
                 InputAction::NavigatePane(direction) => {
                     self.navigate_pane_direction = Some(direction);
                 }

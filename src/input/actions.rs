@@ -52,6 +52,12 @@ pub enum InputAction {
     /// Jump to the bottom of the current view (Vim G)
     JumpToBottom,
 
+    /// Move selection by one page up
+    PageUp,
+
+    /// Move selection by one page down
+    PageDown,
+
     /// Navigate to a neighboring pane
     NavigatePane(PaneDirection),
 
