@@ -27,7 +27,7 @@ pub struct GlobalConfig {
     /// Keyboard shortcuts
     #[serde(default)]
     pub shortcuts: HashMap<ShortcutAction, String>,
-    
+
     /// Favorite filters that appear in all sessions
     #[serde(default)]
     pub favorite_filters: Vec<FavoriteFilter>,
@@ -59,9 +59,11 @@ impl GlobalConfig {
                 log::info!("Loading global config from {:?}", path);
                 if let Ok(contents) = std::fs::read_to_string(&path) {
                     if let Ok(config) = serde_json::from_str::<GlobalConfig>(&contents) {
-                        log::info!("Loaded {} shortcuts and {} favorite filters", 
-                                  config.shortcuts.len(),
-                                  config.favorite_filters.len());
+                        log::info!(
+                            "Loaded {} shortcuts and {} favorite filters",
+                            config.shortcuts.len(),
+                            config.favorite_filters.len()
+                        );
                         return config;
                     }
                 }
@@ -69,28 +71,27 @@ impl GlobalConfig {
                 log::info!("No global config found, using defaults");
             }
         }
-        
+
         Self::default()
     }
 
     /// Save global config to disk
     pub fn save(&self) -> Result<(), String> {
         let path = Self::config_path().ok_or("Could not determine config directory")?;
-        
+
         // Create directory if it doesn't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {}", e))?;
         }
-        
+
         // Serialize to JSON
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        
+
         // Write to file
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write config file: {}", e))?;
-        
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write config file: {}", e))?;
+
         log::info!("Saved global config to {:?}", path);
         Ok(())
     }

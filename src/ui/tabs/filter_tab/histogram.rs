@@ -54,7 +54,7 @@ impl Histogram {
             .iter()
             .filter(|&&idx| idx >= lines.len())
             .collect();
-        
+
         if !invalid_indices.is_empty() {
             log::warn!(
                 "Found {} invalid indices in filtered_indices (max valid: {}, total lines: {}). First few invalid indices: {:?}",
@@ -69,12 +69,12 @@ impl Histogram {
                 .filter(|&&idx| idx < lines.len())
                 .copied()
                 .collect();
-            
+
             if valid_filtered_indices.is_empty() {
                 ui.label("No valid filtered indices available");
                 return None;
             }
-            
+
             // Continue with valid indices
             return Self::render_internal(ui, lines, &valid_filtered_indices, selected_line_index);
         }
@@ -88,7 +88,6 @@ impl Histogram {
         filtered_indices: &[usize],
         selected_line_index: Option<usize>,
     ) -> Option<HistogramClickEvent> {
-
         // Get time range from filtered lines only
         let first_ts = filtered_indices
             .iter()
@@ -196,12 +195,14 @@ impl Histogram {
 
                 if bucket_idx < NUM_BUCKETS && relative_x >= 0.0 {
                     // Find the time range for this bucket
-                    let bucket_start_time = start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
-                    let bucket_end_time = start_time.timestamp() + ((bucket_idx + 1) as f64 * bucket_size) as i64;
+                    let bucket_start_time =
+                        start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
+                    let bucket_end_time =
+                        start_time.timestamp() + ((bucket_idx + 1) as f64 * bucket_size) as i64;
 
                     // Calculate the exact time that corresponds to where the user clicked
-                    let click_time_in_bucket = bucket_start_time + 
-                        ((relative_x % bar_width) / bar_width * bucket_size as f32) as i64;
+                    let click_time_in_bucket = bucket_start_time
+                        + ((relative_x % bar_width) / bar_width * bucket_size as f32) as i64;
 
                     // Find the line closest to the exact click position
                     let mut closest_idx = None;
@@ -225,7 +226,8 @@ impl Histogram {
 
                     // If no line found in the exact bucket, fall back to bucket center
                     if closest_idx.is_none() {
-                        let bucket_center_time = bucket_start_time + (bucket_end_time - bucket_start_time) / 2;
+                        let bucket_center_time =
+                            bucket_start_time + (bucket_end_time - bucket_start_time) / 2;
                         for &line_idx in filtered_indices {
                             if line_idx < lines.len() {
                                 if let Some(ts) = lines[line_idx].timestamp {

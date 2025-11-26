@@ -1,9 +1,9 @@
 use super::line::LogLine;
 use chrono::{Local, TimeZone};
+use dlt_core::dlt::{Message, MessageType};
+use dlt_core::read::{read_message, DltMessageReader};
 use std::fs::File;
 use std::path::Path;
-use dlt_core::dlt::{Message, MessageType};
-use dlt_core::read::{DltMessageReader, read_message};
 
 /// Parse a DLT binary file and return log lines
 pub fn parse_dlt_file<P: AsRef<Path>>(path: P) -> Result<Vec<LogLine>, String> {
@@ -82,5 +82,3 @@ fn format_message_info(msg_type: &MessageType) -> String {
         other => format!("[{:?}]", other),
     }
 }
-
-

@@ -1,7 +1,7 @@
 use super::line::LogLine;
 use chrono::{DateTime, Datelike, Local, NaiveDateTime};
-use lazy_static::lazy_static;
 use fancy_regex::Regex;
+use lazy_static::lazy_static;
 
 lazy_static! {
     // Just extract timestamp - everything after it is the message

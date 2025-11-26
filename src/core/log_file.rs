@@ -17,7 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
-use crate::parser::{line::LogLine, parse_line, dlt};
+use crate::parser::{dlt, line::LogLine, parse_line};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -55,7 +55,7 @@ impl LogFileLoader {
     fn process_file_background(path: PathBuf, tx: Sender<LoadMessage>, ctx: egui::Context) {
         let start_time = std::time::Instant::now();
         log::debug!("Starting background file processing for: {:?}", path);
-        
+
         // Get file size for progress tracking
         let metadata = std::fs::metadata(&path);
         if let Err(e) = metadata {
@@ -84,14 +84,19 @@ impl LogFileLoader {
         }
 
         let read_duration = read_start.elapsed();
-        log::info!("File I/O took {:?} to read {} bytes", read_duration, buffer.len());
-        
+        log::info!(
+            "File I/O took {:?} to read {} bytes",
+            read_duration,
+            buffer.len()
+        );
+
         // Check if this is a DLT binary file by extension or magic bytes
-        let is_dlt_file = path.extension()
+        let is_dlt_file = path
+            .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.eq_ignore_ascii_case("dlt"))
             .unwrap_or(false);
-        
+
         // If it's a DLT file, parse it differently
         if is_dlt_file {
             log::info!("Detected DLT binary file, using dlt-core parser");
@@ -100,7 +105,7 @@ impl LogFileLoader {
                 format!("Parsing DLT binary file {}...", path.display()),
             ));
             ctx.request_repaint();
-            
+
             match dlt::parse_dlt_file(&path) {
                 Ok(lines) => {
                     log::info!("Successfully parsed {} DLT messages", lines.len());
@@ -110,12 +115,15 @@ impl LogFileLoader {
                 }
                 Err(e) => {
                     log::error!("Failed to parse DLT file: {}", e);
-                    let _ = tx.send(LoadMessage::Error(format!("Failed to parse DLT file: {}", e)));
+                    let _ = tx.send(LoadMessage::Error(format!(
+                        "Failed to parse DLT file: {}",
+                        e
+                    )));
                     return;
                 }
             }
         }
-        
+
         // Convert to UTF-8 with lossy conversion (replaces invalid UTF-8 with � character)
         let utf8_start = std::time::Instant::now();
         let content = String::from_utf8_lossy(&buffer);
@@ -159,13 +167,18 @@ impl LogFileLoader {
         }
 
         let parse_duration = parse_start.elapsed();
-        log::info!("Parsing took {:?} to process {} lines from {:?}", parse_duration, lines.len(), path);
-        
+        log::info!(
+            "Parsing took {:?} to process {} lines from {:?}",
+            parse_duration,
+            lines.len(),
+            path
+        );
+
         // Wrap in Arc for cheap cloning
         let arc_start = std::time::Instant::now();
         let lines_arc = Arc::new(lines);
         log::info!("Arc wrapping took {:?}", arc_start.elapsed());
-        
+
         // Send the parsed lines immediately so user can start working
         // Arc clone is cheap (just increments reference count)
         let send_start = std::time::Instant::now();
@@ -176,12 +189,18 @@ impl LogFileLoader {
 
         // Now calculate anomaly scores in the background
         let score_start = std::time::Instant::now();
-        log::debug!("Starting background anomaly scoring for {} lines", lines_arc.len());
+        log::debug!(
+            "Starting background anomaly scoring for {} lines",
+            lines_arc.len()
+        );
 
         // Get mutable access to score the lines
         let unwrap_start = std::time::Instant::now();
         let mut lines = Arc::try_unwrap(lines_arc).unwrap_or_else(|arc| {
-            log::warn!("Arc::try_unwrap failed, cloning {} lines for scoring", arc.len());
+            log::warn!(
+                "Arc::try_unwrap failed, cloning {} lines for scoring",
+                arc.len()
+            );
             (*arc).clone()
         });
         log::info!("Arc::try_unwrap took {:?}", unwrap_start.elapsed());
@@ -235,7 +254,10 @@ impl LogFileLoader {
             let avg_raw: f64 = raw_scores.iter().sum::<f64>() / raw_scores.len() as f64;
             log::info!(
                 "Score statistics - Raw: min={:.3}, max={:.3}, avg={:.3}, total_lines={}",
-                min_raw, max_raw, avg_raw, raw_scores.len()
+                min_raw,
+                max_raw,
+                avg_raw,
+                raw_scores.len()
             );
 
             let min_norm = normalized_scores
@@ -250,11 +272,16 @@ impl LogFileLoader {
                 normalized_scores.iter().sum::<f64>() / normalized_scores.len() as f64;
             log::info!(
                 "Score statistics - Normalized: min={:.3}, max={:.3}, avg={:.3}",
-                min_norm, max_norm, avg_norm
+                min_norm,
+                max_norm,
+                avg_norm
             );
         }
 
-        log::debug!("Finalizing {} log lines with normalized scores", lines.len());
+        log::debug!(
+            "Finalizing {} log lines with normalized scores",
+            lines.len()
+        );
 
         for (line, &norm_score) in lines.iter_mut().zip(normalized_scores.iter()) {
             line.anomaly_score = norm_score;
@@ -283,10 +310,16 @@ impl LogFileLoader {
 
         // Now calculate anomaly scores in the background
         let score_start = std::time::Instant::now();
-        log::debug!("Starting background anomaly scoring for {} lines", lines_arc.len());
+        log::debug!(
+            "Starting background anomaly scoring for {} lines",
+            lines_arc.len()
+        );
 
         let mut lines = Arc::try_unwrap(lines_arc).unwrap_or_else(|arc| {
-            log::warn!("Arc::try_unwrap failed, cloning {} lines for scoring", arc.len());
+            log::warn!(
+                "Arc::try_unwrap failed, cloning {} lines for scoring",
+                arc.len()
+            );
             (*arc).clone()
         });
 

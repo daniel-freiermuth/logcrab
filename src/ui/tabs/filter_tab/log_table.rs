@@ -38,7 +38,7 @@ pub enum LogTableEvent {
 pub fn score_to_color(score: f64) -> Color32 {
     // Normalize score to 0.0-1.0 range
     let normalized = (score / 100.0).clamp(0.0, 1.0);
-    
+
     if normalized < 0.3 {
         // Low scores: light gray to white
         let t = normalized / 0.3;

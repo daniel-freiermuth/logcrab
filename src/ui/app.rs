@@ -133,7 +133,12 @@ impl LogCrabApp {
     /// Update window title to show current file
     fn update_window_title(&self, ctx: &egui::Context) {
         let title = if let Some(ref path) = self.current_file {
-            format!("LogCrab - {}", path.file_name().unwrap_or(path.as_os_str()).to_string_lossy())
+            format!(
+                "LogCrab - {}",
+                path.file_name()
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy()
+            )
         } else {
             "LogCrab - Log Anomaly Explorer".to_string()
         };
@@ -271,7 +276,7 @@ impl LogCrabApp {
                 let progress_bar = egui::ProgressBar::new(self.load_progress).show_percentage();
                 ui.add(progress_bar);
             }
-            
+
             // Show filtering indicator if any filter is currently processing
             if self.log_view.is_any_filter_active() {
                 ui.separator();
@@ -324,7 +329,6 @@ impl LogCrabApp {
                 ui,
                 &mut LogCrabTabViewer {
                     log_view: &mut self.log_view,
-                    add_tab_after: &mut self.add_tab_after,
                     focus_search_next_frame: &mut self.focus_search_next_frame,
                     global_config: &mut self.global_config,
                     filter_to_remove: &mut self.filter_to_remove,
@@ -375,7 +379,7 @@ impl LogCrabApp {
         // Handle filter removal (must be done after DockArea to avoid borrowing issues)
         if let Some(filter_index) = self.filter_to_remove.take() {
             self.log_view.remove_filter(filter_index);
-            
+
             // Update all filter tab indices that are greater than the removed index
             for (_, tab) in self.dock_state.iter_all_tabs_mut() {
                 if let TabType::Filter(idx) = &mut tab.tab_type {
@@ -397,7 +401,7 @@ impl LogCrabApp {
                 egui::Event::Key { modifiers, .. } if modifiers.ctrl || modifiers.alt || modifiers.command
             )
         });
-        
+
         if ctx.wants_keyboard_input() && !has_modifiers {
             return;
         }
@@ -420,24 +424,23 @@ impl LogCrabApp {
 
         // Save shortcuts if they were changed
         if shortcuts_changed {
-            self.shortcut_bindings.save_to_config(&mut self.global_config);
+            self.shortcut_bindings
+                .save_to_config(&mut self.global_config);
             let _ = self.global_config.save();
         }
 
         // Execute all generated actions
         for action in actions {
             match action {
-                InputAction::MoveSelection(delta) => {
-                    match focused_tab {
-                        Some(TabType::Filter(idx)) => {
-                            self.log_view.move_selection_in_filter(idx, delta);
-                        }
-                        Some(TabType::Bookmarks) => {
-                            self.log_view.move_selection_in_bookmarks(delta);
-                        }
-                        None => {}
+                InputAction::MoveSelection(delta) => match focused_tab {
+                    Some(TabType::Filter(idx)) => {
+                        self.log_view.move_selection_in_filter(idx, delta);
                     }
-                }
+                    Some(TabType::Bookmarks) => {
+                        self.log_view.move_selection_in_bookmarks(delta);
+                    }
+                    None => {}
+                },
                 InputAction::ToggleBookmark => {
                     self.log_view.toggle_bookmark_for_selected();
                 }
@@ -455,7 +458,7 @@ impl LogCrabApp {
                     // focused_leaf() returns which pane has keyboard focus
                     if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
                         let tree = &self.dock_state[surface_idx];
-                        
+
                         // Each pane (leaf node) can have multiple tabs, but only one is "active" (visible).
                         // Get the active tab index from the leaf node
                         if let Node::Leaf(leaf) = &tree[node_idx] {
@@ -468,7 +471,7 @@ impl LogCrabApp {
                     // Cycle to the next tab in the active pane
                     if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
                         let surface = &mut self.dock_state[surface_idx];
-                        
+
                         // Get the number of tabs and current active tab
                         if let Node::Leaf(leaf) = &mut surface[node_idx] {
                             let tab_count = leaf.tabs.len();
@@ -485,7 +488,7 @@ impl LogCrabApp {
                     // Cycle to the previous tab in the active pane
                     if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
                         let surface = &mut self.dock_state[surface_idx];
-                        
+
                         // Get the number of tabs and current active tab
                         if let Node::Leaf(leaf) = &mut surface[node_idx] {
                             let tab_count = leaf.tabs.len();
@@ -502,50 +505,42 @@ impl LogCrabApp {
                         }
                     }
                 }
-                InputAction::JumpToTop => {
-                    match focused_tab {
-                        Some(TabType::Filter(idx)) => {
-                            self.log_view.jump_to_top_in_filter(idx);
-                        }
-                        Some(TabType::Bookmarks) => {
-                            self.log_view.jump_to_top_in_bookmarks();
-                        }
-                        None => {}
+                InputAction::JumpToTop => match focused_tab {
+                    Some(TabType::Filter(idx)) => {
+                        self.log_view.jump_to_top_in_filter(idx);
                     }
-                }
-                InputAction::JumpToBottom => {
-                    match focused_tab {
-                        Some(TabType::Filter(idx)) => {
-                            self.log_view.jump_to_bottom_in_filter(idx);
-                        }
-                        Some(TabType::Bookmarks) => {
-                            self.log_view.jump_to_bottom_in_bookmarks();
-                        }
-                        None => {}
+                    Some(TabType::Bookmarks) => {
+                        self.log_view.jump_to_top_in_bookmarks();
                     }
-                }
-                InputAction::PageUp => {
-                    match focused_tab {
-                        Some(TabType::Filter(idx)) => {
-                            self.log_view.page_up_in_filter(idx);
-                        }
-                        Some(TabType::Bookmarks) => {
-                            self.log_view.page_up_in_bookmarks();
-                        }
-                        None => {}
+                    None => {}
+                },
+                InputAction::JumpToBottom => match focused_tab {
+                    Some(TabType::Filter(idx)) => {
+                        self.log_view.jump_to_bottom_in_filter(idx);
                     }
-                }
-                InputAction::PageDown => {
-                    match focused_tab {
-                        Some(TabType::Filter(idx)) => {
-                            self.log_view.page_down_in_filter(idx);
-                        }
-                        Some(TabType::Bookmarks) => {
-                            self.log_view.page_down_in_bookmarks();
-                        }
-                        None => {}
+                    Some(TabType::Bookmarks) => {
+                        self.log_view.jump_to_bottom_in_bookmarks();
                     }
-                }
+                    None => {}
+                },
+                InputAction::PageUp => match focused_tab {
+                    Some(TabType::Filter(idx)) => {
+                        self.log_view.page_up_in_filter(idx);
+                    }
+                    Some(TabType::Bookmarks) => {
+                        self.log_view.page_up_in_bookmarks();
+                    }
+                    None => {}
+                },
+                InputAction::PageDown => match focused_tab {
+                    Some(TabType::Filter(idx)) => {
+                        self.log_view.page_down_in_filter(idx);
+                    }
+                    Some(TabType::Bookmarks) => {
+                        self.log_view.page_down_in_bookmarks();
+                    }
+                    None => {}
+                },
                 InputAction::OpenFile => {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("log", &["log", "txt", "dlt"])

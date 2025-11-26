@@ -56,8 +56,8 @@ struct CrabFile {
 /// What is currently being edited (for rename dialogs)
 #[derive(Debug, Clone, Copy)]
 enum EditingTarget {
-    Bookmark(usize),  // line_index
-    Filter(usize),    // filter_index
+    Bookmark(usize), // line_index
+    Filter(usize),   // filter_index
 }
 
 pub struct LogView {
@@ -246,7 +246,11 @@ impl LogView {
             bookmark_indices
                 .iter()
                 .position(|&idx| idx == sel)
-                .unwrap_or(if delta >= 0 { 0 } else { bookmark_indices.len() - 1 })
+                .unwrap_or(if delta >= 0 {
+                    0
+                } else {
+                    bookmark_indices.len() - 1
+                })
         } else if delta >= 0 {
             0
         } else {
@@ -314,8 +318,11 @@ impl LogView {
     }
 
     pub fn set_lines(&mut self, lines: Arc<Vec<LogLine>>) {
-        log::info!("Setting {} log lines, requesting background filtering for {} filters", 
-                   lines.len(), self.filters.len());
+        log::info!(
+            "Setting {} log lines, requesting background filtering for {} filters",
+            lines.len(),
+            self.filters.len()
+        );
         self.lines = lines;
         // Request background filtering for all filters
         for filter in &mut self.filters {
@@ -328,7 +335,7 @@ impl LogView {
         self.crab_file = Some(crab_path.clone());
         let initial_filter_count = self.filters.len();
         self.load_crab_file();
-        
+
         // Request filter updates for any newly loaded or restored filters
         // This ensures filters loaded from .crab file start background filtering immediately
         for filter in &mut self.filters {
@@ -336,7 +343,7 @@ impl LogView {
                 filter.request_filter_update(Arc::clone(&self.lines), self.min_score_filter);
             }
         }
-        
+
         // Return how many filters we have after loading
         self.filters.len().saturating_sub(initial_filter_count)
     }
@@ -348,9 +355,12 @@ impl LogView {
             log::debug!("Loading .crab file: {:?}", path);
             if let Ok(file_content) = fs::read_to_string(path) {
                 if let Ok(crab_data) = serde_json::from_str::<CrabFile>(&file_content) {
-                    log::info!("Loaded .crab file with {} bookmarks, {} filters", 
-                              crab_data.bookmarks.len(), crab_data.filters.len());
-                    
+                    log::info!(
+                        "Loaded .crab file with {} bookmarks, {} filters",
+                        crab_data.bookmarks.len(),
+                        crab_data.filters.len()
+                    );
+
                     // Load bookmarks
                     for bookmark in crab_data.bookmarks {
                         self.bookmarks.insert(bookmark.line_index, bookmark);
@@ -397,8 +407,11 @@ impl LogView {
 
             if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
                 match fs::write(path, json) {
-                    Ok(_) => log::debug!("Successfully saved .crab file with {} bookmarks, {} filters", 
-                                        self.bookmarks.len(), self.filters.len()),
+                    Ok(_) => log::debug!(
+                        "Successfully saved .crab file with {} bookmarks, {} filters",
+                        self.bookmarks.len(),
+                        self.filters.len()
+                    ),
                     Err(e) => log::error!("Failed to save .crab file: {}", e),
                 }
             }
@@ -421,7 +434,7 @@ impl LogView {
                     line_index.to_string()
                 }
             );
-            
+
             log::debug!("Adding bookmark: {}", bookmark_name);
             e.insert(Bookmark {
                 line_index,
@@ -443,7 +456,12 @@ impl LogView {
     }
 
     /// Render a specific filter view
-    pub fn render_filter(&mut self, ui: &mut Ui, filter_index: usize, global_config: &mut GlobalConfig) {
+    pub fn render_filter(
+        &mut self,
+        ui: &mut Ui,
+        filter_index: usize,
+        global_config: &mut GlobalConfig,
+    ) {
         if filter_index >= self.filters.len() {
             ui.label("Invalid filter index");
             return;
@@ -459,12 +477,12 @@ impl LogView {
         // Get current filter's search text for favorite checking
         let current_search = self.filters[filter_index].search_text.clone();
         let current_case_insensitive = self.filters[filter_index].case_insensitive;
-        
+
         // Check if current filter matches any global favorite
         let is_favorite = global_config.favorite_filters.iter().any(|f| {
             f.search_text == current_search && f.case_insensitive == current_case_insensitive
         });
-        
+
         // Update the filter's favorite status (for UI display only, not saved to .crab)
         self.filters[filter_index].is_favorite = is_favorite;
 
@@ -528,7 +546,7 @@ impl LogView {
                 FilterViewEvent::FavoriteToggled => {
                     let search_text = self.filters[filter_index].search_text.clone();
                     let case_insensitive = self.filters[filter_index].case_insensitive;
-                    
+
                     // Check if this filter is already a favorite
                     if let Some(pos) = global_config.favorite_filters.iter().position(|f| {
                         f.search_text == search_text && f.case_insensitive == case_insensitive
@@ -539,17 +557,24 @@ impl LogView {
                         log::info!("Removed favorite: '{}'", search_text);
                     } else {
                         // Add to favorites
-                        let name = self.filters[filter_index].name.clone()
+                        let name = self.filters[filter_index]
+                            .name
+                            .clone()
                             .unwrap_or_else(|| search_text.clone());
-                        global_config.favorite_filters.push(crate::config::FavoriteFilter {
-                            name,
-                            search_text,
-                            case_insensitive,
-                        });
+                        global_config
+                            .favorite_filters
+                            .push(crate::config::FavoriteFilter {
+                                name,
+                                search_text,
+                                case_insensitive,
+                            });
                         self.filters[filter_index].is_favorite = true;
-                        log::info!("Added favorite: '{}'", self.filters[filter_index].search_text);
+                        log::info!(
+                            "Added favorite: '{}'",
+                            self.filters[filter_index].search_text
+                        );
                     }
-                    
+
                     // Save global config
                     let _ = global_config.save();
                 }
@@ -569,7 +594,7 @@ impl LogView {
                     .show(ui.ctx(), |ui| {
                         ui.label("Enter filter name:");
                         let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
-                        
+
                         // Request focus on first frame
                         if !response.has_focus() {
                             response.request_focus();
@@ -578,11 +603,13 @@ impl LogView {
                         // Check if Enter was pressed (even if field still has focus)
                         let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
                         // Or if focus was lost by pressing Enter
-                        let enter_submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let enter_submitted =
+                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
 
                         ui.horizontal(|ui| {
-                            let should_save = ui.button("Save").clicked() || enter_pressed || enter_submitted;
+                            let should_save =
+                                ui.button("Save").clicked() || enter_pressed || enter_submitted;
                             let should_cancel = ui.button("Cancel").clicked() || escape_pressed;
 
                             if should_save {

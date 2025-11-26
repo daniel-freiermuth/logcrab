@@ -1,7 +1,7 @@
 use super::line::LogLine;
 use chrono::{DateTime, Datelike, Local};
-use lazy_static::lazy_static;
 use fancy_regex::Regex;
+use lazy_static::lazy_static;
 
 lazy_static! {
     // ISO 8601: 2025-11-20T14:23:45.123Z or 2025-11-20 14:23:45.123

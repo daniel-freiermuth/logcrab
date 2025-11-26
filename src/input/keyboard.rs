@@ -38,7 +38,10 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
                 pressed: true,
                 modifiers,
                 ..
-            } => Ok(Self { key, mods: modifiers }),
+            } => Ok(Self {
+                key,
+                mods: modifiers,
+            }),
             _ => Err(()),
         }
     }
@@ -51,12 +54,32 @@ impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
         // Helper to check if a key is a letter
         let is_letter_key = matches!(
             key_event.key,
-            egui::Key::A | egui::Key::B | egui::Key::C | egui::Key::D | egui::Key::E |
-            egui::Key::F | egui::Key::G | egui::Key::H | egui::Key::I | egui::Key::J |
-            egui::Key::K | egui::Key::L | egui::Key::M | egui::Key::N | egui::Key::O |
-            egui::Key::P | egui::Key::Q | egui::Key::R | egui::Key::S | egui::Key::T |
-            egui::Key::U | egui::Key::V | egui::Key::W | egui::Key::X | egui::Key::Y |
-            egui::Key::Z
+            egui::Key::A
+                | egui::Key::B
+                | egui::Key::C
+                | egui::Key::D
+                | egui::Key::E
+                | egui::Key::F
+                | egui::Key::G
+                | egui::Key::H
+                | egui::Key::I
+                | egui::Key::J
+                | egui::Key::K
+                | egui::Key::L
+                | egui::Key::M
+                | egui::Key::N
+                | egui::Key::O
+                | egui::Key::P
+                | egui::Key::Q
+                | egui::Key::R
+                | egui::Key::S
+                | egui::Key::T
+                | egui::Key::U
+                | egui::Key::V
+                | egui::Key::W
+                | egui::Key::X
+                | egui::Key::Y
+                | egui::Key::Z
         );
 
         // Map egui key to keybinds key
@@ -136,7 +159,7 @@ impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
         // Map modifiers - but DON'T include shift for letter keys since we've already
         // handled it by choosing uppercase/lowercase in the character itself
         let mut kb_mods = Mods::empty();
-        
+
         // On Mac, Cmd is the primary modifier; on other platforms, Ctrl is
         #[cfg(target_os = "macos")]
         {
@@ -153,7 +176,7 @@ impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
                 kb_mods |= Mods::CTRL;
             }
         }
-        
+
         // Don't add shift for letter keys - we've already encoded it in the character case
         // Only add shift for non-letter keys where it matters
         if key_event.mods.shift && !is_letter_key {
@@ -166,7 +189,6 @@ impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
         keybinds::KeyInput::new(kb_key, kb_mods)
     }
 }
-
 
 /// Keyboard shortcut actions that can be rebound
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -276,21 +298,20 @@ impl ShortcutAction {
             ShortcutAction::NewBookmarksTab => "Ctrl+b",
             ShortcutAction::CloseTab => "Ctrl+w",
             ShortcutAction::JumpToTop => "g g",
-            ShortcutAction::JumpToBottom => "G",  // Uppercase G (Shift+G in egui)
+            ShortcutAction::JumpToBottom => "G", // Uppercase G (Shift+G in egui)
             ShortcutAction::PageUp => "PageUp",
             ShortcutAction::PageDown => "PageDown",
             ShortcutAction::OpenFile => "Ctrl+o",
-            ShortcutAction::FocusPaneLeft => "H",  // Uppercase letters for Vim-style pane navigation
+            ShortcutAction::FocusPaneLeft => "H", // Uppercase letters for Vim-style pane navigation
             ShortcutAction::FocusPaneDown => "J",
             ShortcutAction::FocusPaneUp => "K",
             ShortcutAction::FocusPaneRight => "L",
             ShortcutAction::CycleTab => "Ctrl+Tab",
             ShortcutAction::ReverseCycleTab => "Ctrl+Shift+Tab",
-            ShortcutAction::RenameFilter => "\u{E002}",  // F2
+            ShortcutAction::RenameFilter => "\u{E002}", // F2
         }
     }
 }
-
 
 /// Manages keyboard bindings and processes input events
 pub struct KeyboardBindings {
@@ -304,11 +325,14 @@ impl KeyboardBindings {
     /// Load shortcuts from global config
     pub fn load(config: &GlobalConfig) -> Self {
         let bindings = if !config.shortcuts.is_empty() {
-            log::info!("Loading {} keyboard shortcuts from config", config.shortcuts.len());
+            log::info!(
+                "Loading {} keyboard shortcuts from config",
+                config.shortcuts.len()
+            );
             config.shortcuts.clone()
         } else {
             log::info!("No custom keyboard shortcuts found, using defaults");
-            
+
             // Use defaults for all actions
             let mut bindings = HashMap::new();
             for action in ShortcutAction::all() {
@@ -316,24 +340,27 @@ impl KeyboardBindings {
             }
             bindings
         };
-        
+
         let dispatcher = Self::rebuild_dispatcher(&bindings);
-        Self { dispatcher, bindings }
+        Self {
+            dispatcher,
+            bindings,
+        }
     }
 
     /// Rebuild the dispatcher from the current bindings
     fn rebuild_dispatcher(bindings: &HashMap<ShortcutAction, String>) -> Keybinds<ShortcutAction> {
         let mut dispatcher = Keybinds::default();
-        
+
         // Bind all shortcuts from the bindings map
         for (action, binding) in bindings {
             let _ = dispatcher.bind(binding, *action);
         }
-        
+
         // Also bind arrow keys for movement (in addition to j/k)
         let _ = dispatcher.bind("Up", ShortcutAction::MoveUp);
         let _ = dispatcher.bind("Down", ShortcutAction::MoveDown);
-        
+
         dispatcher
     }
 
@@ -349,17 +376,22 @@ impl KeyboardBindings {
     }
 
     /// Set the shortcut for a specific action
-    pub fn set_shortcut(&mut self, action: ShortcutAction, shortcut_str: &str) -> Result<(), String> {
+    pub fn set_shortcut(
+        &mut self,
+        action: ShortcutAction,
+        shortcut_str: &str,
+    ) -> Result<(), String> {
         // Validate the shortcut string by parsing it as a KeySeq
-        shortcut_str.parse::<keybinds::KeySeq>()
+        shortcut_str
+            .parse::<keybinds::KeySeq>()
             .map_err(|e| format!("Invalid keybind: {}", e))?;
-        
+
         // Update the bindings map
         self.bindings.insert(action, shortcut_str.to_string());
-        
+
         // Rebuild the entire dispatcher from the updated bindings
         self.dispatcher = Self::rebuild_dispatcher(&self.bindings);
-        
+
         Ok(())
     }
 
@@ -374,7 +406,7 @@ impl KeyboardBindings {
         let mut actions = Vec::new();
         let mut events_to_consume = Vec::new();
         let mut shortcuts_changed = false;
-        
+
         for (idx, event) in raw_input.events.iter().enumerate() {
             // Try to convert event to our key wrapper - only succeeds for pressed key events
             if let Ok(key_event) = EguiKeyEvent::try_from(event) {
@@ -398,7 +430,7 @@ impl KeyboardBindings {
                 }
             }
         }
-        
+
         (actions, events_to_consume, shortcuts_changed)
     }
 
@@ -425,10 +457,18 @@ impl KeyboardBindings {
             ShortcutAction::PageUp => actions.push(InputAction::PageUp),
             ShortcutAction::PageDown => actions.push(InputAction::PageDown),
             ShortcutAction::OpenFile => actions.push(InputAction::OpenFile),
-            ShortcutAction::FocusPaneLeft => actions.push(InputAction::NavigatePane(PaneDirection::Left)),
-            ShortcutAction::FocusPaneDown => actions.push(InputAction::NavigatePane(PaneDirection::Down)),
-            ShortcutAction::FocusPaneUp => actions.push(InputAction::NavigatePane(PaneDirection::Up)),
-            ShortcutAction::FocusPaneRight => actions.push(InputAction::NavigatePane(PaneDirection::Right)),
+            ShortcutAction::FocusPaneLeft => {
+                actions.push(InputAction::NavigatePane(PaneDirection::Left))
+            }
+            ShortcutAction::FocusPaneDown => {
+                actions.push(InputAction::NavigatePane(PaneDirection::Down))
+            }
+            ShortcutAction::FocusPaneUp => {
+                actions.push(InputAction::NavigatePane(PaneDirection::Up))
+            }
+            ShortcutAction::FocusPaneRight => {
+                actions.push(InputAction::NavigatePane(PaneDirection::Right))
+            }
             ShortcutAction::CycleTab => actions.push(InputAction::CycleTab),
             ShortcutAction::ReverseCycleTab => actions.push(InputAction::ReverseCycleTab),
             ShortcutAction::RenameFilter => {
@@ -450,6 +490,9 @@ impl Default for KeyboardBindings {
         }
 
         let dispatcher = Self::rebuild_dispatcher(&bindings);
-        Self { dispatcher, bindings }
+        Self {
+            dispatcher,
+            bindings,
+        }
     }
 }

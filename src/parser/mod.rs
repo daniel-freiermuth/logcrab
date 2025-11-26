@@ -3,9 +3,9 @@ pub mod generic;
 pub mod line;
 pub mod logcat;
 
+use fancy_regex::Regex;
 use lazy_static::lazy_static;
 use line::LogLine;
-use fancy_regex::Regex;
 
 lazy_static! {
     // Normalization patterns

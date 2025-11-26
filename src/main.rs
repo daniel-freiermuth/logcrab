@@ -22,9 +22,9 @@ mod parser;
 mod state;
 mod ui;
 
-use ui::app::LogCrabApp;
 use clap::Parser;
 use std::path::PathBuf;
+use ui::app::LogCrabApp;
 
 #[cfg(feature = "ram-profiling")]
 #[global_allocator]
@@ -56,13 +56,19 @@ fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
-    
-    log::info!("LogCrab starting up (version {})", env!("CARGO_PKG_VERSION"));
-    
+
+    log::info!(
+        "LogCrab starting up (version {})",
+        env!("CARGO_PKG_VERSION")
+    );
+
     #[cfg(feature = "ram-profiling")]
     let _profiler = {
         let args_early = Args::parse();
-        log::info!("RAM profiling enabled, output: {:?}", args_early.profile_output);
+        log::info!(
+            "RAM profiling enabled, output: {:?}",
+            args_early.profile_output
+        );
         dhat::Profiler::builder()
             .file_name(args_early.profile_output.clone())
             .build()
@@ -75,7 +81,7 @@ fn main() -> eframe::Result<()> {
     }
 
     let args = Args::parse();
-    
+
     if let Some(ref file) = args.file {
         log::info!("Opening file from command line: {:?}", file);
     }

@@ -216,25 +216,34 @@ impl BookmarkPanel {
                                 if editing_bookmark == Some(line_idx) {
                                     let text_edit = egui::TextEdit::singleline(bookmark_name_input)
                                         .desired_width(ui.available_width());
-                                    
+
                                     let id = ui.id().with("bm_edit").with(line_idx);
                                     let response = ui.add(text_edit.id(id));
-                                    
+
                                     // Request focus and select all on first frame
                                     let was_focused = ui.memory(|mem| mem.has_focus(id));
                                     if !was_focused {
                                         response.request_focus();
                                         // Select all text by setting cursor range
-                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
+                                        if let Some(mut state) =
+                                            egui::TextEdit::load_state(ui.ctx(), id)
+                                        {
                                             let ccursor_start = egui::text::CCursor::new(0);
-                                            let ccursor_end = egui::text::CCursor::new(bookmark_name_input.len());
-                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(ccursor_start, ccursor_end)));
+                                            let ccursor_end =
+                                                egui::text::CCursor::new(bookmark_name_input.len());
+                                            state.cursor.set_char_range(Some(
+                                                egui::text::CCursorRange::two(
+                                                    ccursor_start,
+                                                    ccursor_end,
+                                                ),
+                                            ));
                                             state.store(ui.ctx(), id);
                                         }
                                     }
-                                    
+
                                     // Save on Enter
-                                    let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                    let enter_pressed =
+                                        ui.input(|i| i.key_pressed(egui::Key::Enter));
                                     if enter_pressed && !bookmark_name_input.is_empty() {
                                         events.push(BookmarkPanelEvent::BookmarkRenamed {
                                             line_index: line_idx,
@@ -252,9 +261,10 @@ impl BookmarkPanel {
                                         ui.id().with(line_idx).with("bm_name"),
                                         egui::Sense::click(),
                                     );
-                                    
+
                                     // Start editing on double-click or Enter key
-                                    let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                    let enter_pressed =
+                                        ui.input(|i| i.key_pressed(egui::Key::Enter));
                                     if response.double_clicked() || (is_selected && enter_pressed) {
                                         events.push(BookmarkPanelEvent::StartRenaming {
                                             line_index: line_idx,

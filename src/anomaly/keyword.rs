@@ -1,7 +1,7 @@
 use crate::anomaly::scorer::AnomalyScorer;
 use crate::parser::line::LogLine;
-use lazy_static::lazy_static;
 use fancy_regex::Regex;
+use lazy_static::lazy_static;
 
 lazy_static! {
     // Keywords that indicate potential issues (case-insensitive)

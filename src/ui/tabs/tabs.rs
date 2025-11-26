@@ -21,7 +21,6 @@ pub struct TabContent {
 /// TabViewer implementation for dock system
 pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogView,
-    pub add_tab_after: &'a mut Option<egui_dock::NodeIndex>,
     pub focus_search_next_frame: &'a mut Option<usize>,
     pub global_config: &'a mut GlobalConfig,
     pub filter_to_remove: &'a mut Option<usize>,
@@ -38,43 +37,6 @@ impl TabViewer for LogCrabTabViewer<'_> {
             }
         }
         (&tab.title).into()
-    }
-
-    fn context_menu(
-        &mut self,
-        ui: &mut egui::Ui,
-        tab: &mut Self::Tab,
-        _surface: egui_dock::SurfaceIndex,
-        _node: egui_dock::NodeIndex,
-    ) {
-        // Only allow renaming filter tabs
-        if let TabType::Filter(index) = &tab.tab_type {
-            ui.label("Filter Tab");
-            ui.separator();
-
-            if ui.button("✏ Rename").clicked() {
-                // Will be handled in the main UI
-                ui.close();
-            }
-
-            if ui.button("🗑 Clear Name").clicked() {
-                self.log_view.set_filter_name(*index, None);
-                ui.close();
-            }
-        }
-    }
-
-    fn add_popup(
-        &mut self,
-        ui: &mut egui::Ui,
-        _surface: egui_dock::SurfaceIndex,
-        node: egui_dock::NodeIndex,
-    ) {
-        ui.set_min_width(120.0);
-        if ui.button("➕ Filter Tab").clicked() {
-            *self.add_tab_after = Some(node);
-            ui.close();
-        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
