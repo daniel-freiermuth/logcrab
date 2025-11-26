@@ -27,14 +27,15 @@ pub struct FavoriteFilter {
 
 /// Events emitted by the filter bar
 #[derive(Debug, Clone)]
-pub enum FilterBarEvent {
+pub enum FilterInternalEvent {
     SearchChanged,
     CaseInsensitiveToggled,
-    ClearClicked,
     FavoriteSelected {
         search_text: String,
         case_insensitive: bool,
     },
+    FilterNameEditRequested,
+    FavoriteToggled,
 }
 
 /// Reusable filter search bar component
@@ -49,10 +50,27 @@ impl FilterBar {
         filter: &mut FilterState,
         filter_index: usize,
         favorites: &[FavoriteFilter],
-    ) -> Vec<FilterBarEvent> {
+    ) -> Vec<FilterInternalEvent> {
         let mut events = Vec::new();
 
         ui.horizontal(|ui| {
+            if ui
+                .small_button("✏")
+                .on_hover_text("Edit filter name")
+                .clicked()
+            {
+                events.push(FilterInternalEvent::FilterNameEditRequested);
+            }
+
+            let star_text = if filter.is_favorite { "⭐" } else { "☆" };
+            if ui
+                .button(star_text)
+                .on_hover_text("Toggle favorite filter")
+                .clicked()
+            {
+                events.push(FilterInternalEvent::FavoriteToggled);
+            }
+
             ui.label("🔍 Search (regex):");
 
             // Dropdown menu for favorites
@@ -63,7 +81,7 @@ impl FilterBar {
                     .show_ui(ui, |ui| {
                         for fav in favorites {
                             if ui.selectable_label(false, &fav.search_text).clicked() {
-                                events.push(FilterBarEvent::FavoriteSelected {
+                                events.push(FilterInternalEvent::FavoriteSelected {
                                     search_text: fav.search_text.clone(),
                                     case_insensitive: fav.case_insensitive,
                                 });
@@ -93,18 +111,14 @@ impl FilterBar {
             }
 
             if search_response.changed() {
-                events.push(FilterBarEvent::SearchChanged);
+                events.push(FilterInternalEvent::SearchChanged);
             }
 
             // Checkbox
             let checkbox_response = ui.checkbox(&mut filter.case_insensitive, "Case insensitive");
 
             if checkbox_response.changed() {
-                events.push(FilterBarEvent::CaseInsensitiveToggled);
-            }
-
-            if ui.button("Clear").clicked() {
-                events.push(FilterBarEvent::ClearClicked);
+                events.push(FilterInternalEvent::CaseInsensitiveToggled);
             }
 
             // Display regex validation status

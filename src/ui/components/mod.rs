@@ -22,6 +22,6 @@ mod histogram;
 mod log_table;
 
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
-pub use filter_bar::{FavoriteFilter, FilterBar, FilterBarEvent};
+pub use filter_bar::{FavoriteFilter, FilterBar, FilterInternalEvent};
 pub use histogram::Histogram;
 pub use log_table::{LogTable, LogTableEvent};

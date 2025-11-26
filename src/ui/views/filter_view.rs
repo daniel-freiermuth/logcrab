@@ -19,10 +19,10 @@
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
 use crate::ui::components::{
-    FavoriteFilter, FilterBar, FilterBarEvent, Histogram, LogTable, LogTableEvent,
+    FavoriteFilter, FilterBar, FilterInternalEvent, Histogram, LogTable, LogTableEvent,
 };
 use chrono::DateTime;
-use egui::{Color32, Ui};
+use egui::Ui;
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -62,36 +62,6 @@ impl FilterView {
     ) -> Vec<FilterViewEvent> {
         let mut events = Vec::new();
 
-        // Display custom name if set, otherwise default
-        let display_name = filter
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("Filter View {}", filter_index + 1));
-        ui.heading(&display_name);
-
-        // Name and Star buttons
-        ui.horizontal(|ui| {
-            // Edit name button
-            if ui
-                .small_button("✏")
-                .on_hover_text("Edit filter name")
-                .clicked()
-            {
-                events.push(FilterViewEvent::FilterNameEditRequested);
-            }
-
-            let star_text = if filter.is_favorite { "⭐" } else { "☆" };
-            if ui
-                .button(star_text)
-                .on_hover_text("Toggle favorite filter")
-                .clicked()
-            {
-                events.push(FilterViewEvent::FavoriteToggled);
-            }
-        });
-
-        ui.separator();
-
         // Collect favorite filters from all filters
         let favorites: Vec<FavoriteFilter> = all_filters
             .iter()
@@ -108,23 +78,17 @@ impl FilterView {
         // Handle filter bar events
         for event in filter_bar_events {
             match event {
-                FilterBarEvent::SearchChanged => {
+                FilterInternalEvent::SearchChanged => {
                     filter.update_search_regex();
                     filter.request_filter_update(Arc::clone(lines), min_score_filter);
                     events.push(FilterViewEvent::FilterModified);
                 }
-                FilterBarEvent::CaseInsensitiveToggled => {
+                FilterInternalEvent::CaseInsensitiveToggled => {
                     filter.update_search_regex();
                     filter.request_filter_update(Arc::clone(lines), min_score_filter);
                     events.push(FilterViewEvent::FilterModified);
                 }
-                FilterBarEvent::ClearClicked => {
-                    filter.search_text.clear();
-                    filter.update_search_regex();
-                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
-                    events.push(FilterViewEvent::FilterModified);
-                }
-                FilterBarEvent::FavoriteSelected {
+                FilterInternalEvent::FavoriteSelected {
                     search_text,
                     case_insensitive,
                 } => {
@@ -134,6 +98,8 @@ impl FilterView {
                     filter.request_filter_update(Arc::clone(lines), min_score_filter);
                     events.push(FilterViewEvent::FilterModified);
                 }
+                FilterInternalEvent::FilterNameEditRequested => events.push(FilterViewEvent::FilterNameEditRequested),
+                FilterInternalEvent::FavoriteToggled => events.push(FilterViewEvent::FavoriteToggled),
             }
         }
 
@@ -182,22 +148,6 @@ impl FilterView {
                 filter.last_rendered_selection = selected_line_index;
             }
         }
-
-        // Stats
-        let total_lines = lines.len();
-        let visible_lines = filter.filtered_indices.len();
-
-        ui.horizontal(|ui| {
-            ui.label(format!("Total lines: {}", total_lines));
-            ui.separator();
-            ui.label(format!("Visible: {}", visible_lines));
-            if filter.search_regex.is_some() {
-                ui.separator();
-                ui.colored_label(Color32::LIGHT_BLUE, format!("🔍 {} matches", visible_lines));
-            }
-        });
-
-        ui.separator();
 
         // Render histogram
         if let Some(hist_event) =
