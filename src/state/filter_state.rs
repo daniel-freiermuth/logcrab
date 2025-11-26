@@ -378,11 +378,11 @@ impl FilterState {
         }
 
         let mut closest_idx = 0;
-        let mut min_diff = i64::MAX;
+        let mut min_diff = f32::MAX;
 
         for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
             if let Some(line_ts) = lines[line_idx].timestamp {
-                let diff = (line_ts.timestamp() - target_ts.timestamp()).abs();
+                let diff = (line_ts - target_ts).abs().as_seconds_f32();
                 if diff < min_diff {
                     min_diff = diff;
                     closest_idx = filtered_idx;
