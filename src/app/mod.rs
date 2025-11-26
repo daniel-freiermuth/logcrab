@@ -551,6 +551,14 @@ impl LogCrabApp {
                         None => {}
                     }
                 }
+                InputAction::OpenFile => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("log", &["log", "txt", "dlt"])
+                        .pick_file()
+                    {
+                        self.load_file(path, ctx.clone());
+                    }
+                }
                 InputAction::NavigatePane(direction) => {
                     self.navigate_pane_direction = Some(direction);
                 }

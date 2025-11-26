@@ -58,6 +58,9 @@ pub enum InputAction {
     /// Move selection by one page down
     PageDown,
 
+    /// Open file dialog to load a new log file
+    OpenFile,
+
     /// Navigate to a neighboring pane
     NavigatePane(PaneDirection),
 
