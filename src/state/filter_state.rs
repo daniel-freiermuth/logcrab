@@ -99,7 +99,7 @@ impl GlobalFilterWorker {
             // Collect any additional pending requests
             drain_pending(&mut pending_requests);
 
-            while pending_requests.len() > 0 {
+            while !pending_requests.is_empty() {
                 let first_key = *pending_requests.keys().next().unwrap();
                 let request = pending_requests.remove(&first_key).unwrap().clone();
                 let filter_id = request.filter_id;
