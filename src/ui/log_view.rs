@@ -133,6 +133,16 @@ impl LogView {
         self.filters.iter().any(|f| f.is_filtering)
     }
 
+    /// Start renaming a filter (opens the rename dialog)
+    pub fn start_rename_filter(&mut self, filter_index: usize) {
+        if let Some(current_name) = &self.filters[filter_index].name {
+            self.bookmark_name_input = current_name.clone();
+        } else {
+            self.bookmark_name_input = format!("Filter {}", filter_index + 1);
+        }
+        self.editing_target = Some(EditingTarget::Filter(filter_index));
+    }
+
     /// Focus the search input for a specific filter (called by Ctrl+L)
     pub fn focus_search_input(&mut self, filter_index: usize) {
         if filter_index < self.filters.len() {
@@ -559,13 +569,23 @@ impl LogView {
                     .show(ui.ctx(), |ui| {
                         ui.label("Enter filter name:");
                         let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
-                        response.request_focus();
+                        
+                        // Request focus on first frame
+                        if !response.has_focus() {
+                            response.request_focus();
+                        }
+
+                        // Check if Enter was pressed (even if field still has focus)
+                        let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        // Or if focus was lost by pressing Enter
+                        let enter_submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
 
                         ui.horizontal(|ui| {
-                            if ui.button("Save").clicked()
-                                || (response.lost_focus()
-                                    && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                            {
+                            let should_save = ui.button("Save").clicked() || enter_pressed || enter_submitted;
+                            let should_cancel = ui.button("Cancel").clicked() || escape_pressed;
+
+                            if should_save {
                                 let new_name = if self.bookmark_name_input.trim().is_empty() {
                                     None
                                 } else {
@@ -575,10 +595,7 @@ impl LogView {
                                 self.editing_target = None;
                                 self.bookmark_name_input.clear();
                             }
-                            if ui.button("Cancel").clicked()
-                                || (response.lost_focus()
-                                    && ui.input(|i| i.key_pressed(egui::Key::Escape)))
-                            {
+                            if should_cancel {
                                 self.editing_target = None;
                                 self.bookmark_name_input.clear();
                             }

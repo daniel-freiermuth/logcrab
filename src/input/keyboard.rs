@@ -116,6 +116,19 @@ impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
             egui::Key::PageUp => Key::PageUp,
             egui::Key::PageDown => Key::PageDown,
             egui::Key::Escape => Key::Esc,
+            // Function keys - map to unicode private use area chars
+            egui::Key::F1 => Key::Char('\u{E001}'),
+            egui::Key::F2 => Key::Char('\u{E002}'),
+            egui::Key::F3 => Key::Char('\u{E003}'),
+            egui::Key::F4 => Key::Char('\u{E004}'),
+            egui::Key::F5 => Key::Char('\u{E005}'),
+            egui::Key::F6 => Key::Char('\u{E006}'),
+            egui::Key::F7 => Key::Char('\u{E007}'),
+            egui::Key::F8 => Key::Char('\u{E008}'),
+            egui::Key::F9 => Key::Char('\u{E009}'),
+            egui::Key::F10 => Key::Char('\u{E00A}'),
+            egui::Key::F11 => Key::Char('\u{E00B}'),
+            egui::Key::F12 => Key::Char('\u{E00C}'),
             // For unsupported keys, return a placeholder
             _ => Key::Char('\0'),
         };
@@ -176,6 +189,7 @@ pub enum ShortcutAction {
     FocusPaneRight,
     CycleTab,
     ReverseCycleTab,
+    RenameFilter,
 }
 
 impl ShortcutAction {
@@ -200,6 +214,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneRight,
             ShortcutAction::CycleTab,
             ShortcutAction::ReverseCycleTab,
+            ShortcutAction::RenameFilter,
         ]
     }
 
@@ -223,6 +238,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneRight => "Focus Pane Right",
             ShortcutAction::CycleTab => "Cycle to Next Tab",
             ShortcutAction::ReverseCycleTab => "Cycle to Previous Tab",
+            ShortcutAction::RenameFilter => "Rename Filter",
         }
     }
 
@@ -246,6 +262,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
             ShortcutAction::CycleTab => "Cycle to the next tab in the active pane",
             ShortcutAction::ReverseCycleTab => "Cycle to the previous tab in the active pane",
+            ShortcutAction::RenameFilter => "Open rename dialog for the current filter tab",
         }
     }
 
@@ -269,6 +286,7 @@ impl ShortcutAction {
             ShortcutAction::FocusPaneRight => "L",
             ShortcutAction::CycleTab => "Ctrl+Tab",
             ShortcutAction::ReverseCycleTab => "Ctrl+Shift+Tab",
+            ShortcutAction::RenameFilter => "\u{E002}",  // F2
         }
     }
 }
@@ -413,6 +431,11 @@ impl KeyboardBindings {
             ShortcutAction::FocusPaneRight => actions.push(InputAction::NavigatePane(PaneDirection::Right)),
             ShortcutAction::CycleTab => actions.push(InputAction::CycleTab),
             ShortcutAction::ReverseCycleTab => actions.push(InputAction::ReverseCycleTab),
+            ShortcutAction::RenameFilter => {
+                if let Some(idx) = active_filter_index {
+                    actions.push(InputAction::RenameFilter(idx));
+                }
+            }
         }
     }
 }

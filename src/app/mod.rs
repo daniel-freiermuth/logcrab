@@ -562,6 +562,9 @@ impl LogCrabApp {
                 InputAction::NavigatePane(direction) => {
                     self.navigate_pane_direction = Some(direction);
                 }
+                InputAction::RenameFilter(idx) => {
+                    self.log_view.start_rename_filter(idx);
+                }
             }
         }
 

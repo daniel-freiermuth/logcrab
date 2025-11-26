@@ -69,4 +69,7 @@ pub enum InputAction {
 
     /// Cycle to the previous tab in the active pane
     ReverseCycleTab,
+
+    /// Open rename dialog for the current filter
+    RenameFilter(usize),
 }
