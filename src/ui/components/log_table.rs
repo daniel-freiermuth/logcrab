@@ -224,7 +224,13 @@ impl LogTable {
         row_right_clicked: &mut bool,
     ) {
         row.col(|ui| {
-            if is_bookmarked {
+            if is_selected && is_bookmarked {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(140, 100, 60),
+                );
+            } else if is_bookmarked {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
@@ -288,7 +294,13 @@ impl LogTable {
         row_right_clicked: &mut bool,
     ) {
         row.col(|ui| {
-            if is_bookmarked {
+            if is_selected && is_bookmarked {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(140, 100, 60),
+                );
+            } else if is_bookmarked {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
@@ -339,7 +351,13 @@ impl LogTable {
         row_right_clicked: &mut bool,
     ) {
         row.col(|ui| {
-            if is_bookmarked {
+            if is_selected && is_bookmarked {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(140, 100, 60),
+                );
+            } else if is_bookmarked {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
@@ -384,7 +402,13 @@ impl LogTable {
         row_right_clicked: &mut bool,
     ) {
         row.col(|ui| {
-            if is_bookmarked {
+            if is_selected && is_bookmarked {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    Color32::from_rgb(140, 100, 60),
+                );
+            } else if is_bookmarked {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
