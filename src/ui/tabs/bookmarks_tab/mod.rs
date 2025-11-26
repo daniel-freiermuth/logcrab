@@ -17,7 +17,83 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod bookmark_panel;
-pub mod bookmarks_view;
 
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
-pub use bookmarks_view::{BookmarksView, BookmarksViewEvent};
+
+use crate::parser::line::LogLine;
+use chrono::DateTime;
+use egui::Ui;
+
+/// Events that can be emitted by the bookmarks view
+#[derive(Debug, Clone)]
+pub enum BookmarksViewEvent {
+    BookmarkClicked {
+        line_index: usize,
+        timestamp: Option<DateTime<chrono::Local>>,
+    },
+    BookmarkDeleted {
+        line_index: usize,
+    },
+    BookmarkRenamed {
+        line_index: usize,
+        new_name: String,
+    },
+    StartRenaming {
+        line_index: usize,
+    },
+    CancelRenaming,
+}
+
+/// Orchestrates the bookmarks view UI using the BookmarkPanel component
+pub struct BookmarksView;
+
+impl BookmarksView {
+    /// Render the bookmarks view
+    ///
+    /// Returns events that occurred during rendering
+    pub fn render(
+        ui: &mut Ui,
+        lines: &[LogLine],
+        bookmarks: Vec<BookmarkData>,
+        selected_line_index: Option<usize>,
+        editing_bookmark: Option<usize>,
+        bookmark_name_input: &mut String,
+    ) -> Vec<BookmarksViewEvent> {
+        let panel_events = BookmarkPanel::render(
+            ui,
+            lines,
+            &bookmarks,
+            selected_line_index,
+            editing_bookmark,
+            bookmark_name_input,
+        );
+
+        // Transform panel events to view events
+        panel_events
+            .into_iter()
+            .map(|event| match event {
+                BookmarkPanelEvent::BookmarkClicked {
+                    line_index,
+                    timestamp,
+                } => BookmarksViewEvent::BookmarkClicked {
+                    line_index,
+                    timestamp,
+                },
+                BookmarkPanelEvent::BookmarkDeleted { line_index } => {
+                    BookmarksViewEvent::BookmarkDeleted { line_index }
+                }
+                BookmarkPanelEvent::BookmarkRenamed {
+                    line_index,
+                    new_name,
+                } => BookmarksViewEvent::BookmarkRenamed {
+                    line_index,
+                    new_name,
+                },
+                BookmarkPanelEvent::StartRenaming { line_index } => {
+                    BookmarksViewEvent::StartRenaming { line_index }
+                }
+                BookmarkPanelEvent::CancelRenaming => BookmarksViewEvent::CancelRenaming,
+            })
+            .collect()
+    }
+}
