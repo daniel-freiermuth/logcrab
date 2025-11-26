@@ -79,9 +79,6 @@ impl BookmarkPanel {
     ) -> Vec<BookmarkPanelEvent> {
         let mut events = Vec::new();
 
-        ui.heading("Bookmarks");
-        ui.separator();
-
         if bookmarks.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(50.0);
@@ -90,9 +87,6 @@ impl BookmarkPanel {
             });
             return events;
         }
-
-        ui.label(format!("Total bookmarks: {}", bookmarks.len()));
-        ui.separator();
 
         egui::ScrollArea::horizontal()
             .id_salt("bookmarks_scroll")
