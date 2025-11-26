@@ -18,7 +18,7 @@
 
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
-use crate::ui::components::{
+use super::{
     FavoriteFilter, FilterBar, FilterInternalEvent, Histogram, LogTable, LogTableEvent,
 };
 use chrono::DateTime;

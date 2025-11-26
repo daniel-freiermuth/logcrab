@@ -17,7 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::parser::line::LogLine;
-use crate::ui::components::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
+use super::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 use chrono::DateTime;
 use egui::Ui;
 

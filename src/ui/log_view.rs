@@ -18,8 +18,8 @@
 use crate::config::GlobalConfig;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
-use crate::ui::components::BookmarkData;
-use crate::ui::views::{BookmarksView, BookmarksViewEvent, FilterView, FilterViewEvent};
+use crate::ui::tabs::bookmarks_tab::BookmarkData;
+use crate::ui::tabs::{BookmarksView, BookmarksViewEvent, FilterView, FilterViewEvent};
 use egui::{Color32, Ui};
 
 use chrono::{DateTime, Local};

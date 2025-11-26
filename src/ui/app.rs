@@ -1,8 +1,5 @@
-mod navigation;
-mod tabs;
-mod windows;
-
-pub use tabs::{TabContent, TabType};
+use super::tabs::{navigation, LogCrabTabViewer, TabContent, TabType};
+use super::windows;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -13,8 +10,6 @@ use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{InputAction, KeyboardBindings, PaneDirection, ShortcutAction};
 use crate::ui::LogView;
-
-use tabs::LogCrabTabViewer;
 
 /// Main application state
 pub struct LogCrabApp {

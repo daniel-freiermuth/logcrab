@@ -1,5 +1,6 @@
-pub mod components;
+pub mod app;
 pub mod log_view;
-pub mod views;
+pub mod tabs;
+pub mod windows;
 
 pub use log_view::LogView;

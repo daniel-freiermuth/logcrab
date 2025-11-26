@@ -16,8 +16,12 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-mod bookmarks_view;
-mod filter_view;
+pub mod filter_bar;
+pub mod filter_view;
+pub mod histogram;
+pub mod log_table;
 
-pub use bookmarks_view::{BookmarksView, BookmarksViewEvent};
+pub use filter_bar::{FavoriteFilter, FilterBar, FilterInternalEvent};
 pub use filter_view::{FilterView, FilterViewEvent};
+pub use histogram::Histogram;
+pub use log_table::{LogTable, LogTableEvent};
