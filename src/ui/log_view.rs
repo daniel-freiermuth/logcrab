@@ -18,8 +18,8 @@
 use crate::config::GlobalConfig;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
-use crate::ui::tabs::bookmarks_tab::BookmarkData;
-use crate::ui::tabs::{BookmarksView, BookmarksViewEvent, FilterView, FilterViewEvent};
+use crate::ui::tabs::{FilterView, FilterViewEvent};
+use crate::ui::windows::ChangeFilternameWindow;
 use egui::{Color32, Ui};
 
 use chrono::{DateTime, Local};
@@ -31,10 +31,10 @@ use std::sync::Arc;
 
 /// Named bookmark with optional description
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Bookmark {
-    line_index: usize,
-    name: String,
-    timestamp: Option<DateTime<Local>>,
+pub struct Bookmark {
+    pub line_index: usize,
+    pub name: String,
+    pub timestamp: Option<DateTime<Local>>,
 }
 
 /// Saved filter configuration
@@ -53,28 +53,19 @@ struct CrabFile {
     filters: Vec<SavedFilter>,
 }
 
-/// What is currently being edited (for rename dialogs)
-#[derive(Debug, Clone, Copy)]
-enum EditingTarget {
-    Bookmark(usize), // line_index
-    Filter(usize),   // filter_index
-}
-
 pub struct LogView {
     pub lines: Arc<Vec<LogLine>>,
     pub min_score_filter: f64,
     // Multiple filter views
     filters: Vec<FilterState>,
     // Selected line tracking
-    selected_line_index: Option<usize>,
-    selected_timestamp: Option<DateTime<Local>>,
+    pub selected_line_index: Option<usize>,
+    pub selected_timestamp: Option<DateTime<Local>>,
     // Bookmarks with names
-    bookmarks: HashMap<usize, Bookmark>,
+    pub bookmarks: HashMap<usize, Bookmark>,
     // .crab file path
     crab_file: Option<PathBuf>,
-    // UI state
-    bookmark_name_input: String,
-    editing_target: Option<EditingTarget>,
+    change_filtername_window: Option<ChangeFilternameWindow>,
 }
 
 impl LogView {
@@ -93,8 +84,7 @@ impl LogView {
             selected_timestamp: None,
             bookmarks: HashMap::new(),
             crab_file: None,
-            bookmark_name_input: String::new(),
-            editing_target: None,
+            change_filtername_window: None,
         }
     }
 
@@ -135,12 +125,12 @@ impl LogView {
 
     /// Start renaming a filter (opens the rename dialog)
     pub fn start_rename_filter(&mut self, filter_index: usize) {
-        if let Some(current_name) = &self.filters[filter_index].name {
-            self.bookmark_name_input = current_name.clone();
+        let starting_name = if let Some(current_name) = &self.filters[filter_index].name {
+            current_name.clone()
         } else {
-            self.bookmark_name_input = format!("Filter {}", filter_index + 1);
-        }
-        self.editing_target = Some(EditingTarget::Filter(filter_index));
+            format!("Filter {}", filter_index + 1)
+        };
+        self.change_filtername_window = Some(ChangeFilternameWindow::new(starting_name));
     }
 
     /// Focus the search input for a specific filter (called by Ctrl+L)
@@ -389,7 +379,7 @@ impl LogView {
         }
     }
 
-    fn save_crab_file(&self) {
+    pub fn save_crab_file(&self) {
         if let Some(ref path) = self.crab_file {
             log::debug!("Saving .crab file: {:?}", path);
             let crab_data = CrabFile {
@@ -536,12 +526,14 @@ impl LogView {
                 }
                 FilterViewEvent::FilterNameEditRequested => {
                     // Prompt for new name
-                    if let Some(current_name) = &self.filters[filter_index].name {
-                        self.bookmark_name_input = current_name.clone();
+                    let starting_name = if let Some(current_name) = &self.filters[filter_index].name
+                    {
+                        current_name.clone()
                     } else {
-                        self.bookmark_name_input = format!("Filter {}", filter_index + 1);
-                    }
-                    self.editing_target = Some(EditingTarget::Filter(filter_index));
+                        format!("Filter {}", filter_index + 1)
+                    };
+                    self.change_filtername_window =
+                        Some(ChangeFilternameWindow::new(starting_name));
                 }
                 FilterViewEvent::FavoriteToggled => {
                     let search_text = self.filters[filter_index].search_text.clone();
@@ -586,122 +578,20 @@ impl LogView {
         }
 
         // Handle filter name editing dialog
-        if let Some(EditingTarget::Filter(editing_filter_index)) = self.editing_target {
-            if editing_filter_index == filter_index {
-                egui::Window::new("Rename Filter")
-                    .collapsible(false)
-                    .resizable(false)
-                    .show(ui.ctx(), |ui| {
-                        ui.label("Enter filter name:");
-                        let response = ui.text_edit_singleline(&mut self.bookmark_name_input);
-
-                        // Request focus on first frame
-                        if !response.has_focus() {
-                            response.request_focus();
-                        }
-
-                        // Check if Enter was pressed (even if field still has focus)
-                        let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        // Or if focus was lost by pressing Enter
-                        let enter_submitted =
-                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
-
-                        ui.horizontal(|ui| {
-                            let should_save =
-                                ui.button("Save").clicked() || enter_pressed || enter_submitted;
-                            let should_cancel = ui.button("Cancel").clicked() || escape_pressed;
-
-                            if should_save {
-                                let new_name = if self.bookmark_name_input.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(self.bookmark_name_input.clone())
-                                };
-                                self.set_filter_name(filter_index, new_name);
-                                self.editing_target = None;
-                                self.bookmark_name_input.clear();
-                            }
-                            if should_cancel {
-                                self.editing_target = None;
-                                self.bookmark_name_input.clear();
-                            }
-                        });
-                    });
-            }
-        }
-    }
-
-    pub fn render_bookmarks(&mut self, ui: &mut Ui) {
-        // Convert bookmarks to BookmarkData format
-        let mut bookmarks: Vec<BookmarkData> = self
-            .bookmarks
-            .values()
-            .map(|b| BookmarkData {
-                line_index: b.line_index,
-                name: b.name.clone(),
-                timestamp: b.timestamp,
-            })
-            .collect();
-        bookmarks.sort_by_key(|b| b.line_index);
-
-        // Extract the editing line_index if we're editing a bookmark (not a filter)
-        let editing_bookmark = match self.editing_target {
-            Some(EditingTarget::Bookmark(line_index)) => Some(line_index),
-            _ => None,
-        };
-
-        // Render using BookmarksView
-        let events = BookmarksView::render(
-            ui,
-            &self.lines,
-            bookmarks,
-            self.selected_line_index,
-            editing_bookmark,
-            &mut self.bookmark_name_input,
-        );
-
-        // Handle events
-        let mut should_save = false;
-        for event in events {
-            match event {
-                BookmarksViewEvent::BookmarkClicked {
-                    line_index,
-                    timestamp,
-                } => {
-                    self.selected_line_index = Some(line_index);
-                    self.selected_timestamp = timestamp;
+        if let Some(ref mut window) = self.change_filtername_window {
+            match window.render(ui) {
+                Ok(Some(new_name)) => {
+                    self.set_filter_name(filter_index, Some(new_name));
+                    self.change_filtername_window = None;
                 }
-                BookmarksViewEvent::BookmarkDeleted { line_index } => {
-                    self.bookmarks.remove(&line_index);
-                    should_save = true;
+                Ok(None) => {
+                    // Still editing
                 }
-                BookmarksViewEvent::BookmarkRenamed {
-                    line_index,
-                    new_name,
-                } => {
-                    if let Some(b) = self.bookmarks.get_mut(&line_index) {
-                        b.name = new_name;
-                        should_save = true;
-                    }
-                    self.editing_target = None;
-                    self.bookmark_name_input.clear();
-                }
-                BookmarksViewEvent::StartRenaming { line_index } => {
-                    self.editing_target = Some(EditingTarget::Bookmark(line_index));
-                    if let Some(bookmark) = self.bookmarks.get(&line_index) {
-                        self.bookmark_name_input = bookmark.name.clone();
-                    }
-                }
-                BookmarksViewEvent::CancelRenaming => {
-                    self.editing_target = None;
-                    self.bookmark_name_input.clear();
+                Err(_) => {
+                    // Cancelled
+                    self.change_filtername_window = None;
                 }
             }
-        }
-
-        if should_save {
-            self.save_crab_file();
         }
     }
 }

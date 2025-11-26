@@ -9,6 +9,7 @@ use egui_dock::{DockArea, DockState, Node};
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{InputAction, KeyboardBindings, PaneDirection, ShortcutAction};
+use crate::ui::tabs::BookmarksView;
 use crate::ui::LogView;
 
 /// Main application state
@@ -237,7 +238,7 @@ impl LogCrabApp {
 
             if ui.button("Add Bookmarks Tab").clicked() {
                 self.dock_state.push_to_focused_leaf(TabContent {
-                    tab_type: TabType::Bookmarks,
+                    tab_type: TabType::Bookmarks(BookmarksView::default()),
                     title: "Bookmarks".to_string(),
                 });
                 ui.close();
@@ -371,7 +372,7 @@ impl LogCrabApp {
             self.request_new_bookmarks_tab = false;
 
             self.dock_state.push_to_focused_leaf(TabContent {
-                tab_type: TabType::Bookmarks,
+                tab_type: TabType::Bookmarks(BookmarksView::default()),
                 title: "Bookmarks".to_string(),
             });
         }
@@ -436,7 +437,7 @@ impl LogCrabApp {
                     Some(TabType::Filter(idx)) => {
                         self.log_view.move_selection_in_filter(idx, delta);
                     }
-                    Some(TabType::Bookmarks) => {
+                    Some(TabType::Bookmarks(_)) => {
                         self.log_view.move_selection_in_bookmarks(delta);
                     }
                     None => {}
@@ -509,7 +510,7 @@ impl LogCrabApp {
                     Some(TabType::Filter(idx)) => {
                         self.log_view.jump_to_top_in_filter(idx);
                     }
-                    Some(TabType::Bookmarks) => {
+                    Some(TabType::Bookmarks(_)) => {
                         self.log_view.jump_to_top_in_bookmarks();
                     }
                     None => {}
@@ -518,7 +519,7 @@ impl LogCrabApp {
                     Some(TabType::Filter(idx)) => {
                         self.log_view.jump_to_bottom_in_filter(idx);
                     }
-                    Some(TabType::Bookmarks) => {
+                    Some(TabType::Bookmarks(_)) => {
                         self.log_view.jump_to_bottom_in_bookmarks();
                     }
                     None => {}
@@ -527,7 +528,7 @@ impl LogCrabApp {
                     Some(TabType::Filter(idx)) => {
                         self.log_view.page_up_in_filter(idx);
                     }
-                    Some(TabType::Bookmarks) => {
+                    Some(TabType::Bookmarks(_)) => {
                         self.log_view.page_up_in_bookmarks();
                     }
                     None => {}
@@ -536,7 +537,7 @@ impl LogCrabApp {
                     Some(TabType::Filter(idx)) => {
                         self.log_view.page_down_in_filter(idx);
                     }
-                    Some(TabType::Bookmarks) => {
+                    Some(TabType::Bookmarks(_)) => {
                         self.log_view.page_down_in_bookmarks();
                     }
                     None => {}

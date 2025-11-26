@@ -20,7 +20,7 @@ pub mod bookmark_panel;
 
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
-use crate::parser::line::LogLine;
+use crate::{parser::line::LogLine, ui::LogView};
 use chrono::DateTime;
 use egui::Ui;
 
@@ -45,7 +45,11 @@ pub enum BookmarksViewEvent {
 }
 
 /// Orchestrates the bookmarks view UI using the BookmarkPanel component
-pub struct BookmarksView;
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BookmarksView {
+    edited_line_index: Option<usize>,
+    bookmark_name_input: String,
+}
 
 impl BookmarksView {
     /// Render the bookmarks view
@@ -95,5 +99,70 @@ impl BookmarksView {
                 BookmarkPanelEvent::CancelRenaming => BookmarksViewEvent::CancelRenaming,
             })
             .collect()
+    }
+
+    pub fn render_bookmarks(&mut self, ui: &mut Ui, data_state: &mut LogView) {
+        // Convert bookmarks to BookmarkData format
+        let mut bookmarks: Vec<BookmarkData> = data_state
+            .bookmarks
+            .values()
+            .map(|b| BookmarkData {
+                line_index: b.line_index,
+                name: b.name.clone(),
+                timestamp: b.timestamp,
+            })
+            .collect();
+        bookmarks.sort_by_key(|b| b.line_index);
+
+        // Render using BookmarksView
+        let events = BookmarksView::render(
+            ui,
+            &data_state.lines,
+            bookmarks,
+            data_state.selected_line_index,
+            self.edited_line_index,
+            &mut self.bookmark_name_input,
+        );
+
+        // Handle events
+        let mut should_save = false;
+        for event in events {
+            match event {
+                BookmarksViewEvent::BookmarkClicked {
+                    line_index,
+                    timestamp,
+                } => {
+                    data_state.selected_line_index = Some(line_index);
+                    data_state.selected_timestamp = timestamp;
+                }
+                BookmarksViewEvent::BookmarkDeleted { line_index } => {
+                    data_state.bookmarks.remove(&line_index);
+                    should_save = true;
+                }
+                BookmarksViewEvent::BookmarkRenamed {
+                    line_index,
+                    new_name,
+                } => {
+                    if let Some(b) = data_state.bookmarks.get_mut(&line_index) {
+                        b.name = new_name;
+                        should_save = true;
+                    }
+                    self.edited_line_index = None;
+                }
+                BookmarksViewEvent::StartRenaming { line_index } => {
+                    if let Some(bookmark) = data_state.bookmarks.get(&line_index) {
+                        self.edited_line_index = Some(line_index);
+                        self.bookmark_name_input = bookmark.name.clone();
+                    }
+                }
+                BookmarksViewEvent::CancelRenaming => {
+                    self.edited_line_index = None;
+                }
+            }
+        }
+
+        if should_save {
+            data_state.save_crab_file();
+        }
     }
 }
