@@ -9,7 +9,7 @@ use egui_dock::{DockArea, DockState, Node};
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{InputAction, KeyboardBindings, ShortcutAction};
-use crate::ui::tabs::{BookmarksView, FilterView, LogCrabTab};
+use crate::ui::tabs::{BookmarksView, FilterView, LogCrabTab, PendingTabAdd};
 use crate::ui::LogView;
 
 /// Main application state
@@ -56,6 +56,9 @@ pub struct LogCrabApp {
     /// Filter index to remove (set by on_close callback)
     filter_to_remove: Option<usize>,
 
+    /// Pending tab add request (set by add button callback)
+    pending_tab_add: Option<PendingTabAdd>,
+
     filter_counter: usize,
 
     /// Whether to show the CPU profiler window
@@ -100,6 +103,7 @@ impl LogCrabApp {
             global_config,
             pending_rebind: None,
             filter_to_remove: None,
+            pending_tab_add: None,
             filter_counter: n_initial_tabs,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
@@ -304,12 +308,16 @@ impl LogCrabApp {
             });
         } else {
             // Use dock area for VS Code-like draggable/tiling layout
-            DockArea::new(&mut self.dock_state).show_inside(
+            DockArea::new(&mut self.dock_state)
+            .show_add_buttons(true)
+            .show_add_popup(true)
+            .show_inside(
                 ui,
                 &mut LogCrabTabViewer {
                     log_view: &mut self.log_view,
                     global_config: &mut self.global_config,
                     filter_to_remove: &mut self.filter_to_remove,
+                    pending_tab_add: &mut self.pending_tab_add,
                 },
             );
         }
@@ -504,6 +512,21 @@ impl eframe::App for LogCrabApp {
             // Update all filter tab indices that are greater than the removed index
             for (_, tab) in self.dock_state.iter_all_tabs_mut() {
                 tab.filter_got_removed(filter_index);
+            }
+        }
+
+        // Handle tab addition from add button popup (must be done after DockArea)
+        if let Some(tab_type) = self.pending_tab_add.take() {
+            match tab_type {
+                PendingTabAdd::Filter => {
+                    self.log_view.add_filter();
+                    let filter = self.create_filter_view();
+                    self.dock_state.push_to_focused_leaf(filter);
+                }
+                PendingTabAdd::Bookmarks => {
+                    self.dock_state
+                        .push_to_focused_leaf(Box::new(BookmarksView::default()));
+                }
             }
         }
 

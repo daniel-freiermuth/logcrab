@@ -50,11 +50,19 @@ pub trait LogCrabTab {
     }
 }
 
+/// Pending tab addition request from the add button
+#[derive(Debug, Clone)]
+pub enum PendingTabAdd {
+    Filter,
+    Bookmarks,
+}
+
 /// TabViewer implementation for dock system
 pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogView,
     pub global_config: &'a mut GlobalConfig,
     pub filter_to_remove: &'a mut Option<usize>,
+    pub pending_tab_add: &'a mut Option<PendingTabAdd>,
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -70,5 +78,24 @@ impl TabViewer for LogCrabTabViewer<'_> {
 
     fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
         tab.on_close(self.filter_to_remove)
+    }
+
+    fn add_popup(
+        &mut self,
+        ui: &mut egui::Ui,
+        _surface: egui_dock::SurfaceIndex,
+        _node: egui_dock::NodeIndex,
+    ) {
+        ui.set_min_width(150.0);
+        
+        if ui.button("➕ Filter Tab").clicked() {
+            *self.pending_tab_add = Some(PendingTabAdd::Filter);
+            ui.close();
+        }
+        
+        if ui.button("⭐ Bookmarks Tab").clicked() {
+            *self.pending_tab_add = Some(PendingTabAdd::Bookmarks);
+            ui.close();
+        }
     }
 }
