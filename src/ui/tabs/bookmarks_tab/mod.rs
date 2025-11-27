@@ -268,6 +268,5 @@ impl LogCrabTab for BookmarksView {
                 InputAction::CycleTab => {}
             }
         }
-        todo!()
     }
 }
