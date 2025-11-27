@@ -214,7 +214,6 @@ pub struct FilterState {
     pub highlight_color: Color32,
     pub is_favorite: bool,
     pub name: Option<String>,
-    pub should_focus_search: bool,
 
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
@@ -244,7 +243,6 @@ impl FilterState {
             highlight_color,
             is_favorite: false,
             name: None,
-            should_focus_search: false,
             filter_result_rx,
             filter_result_tx: result_tx,
             filter_generation: 0,

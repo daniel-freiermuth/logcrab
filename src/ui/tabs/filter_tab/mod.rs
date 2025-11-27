@@ -56,17 +56,27 @@ pub enum FilterViewEvent {
 pub struct FilterView {
     name: String,
     index: usize,
+    should_focus_search: bool,
 }
 
 impl FilterView {
     pub fn new(name: String, index: usize) -> Self {
-        Self { name, index }
+        Self {
+            name,
+            index,
+            should_focus_search: false,
+        }
+    }
+
+    pub fn focus_search_next_frame(&mut self) {
+        self.should_focus_search = true;
     }
     /// Render a complete filter view
     ///
     /// Returns events that occurred during rendering
     #[allow(clippy::too_many_arguments)]
     pub fn render(
+        &mut self,
         ui: &mut Ui,
         lines: &Arc<Vec<LogLine>>,
         filter: &mut FilterState,
@@ -90,7 +100,14 @@ impl FilterView {
             .collect();
 
         // Render filter bar
-        let filter_bar_events = FilterBar::render(ui, filter, filter_index, &favorites);
+        let filter_bar_events = FilterBar::render(
+            ui,
+            filter,
+            filter_index,
+            &favorites,
+            self.should_focus_search,
+        );
+        self.should_focus_search = false;
 
         // Handle filter bar events
         for event in filter_bar_events {
@@ -247,6 +264,7 @@ impl FilterView {
         data_state.filters[filter_index].is_favorite = is_favorite;
 
         // Temporarily take out the filter we're rendering
+        // TODO
         let mut current_filter = std::mem::replace(
             &mut data_state.filters[filter_index],
             FilterState::new(Color32::YELLOW),
@@ -266,7 +284,7 @@ impl FilterView {
             .collect();
 
         // Render using FilterView
-        let events = FilterView::render(
+        let events = self.render(
             ui,
             &data_state.lines,
             &mut current_filter,
@@ -478,7 +496,9 @@ impl LogCrabTab for FilterView {
                 InputAction::PageDown => {
                     self.page_down_in_filter(data_state);
                 }
-                InputAction::FocusSearch(_idx) => {}
+                InputAction::FocusSearch(_idx) => {
+                    self.focus_search_next_frame();
+                }
                 InputAction::NewFilterTab => {}
                 InputAction::NewBookmarksTab => {}
                 InputAction::CloseTab => {}

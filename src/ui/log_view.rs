@@ -129,17 +129,6 @@ impl LogView {
         self.change_filtername_window = Some(ChangeFilternameWindow::new(starting_name));
     }
 
-    /// Focus the search input for a specific filter (called by Ctrl+L)
-    pub fn focus_search_input(&mut self, filter_index: usize) {
-        if filter_index < self.filters.len() {
-            self.filters[filter_index].should_focus_search = true;
-        }
-    }
-
-    pub fn filter_count(&self) -> usize {
-        self.filters.len()
-    }
-
     pub fn get_filter_name(&self, index: usize) -> Option<String> {
         self.filters.get(index).and_then(|f| f.name.clone())
     }

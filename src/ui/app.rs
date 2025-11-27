@@ -41,9 +41,6 @@ pub struct LogCrabApp {
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
 
-    /// Request to add a tab after a specific node
-    add_tab_after: Option<egui_dock::NodeIndex>,
-
     /// Whether to show the keyboard shortcuts window
     show_shortcuts_window: bool,
 
@@ -55,15 +52,6 @@ pub struct LogCrabApp {
 
     /// Pending key rebind action
     pending_rebind: Option<ShortcutAction>,
-
-    /// Request to focus search input in a specific filter tab
-    focus_search_next_frame: Option<usize>,
-
-    /// Request to create a new filter tab
-    request_new_filter_tab: bool,
-
-    /// Request to create a new bookmarks tab
-    request_new_bookmarks_tab: bool,
 
     /// Filter index to remove (set by on_close callback)
     filter_to_remove: Option<usize>,
@@ -110,14 +98,10 @@ impl LogCrabApp {
             initial_file: file,
             dock_state,
             show_anomaly_explanation: false,
-            add_tab_after: None,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
-            focus_search_next_frame: None,
-            request_new_filter_tab: false,
-            request_new_bookmarks_tab: false,
             filter_to_remove: None,
             navigate_pane_direction: None,
             filter_counter: n_initial_tabs,
@@ -332,45 +316,11 @@ impl LogCrabApp {
                     filter_to_remove: &mut self.filter_to_remove,
                 },
             );
-            if let Some(index) = self.focus_search_next_frame {
-                self.log_view.focus_search_input(index);
-                self.focus_search_next_frame = None;
-            }
         }
     }
 
     /// Handle post-frame tab operations
     fn handle_tab_operations(&mut self) {
-        // Handle add tab request
-        if let Some(node) = self.add_tab_after.take() {
-            self.log_view.add_filter();
-            self.dock_state
-                .set_focused_node_and_surface((egui_dock::SurfaceIndex::main(), node));
-            let filter = self.create_filter_view();
-            self.dock_state.push_to_focused_leaf(filter);
-        }
-
-        // Handle new filter tab request (Ctrl+T)
-        if self.request_new_filter_tab {
-            self.request_new_filter_tab = false;
-            let filter_index = self.log_view.filter_count();
-            self.log_view.add_filter();
-
-            let filter = self.create_filter_view();
-            self.dock_state.push_to_focused_leaf(filter);
-
-            // Focus the search input in the new tab
-            self.focus_search_next_frame = Some(filter_index);
-        }
-
-        // Handle new bookmarks tab request
-        if self.request_new_bookmarks_tab {
-            self.request_new_bookmarks_tab = false;
-
-            self.dock_state
-                .push_to_focused_leaf(Box::new(BookmarksView::default()));
-        }
-
         // Handle filter removal (must be done after DockArea to avoid borrowing issues)
         if let Some(filter_index) = self.filter_to_remove.take() {
             self.log_view.remove_filter(filter_index);
@@ -423,14 +373,17 @@ impl LogCrabApp {
             match action {
                 InputAction::MoveSelection(_delta) => {}
                 InputAction::ToggleBookmark => {}
-                InputAction::FocusSearch(idx) => {
-                    self.focus_search_next_frame = Some(idx);
-                }
+                InputAction::FocusSearch(_idx) => {}
                 InputAction::NewFilterTab => {
-                    self.request_new_filter_tab = true;
+                    self.log_view.add_filter();
+
+                    let mut filter = self.create_filter_view();
+                    filter.focus_search_next_frame();
+                    self.dock_state.push_to_focused_leaf(filter);
                 }
                 InputAction::NewBookmarksTab => {
-                    self.request_new_bookmarks_tab = true;
+                    self.dock_state
+                        .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 }
                 InputAction::CloseTab => {
                     // Close the currently focused/active tab (the one the user is viewing)

@@ -50,6 +50,7 @@ impl FilterBar {
         filter: &mut FilterState,
         filter_index: usize,
         favorites: &[FavoriteFilter],
+        should_focus_search: bool,
     ) -> Vec<FilterInternalEvent> {
         let mut events = Vec::new();
 
@@ -100,9 +101,8 @@ impl FilterBar {
             );
 
             // Focus search input if requested by Ctrl+L
-            if filter.should_focus_search {
+            if should_focus_search {
                 search_response.request_focus();
-                filter.should_focus_search = false;
             }
 
             // If Enter is pressed in the search input, surrender focus
