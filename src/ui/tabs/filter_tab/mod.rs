@@ -20,12 +20,15 @@ pub mod filter_bar;
 pub mod histogram;
 pub mod log_table;
 
+use egui_dock::tab_viewer::OnCloseResponse;
 pub use filter_bar::{FavoriteFilter, FilterBar, FilterInternalEvent};
 pub use histogram::Histogram;
 pub use log_table::{LogTable, LogTableEvent};
 
+use crate::input::InputAction;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
+use crate::ui::tabs::LogCrabTab;
 use chrono::DateTime;
 use egui::Ui;
 use std::collections::HashMap;
@@ -47,9 +50,15 @@ pub enum FilterViewEvent {
 }
 
 /// Orchestrates the filter view UI using reusable components
-pub struct FilterView;
+pub struct FilterView {
+    name: String,
+    index: usize,
+}
 
 impl FilterView {
+    pub fn new(name: String, index: usize) -> Self {
+        Self { name, index }
+    }
     /// Render a complete filter view
     ///
     /// Returns events that occurred during rendering
@@ -200,5 +209,71 @@ impl FilterView {
         }
 
         events
+    }
+}
+
+impl LogCrabTab for FilterView {
+    fn title(&mut self) -> egui::WidgetText {
+        return self.name.clone().into();
+    }
+
+    fn render(&mut self, ui: &mut egui::Ui, data_state: &mut crate::ui::LogView, global_config: &mut crate::config::GlobalConfig) {
+        if let Some(custom_name) = data_state.get_filter_name(self.index) {
+            self.name = custom_name.clone();
+        }
+
+        data_state.render_filter(ui, self.index, global_config);
+    }
+
+    fn process_events(&mut self, actions: Vec<crate::input::InputAction>, data_state: &mut crate::ui::LogView) {
+        for action in actions {
+            match action {
+                InputAction::MoveSelection(delta) => {
+                    data_state.move_selection_in_filter(self.index, delta);
+                },
+                InputAction::ToggleBookmark => {
+                    data_state.toggle_bookmark_for_selected();
+                }
+                InputAction::JumpToTop => {
+                    data_state.jump_to_top_in_filter(self.index);
+                },
+                InputAction::JumpToBottom => {
+                    data_state.jump_to_bottom_in_filter(self.index);
+                },
+                InputAction::PageUp => {
+                    data_state.page_up_in_filter(self.index);
+                },
+                InputAction::PageDown => {
+                    data_state.page_down_in_filter(self.index);
+                },
+                InputAction::FocusSearch(idx) => {
+                }
+                InputAction::NewFilterTab => {
+                }
+                InputAction::NewBookmarksTab => {
+                }
+                InputAction::CloseTab => {
+                }
+                InputAction::CycleTab => {
+                }
+                InputAction::ReverseCycleTab => {
+                }
+                InputAction::OpenFile => {
+                }
+                InputAction::NavigatePane(direction) => {
+                }
+                InputAction::RenameFilter(idx) => {
+                }
+            }
+        }
+        todo!()
+    }
+
+
+    fn on_close(&mut self, filter_to_remove: &mut Option<usize>) -> OnCloseResponse {
+        // When closing a filter tab, mark it for removal
+        // We can't remove it here because we need to update all other tabs' indices
+        *filter_to_remove = Some(self.index);
+        OnCloseResponse::Close
     }
 }

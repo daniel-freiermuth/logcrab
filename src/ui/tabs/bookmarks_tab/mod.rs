@@ -20,7 +20,7 @@ pub mod bookmark_panel;
 
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
-use crate::{parser::line::LogLine, ui::LogView};
+use crate::{input::InputAction, parser::line::LogLine, ui::{LogView, tabs::LogCrabTab}};
 use chrono::DateTime;
 use egui::Ui;
 
@@ -164,5 +164,52 @@ impl BookmarksView {
         if should_save {
             data_state.save_crab_file();
         }
+    }
+}
+
+impl LogCrabTab for BookmarksView {
+    fn title(&mut self) -> egui::WidgetText {
+        "Bookmarks".into() 
+    }
+
+    fn render(&mut self, ui: &mut egui::Ui, data_state: &mut LogView, global_config: &mut crate::config::GlobalConfig) {
+        self.render_bookmarks(ui, data_state);
+    }
+
+    fn process_events(&mut self, actions: Vec<crate::input::InputAction>, data_state: &mut LogView) {
+        for action in actions {
+            match action {
+                InputAction::MoveSelection(delta) => data_state.move_selection_in_bookmarks(delta),
+                InputAction::ToggleBookmark => data_state.toggle_bookmark_for_selected(), // TODO: should be noop
+                InputAction::JumpToTop => {
+                    data_state.jump_to_top_in_bookmarks();
+                },
+                InputAction::JumpToBottom => {
+                    data_state.jump_to_bottom_in_bookmarks();
+                },
+                InputAction::PageUp => {
+                    data_state.page_up_in_bookmarks();
+                },
+                InputAction::PageDown => {
+                    data_state.page_down_in_bookmarks();
+                },
+                InputAction::FocusSearch(idx) => { }
+                InputAction::NewFilterTab => {
+                }
+                InputAction::NewBookmarksTab => {
+                }
+                InputAction::ReverseCycleTab => {
+                }
+                InputAction::OpenFile => {
+                }
+                InputAction::NavigatePane(direction) => {
+                }
+                InputAction::RenameFilter(idx) => {
+                }
+                InputAction::CloseTab => todo!(),
+                InputAction::CycleTab => {},
+            }
+        }
+        todo!()
     }
 }
