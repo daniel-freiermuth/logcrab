@@ -80,6 +80,10 @@ impl TabViewer for LogCrabTabViewer<'_> {
         tab.on_close(self.filter_to_remove)
     }
 
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false]
+    }
+
     fn add_popup(
         &mut self,
         ui: &mut egui::Ui,
