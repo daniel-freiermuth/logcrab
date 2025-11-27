@@ -32,7 +32,6 @@ use crate::state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
 use crate::ui::LogView;
-use chrono::DateTime;
 use egui::{Color32, Ui};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,13 +39,8 @@ use std::sync::Arc;
 /// Events that can be emitted by the filter view
 #[derive(Debug, Clone)]
 pub enum FilterViewEvent {
-    LineSelected {
-        line_index: usize,
-        timestamp: Option<DateTime<chrono::Local>>,
-    },
-    BookmarkToggled {
-        line_index: usize,
-    },
+    LineSelected { line_index: usize },
+    BookmarkToggled { line_index: usize },
     FilterNameEditRequested,
     FavoriteToggled,
     FilterModified, // Filter search text or case sensitivity changed
@@ -83,7 +77,6 @@ impl FilterView {
         filter_index: usize,
         all_filters: &[FilterState],
         selected_line_index: Option<usize>,
-        selected_timestamp: Option<DateTime<chrono::Local>>,
         bookmarked_lines: &HashMap<usize, String>,
         min_score_filter: f64,
     ) -> Vec<FilterViewEvent> {
@@ -150,12 +143,7 @@ impl FilterView {
         // - filter_dirty is true (needs filtering)
         // - AND we're NOT currently waiting for a background result
         let mut scroll_to_row = if filter.filter_dirty && !filter.is_filtering {
-            filter.rebuild_filtered_indices(
-                lines,
-                min_score_filter,
-                selected_line_index,
-                selected_timestamp,
-            )
+            filter.rebuild_filtered_indices(lines, min_score_filter, selected_line_index)
         } else {
             None
         };
@@ -174,12 +162,8 @@ impl FilterView {
                     scroll_to_row = Some(position);
                 } else {
                     // Line not in filtered results - try to find closest by timestamp
-                    if let Some(selected_ts) = selected_timestamp {
-                        if let Some(closest_pos) =
-                            filter.find_closest_timestamp_index(lines, selected_ts)
-                        {
-                            scroll_to_row = Some(closest_pos);
-                        }
+                    if let Some(closest_pos) = filter.find_closest_timestamp_index(selected_idx) {
+                        scroll_to_row = Some(closest_pos);
                     }
                 }
                 // Mark as processed so we don't keep checking on every render
@@ -193,7 +177,6 @@ impl FilterView {
         {
             events.push(FilterViewEvent::LineSelected {
                 line_index: hist_event.line_index,
-                timestamp: hist_event.timestamp,
             });
         }
 
@@ -213,14 +196,8 @@ impl FilterView {
         // Handle table events
         for event in table_events {
             match event {
-                LogTableEvent::LineClicked {
-                    line_index,
-                    timestamp,
-                } => {
-                    events.push(FilterViewEvent::LineSelected {
-                        line_index,
-                        timestamp,
-                    });
+                LogTableEvent::LineClicked { line_index } => {
+                    events.push(FilterViewEvent::LineSelected { line_index });
                 }
                 LogTableEvent::BookmarkToggled { line_index } => {
                     events.push(FilterViewEvent::BookmarkToggled { line_index });
@@ -291,7 +268,6 @@ impl FilterView {
             filter_index,
             &temp_filters,
             data_state.selected_line_index,
-            data_state.selected_timestamp,
             &bookmarked_lines,
             data_state.min_score_filter,
         );
@@ -302,12 +278,8 @@ impl FilterView {
         // Handle events
         for event in events {
             match event {
-                FilterViewEvent::LineSelected {
-                    line_index,
-                    timestamp,
-                } => {
+                FilterViewEvent::LineSelected { line_index } => {
                     data_state.selected_line_index = Some(line_index);
-                    data_state.selected_timestamp = timestamp;
                 }
                 FilterViewEvent::BookmarkToggled { line_index } => {
                     data_state.toggle_bookmark(line_index);
@@ -415,7 +387,6 @@ impl FilterView {
 
         let new_line_index = filter.filtered_indices[new_pos];
         data_state.selected_line_index = Some(new_line_index);
-        data_state.selected_timestamp = data_state.lines[new_line_index].timestamp;
     }
 
     /// Jump to the first line in a filtered view (Vim-style gg)
@@ -427,7 +398,6 @@ impl FilterView {
 
         let first_line_index = filter.filtered_indices[0];
         data_state.selected_line_index = Some(first_line_index);
-        data_state.selected_timestamp = data_state.lines[first_line_index].timestamp;
     }
 
     /// Jump to the last line in a filtered view (Vim-style G)
@@ -440,7 +410,6 @@ impl FilterView {
         let last_pos = filter.filtered_indices.len() - 1;
         let last_line_index = filter.filtered_indices[last_pos];
         data_state.selected_line_index = Some(last_line_index);
-        data_state.selected_timestamp = data_state.lines[last_line_index].timestamp;
     }
 
     /// Move selection up by one page in a filtered view

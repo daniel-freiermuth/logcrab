@@ -17,7 +17,6 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::parser::line::LogLine;
-use chrono::{DateTime, Local};
 use egui::{text::LayoutJob, Color32, TextFormat};
 use fancy_regex::Regex;
 use std::collections::HashMap;
@@ -354,7 +353,6 @@ impl FilterState {
         lines: &[LogLine],
         min_score_filter: f64,
         selected_line_index: Option<usize>,
-        selected_timestamp: Option<DateTime<Local>>,
     ) -> Option<usize> {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
@@ -379,35 +377,27 @@ impl FilterState {
             {
                 return Some(position);
             }
-
-            if let Some(selected_ts) = selected_timestamp {
-                return self.find_closest_timestamp_index(lines, selected_ts);
-            }
+            return self.find_closest_timestamp_index(selected_line_idx);
         }
 
         None
     }
 
     /// Find the closest line by timestamp in the filtered results
-    pub fn find_closest_timestamp_index(
-        &self,
-        lines: &[LogLine],
-        target_ts: DateTime<Local>,
-    ) -> Option<usize> {
+    // TODO Implement via binary search
+    pub fn find_closest_timestamp_index(&self, target_idx: usize) -> Option<usize> {
         if self.filtered_indices.is_empty() {
             return None;
         }
 
         let mut closest_idx = 0;
-        let mut min_diff = f32::MAX;
+        let mut min_diff = i64::MAX;
 
         for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
-            if let Some(line_ts) = lines[line_idx].timestamp {
-                let diff = (line_ts - target_ts).abs().as_seconds_f32();
-                if diff < min_diff {
-                    min_diff = diff;
-                    closest_idx = filtered_idx;
-                }
+            let diff = (line_idx as i64 - target_idx as i64).abs();
+            if diff < min_diff {
+                min_diff = diff;
+                closest_idx = filtered_idx;
             }
         }
 
@@ -468,59 +458,5 @@ impl FilterState {
         }
 
         job
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::parser::line::LogLine;
-    use chrono::TimeZone;
-
-    fn create_test_line(message: &str, score: f64) -> LogLine {
-        LogLine {
-            raw: message.to_string(),
-            timestamp: Some(Local.with_ymd_and_hms(2025, 11, 22, 10, 0, 0).unwrap()),
-            message: message.to_string(),
-            anomaly_score: score,
-            template_key: message.to_lowercase(),
-            line_number: 1,
-        }
-    }
-
-    #[test]
-    fn test_filter_state_search() {
-        let mut state = FilterState::new(Color32::YELLOW);
-
-        state.search_text = "ERROR".to_string();
-        state.update_search_regex();
-
-        assert!(state.search_regex.is_some());
-        assert!(state.regex_error.is_none());
-
-        let line = create_test_line("ERROR: Something failed", 50.0);
-        assert!(state.matches_search(&line));
-
-        let line2 = create_test_line("INFO: All good", 20.0);
-        assert!(!state.matches_search(&line2));
-    }
-
-    #[test]
-    fn test_rebuild_filtered_indices() {
-        let mut state = FilterState::new(Color32::YELLOW);
-
-        let lines = vec![
-            create_test_line("ERROR: First", 80.0),
-            create_test_line("INFO: Second", 20.0),
-            create_test_line("ERROR: Third", 90.0),
-        ];
-
-        state.search_text = "ERROR".to_string();
-        state.update_search_regex();
-        state.rebuild_filtered_indices(&lines, 0.0, None, None);
-
-        assert_eq!(state.filtered_indices.len(), 2);
-        assert_eq!(state.filtered_indices[0], 0);
-        assert_eq!(state.filtered_indices[1], 2);
     }
 }

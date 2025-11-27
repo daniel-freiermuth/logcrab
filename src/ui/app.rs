@@ -8,7 +8,7 @@ use egui_dock::{DockArea, DockState, Node};
 
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
-use crate::input::{InputAction, KeyboardBindings, PaneDirection, ShortcutAction};
+use crate::input::{InputAction, KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, FilterView, LogCrabTab};
 use crate::ui::LogView;
 
@@ -56,9 +56,6 @@ pub struct LogCrabApp {
     /// Filter index to remove (set by on_close callback)
     filter_to_remove: Option<usize>,
 
-    /// Request to navigate to a neighboring pane
-    navigate_pane_direction: Option<PaneDirection>,
-
     filter_counter: usize,
 
     /// Whether to show the CPU profiler window
@@ -103,7 +100,6 @@ impl LogCrabApp {
             global_config,
             pending_rebind: None,
             filter_to_remove: None,
-            navigate_pane_direction: None,
             filter_counter: n_initial_tabs,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
@@ -319,19 +315,6 @@ impl LogCrabApp {
         }
     }
 
-    /// Handle post-frame tab operations
-    fn handle_tab_operations(&mut self) {
-        // Handle filter removal (must be done after DockArea to avoid borrowing issues)
-        if let Some(filter_index) = self.filter_to_remove.take() {
-            self.log_view.remove_filter(filter_index);
-
-            // Update all filter tab indices that are greater than the removed index
-            for (_, tab) in self.dock_state.iter_all_tabs_mut() {
-                tab.filter_got_removed(filter_index);
-            }
-        }
-    }
-
     /// Process keyboard shortcuts and execute actions
     fn process_keyboard_input(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         // Skip keyboard shortcuts if text input is focused AND no modifiers are pressed
@@ -450,7 +433,18 @@ impl LogCrabApp {
                     }
                 }
                 InputAction::NavigatePane(direction) => {
-                    self.navigate_pane_direction = Some(direction);
+                    let tree = self.dock_state.main_surface_mut();
+
+                    // Get the currently focused node
+                    if let Some(current_node) = tree.focused_leaf() {
+                        // Find the neighbor in the specified direction
+                        let neighbor = navigation::find_neighbor(tree, current_node, direction);
+
+                        // If we found a neighbor, focus it
+                        if let Some(neighbor_idx) = neighbor {
+                            tree.set_focused_node(neighbor_idx);
+                        }
+                    }
                 }
                 InputAction::RenameFilter(idx) => {
                     self.log_view.start_rename_filter(idx);
@@ -461,24 +455,6 @@ impl LogCrabApp {
         // Remove consumed events in reverse order
         for idx in events_to_remove.into_iter().rev() {
             raw_input.events.remove(idx);
-        }
-    }
-
-    /// Handle pane navigation (Shift+HJKL)
-    fn handle_pane_navigation(&mut self) {
-        if let Some(direction) = self.navigate_pane_direction.take() {
-            let tree = self.dock_state.main_surface_mut();
-
-            // Get the currently focused node
-            if let Some(current_node) = tree.focused_leaf() {
-                // Find the neighbor in the specified direction
-                let neighbor = navigation::find_neighbor(tree, current_node, direction);
-
-                // If we found a neighbor, focus it
-                if let Some(neighbor_idx) = neighbor {
-                    tree.set_focused_node(neighbor_idx);
-                }
-            }
         }
     }
 }
@@ -521,11 +497,15 @@ impl eframe::App for LogCrabApp {
             self.render_central_panel(ui, ctx);
         });
 
-        // Handle post-frame operations
-        self.handle_tab_operations();
+        // Handle filter removal (must be done after DockArea to avoid borrowing issues)
+        if let Some(filter_index) = self.filter_to_remove.take() {
+            self.log_view.remove_filter(filter_index);
 
-        // Handle pane navigation
-        self.handle_pane_navigation();
+            // Update all filter tab indices that are greater than the removed index
+            for (_, tab) in self.dock_state.iter_all_tabs_mut() {
+                tab.filter_got_removed(filter_index);
+            }
+        }
 
         // Show windows
         if self.show_anomaly_explanation {

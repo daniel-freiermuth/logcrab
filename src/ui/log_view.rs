@@ -58,7 +58,6 @@ pub struct LogView {
     pub filters: Vec<FilterState>,
     // Selected line tracking
     pub selected_line_index: Option<usize>,
-    pub selected_timestamp: Option<DateTime<Local>>,
     // Bookmarks with names
     pub bookmarks: HashMap<usize, Bookmark>,
     // .crab file path
@@ -79,7 +78,6 @@ impl LogView {
             min_score_filter: 0.0,
             filters,
             selected_line_index: None,
-            selected_timestamp: None,
             bookmarks: HashMap::new(),
             crab_file: None,
             change_filtername_window: None,

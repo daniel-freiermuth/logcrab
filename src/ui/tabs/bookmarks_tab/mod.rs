@@ -25,26 +25,15 @@ use crate::{
     parser::line::LogLine,
     ui::{tabs::LogCrabTab, LogView},
 };
-use chrono::DateTime;
 use egui::Ui;
 
 /// Events that can be emitted by the bookmarks view
 #[derive(Debug, Clone)]
 pub enum BookmarksViewEvent {
-    BookmarkClicked {
-        line_index: usize,
-        timestamp: Option<DateTime<chrono::Local>>,
-    },
-    BookmarkDeleted {
-        line_index: usize,
-    },
-    BookmarkRenamed {
-        line_index: usize,
-        new_name: String,
-    },
-    StartRenaming {
-        line_index: usize,
-    },
+    BookmarkClicked { line_index: usize },
+    BookmarkDeleted { line_index: usize },
+    BookmarkRenamed { line_index: usize, new_name: String },
+    StartRenaming { line_index: usize },
     CancelRenaming,
 }
 
@@ -80,13 +69,9 @@ impl BookmarksView {
         panel_events
             .into_iter()
             .map(|event| match event {
-                BookmarkPanelEvent::BookmarkClicked {
-                    line_index,
-                    timestamp,
-                } => BookmarksViewEvent::BookmarkClicked {
-                    line_index,
-                    timestamp,
-                },
+                BookmarkPanelEvent::BookmarkClicked { line_index } => {
+                    BookmarksViewEvent::BookmarkClicked { line_index }
+                }
                 BookmarkPanelEvent::BookmarkDeleted { line_index } => {
                     BookmarksViewEvent::BookmarkDeleted { line_index }
                 }
@@ -132,12 +117,8 @@ impl BookmarksView {
         let mut should_save = false;
         for event in events {
             match event {
-                BookmarksViewEvent::BookmarkClicked {
-                    line_index,
-                    timestamp,
-                } => {
+                BookmarksViewEvent::BookmarkClicked { line_index } => {
                     data_state.selected_line_index = Some(line_index);
-                    data_state.selected_timestamp = timestamp;
                 }
                 BookmarksViewEvent::BookmarkDeleted { line_index } => {
                     data_state.bookmarks.remove(&line_index);
@@ -207,10 +188,6 @@ impl BookmarksView {
 
         let new_line_index = bookmark_indices[new_pos];
         data_state.selected_line_index = Some(new_line_index);
-        data_state.selected_timestamp = data_state
-            .lines
-            .get(new_line_index)
-            .and_then(|l| l.timestamp);
     }
 
     /// Jump to the first bookmark (Vim-style gg)
@@ -221,7 +198,6 @@ impl BookmarksView {
 
         let first_index = *data_state.bookmarks.keys().min().unwrap();
         data_state.selected_line_index = Some(first_index);
-        data_state.selected_timestamp = data_state.lines.get(first_index).and_then(|l| l.timestamp);
     }
 
     /// Jump to the last bookmark (Vim-style G)
@@ -230,9 +206,9 @@ impl BookmarksView {
             return;
         }
 
+        // TODO
         let last_index = data_state.bookmarks.keys().max().unwrap();
         data_state.selected_line_index = Some(*last_index);
-        data_state.selected_timestamp = data_state.lines.get(*last_index).and_then(|l| l.timestamp);
     }
 
     /// Move selection up by one page in bookmarks view

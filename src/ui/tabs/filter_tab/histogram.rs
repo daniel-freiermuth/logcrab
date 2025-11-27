@@ -17,14 +17,12 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::parser::line::LogLine;
-use chrono::DateTime;
 use egui::{Color32, Ui};
 
 /// Event emitted when histogram is clicked
 #[derive(Debug, Clone)]
 pub struct HistogramClickEvent {
     pub line_index: usize,
-    pub timestamp: Option<DateTime<chrono::Local>>,
 }
 
 /// Reusable timeline histogram component
@@ -243,10 +241,7 @@ impl Histogram {
 
                     if let Some(idx) = closest_idx {
                         if idx < lines.len() {
-                            click_event = Some(HistogramClickEvent {
-                                line_index: idx,
-                                timestamp: lines[idx].timestamp,
-                            });
+                            click_event = Some(HistogramClickEvent { line_index: idx });
                         }
                     }
                 }

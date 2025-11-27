@@ -18,20 +18,14 @@
 
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
-use chrono::DateTime;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
 /// Events emitted by the log table
 #[derive(Debug, Clone)]
 pub enum LogTableEvent {
-    LineClicked {
-        line_index: usize,
-        timestamp: Option<DateTime<chrono::Local>>,
-    },
-    BookmarkToggled {
-        line_index: usize,
-    },
+    LineClicked { line_index: usize },
+    BookmarkToggled { line_index: usize },
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -200,7 +194,6 @@ impl LogTable {
                             } else if row_clicked {
                                 events.push(LogTableEvent::LineClicked {
                                     line_index: line_idx,
-                                    timestamp: line.timestamp,
                                 });
                             }
                         });

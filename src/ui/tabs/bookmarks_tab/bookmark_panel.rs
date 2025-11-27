@@ -32,20 +32,10 @@ pub struct BookmarkData {
 /// Events emitted by the bookmark panel
 #[derive(Debug, Clone)]
 pub enum BookmarkPanelEvent {
-    BookmarkClicked {
-        line_index: usize,
-        timestamp: Option<DateTime<chrono::Local>>,
-    },
-    BookmarkDeleted {
-        line_index: usize,
-    },
-    BookmarkRenamed {
-        line_index: usize,
-        new_name: String,
-    },
-    StartRenaming {
-        line_index: usize,
-    },
+    BookmarkClicked { line_index: usize },
+    BookmarkDeleted { line_index: usize },
+    BookmarkRenamed { line_index: usize, new_name: String },
+    StartRenaming { line_index: usize },
     CancelRenaming,
 }
 
@@ -314,7 +304,6 @@ impl BookmarkPanel {
                             if row_clicked {
                                 events.push(BookmarkPanelEvent::BookmarkClicked {
                                     line_index: line_idx,
-                                    timestamp: bookmark.timestamp,
                                 });
                             }
                         });
