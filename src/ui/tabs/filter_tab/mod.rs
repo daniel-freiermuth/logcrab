@@ -364,6 +364,79 @@ impl FilterView {
             }
         }
     }
+
+    /// Move selection within a filtered view (only through matched indices)
+    pub fn move_selection_in_filter(&mut self, delta: i32, data_state: &mut LogView) {
+        let filter = &data_state.filters[self.index];
+        if filter.filtered_indices.is_empty() {
+            return;
+        }
+
+        // Determine current position within filtered list
+        // TODO: start from current selected line even if not in filtered list
+        let current_pos = if let Some(sel) = data_state.selected_line_index {
+            filter
+                .filtered_indices
+                .iter()
+                .position(|&idx| idx == sel)
+                .unwrap_or({
+                    // Fallback: choose nearest by timestamp if available later improvements; for now start at beginning
+                    0
+                })
+        } else if delta >= 0 {
+            0
+        } else {
+            filter.filtered_indices.len() - 1
+        };
+
+        let new_pos = if delta < 0 {
+            current_pos.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            (current_pos + delta as usize).min(filter.filtered_indices.len() - 1)
+        };
+
+        let new_line_index = filter.filtered_indices[new_pos];
+        data_state.selected_line_index = Some(new_line_index);
+        data_state.selected_timestamp = data_state.lines[new_line_index].timestamp;
+    }
+
+    /// Jump to the first line in a filtered view (Vim-style gg)
+    pub fn jump_to_top_in_filter(&mut self, data_state: &mut LogView) {
+        let filter = &data_state.filters[self.index];
+        if filter.filtered_indices.is_empty() {
+            return;
+        }
+
+        let first_line_index = filter.filtered_indices[0];
+        data_state.selected_line_index = Some(first_line_index);
+        data_state.selected_timestamp = data_state.lines[first_line_index].timestamp;
+    }
+
+    /// Jump to the last line in a filtered view (Vim-style G)
+    pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut LogView) {
+        let filter = &data_state.filters[self.index];
+        if filter.filtered_indices.is_empty() {
+            return;
+        }
+
+        let last_pos = filter.filtered_indices.len() - 1;
+        let last_line_index = filter.filtered_indices[last_pos];
+        data_state.selected_line_index = Some(last_line_index);
+        data_state.selected_timestamp = data_state.lines[last_line_index].timestamp;
+    }
+
+    /// Move selection up by one page in a filtered view
+    pub fn page_up_in_filter(&mut self, data_state: &mut LogView) {
+        // A page is approximately 20-30 lines in typical terminal views
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_filter(-PAGE_SIZE, data_state);
+    }
+
+    /// Move selection down by one page in a filtered view
+    pub fn page_down_in_filter(&mut self, data_state: &mut LogView) {
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_filter(PAGE_SIZE, data_state);
+    }
 }
 
 impl LogCrabTab for FilterView {
@@ -388,22 +461,22 @@ impl LogCrabTab for FilterView {
         for action in actions {
             match action {
                 InputAction::MoveSelection(delta) => {
-                    data_state.move_selection_in_filter(self.index, *delta);
+                    self.move_selection_in_filter(*delta, data_state);
                 }
                 InputAction::ToggleBookmark => {
                     data_state.toggle_bookmark_for_selected();
                 }
                 InputAction::JumpToTop => {
-                    data_state.jump_to_top_in_filter(self.index);
+                    self.jump_to_top_in_filter(data_state);
                 }
                 InputAction::JumpToBottom => {
-                    data_state.jump_to_bottom_in_filter(self.index);
+                    self.jump_to_bottom_in_filter(data_state);
                 }
                 InputAction::PageUp => {
-                    data_state.page_up_in_filter(self.index);
+                    self.page_up_in_filter(data_state);
                 }
                 InputAction::PageDown => {
-                    data_state.page_down_in_filter(self.index);
+                    self.page_down_in_filter(data_state);
                 }
                 InputAction::FocusSearch(_idx) => {}
                 InputAction::NewFilterTab => {}

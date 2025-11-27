@@ -169,6 +169,83 @@ impl BookmarksView {
             data_state.save_crab_file();
         }
     }
+
+    /// Move selection in bookmarks view
+    pub fn move_selection_in_bookmarks(&mut self, delta: i32, data_state: &mut LogView) {
+        if data_state.bookmarks.is_empty() {
+            return;
+        }
+
+        // Get sorted list of bookmark indices
+        let mut bookmark_indices: Vec<usize> = data_state.bookmarks.keys().copied().collect();
+        // TODO: We shouldn't sort this every time
+        bookmark_indices.sort_unstable();
+
+        // Find current position in bookmark list
+        // TODO: here we should start from the current selected line, even if not a bookmark
+        // TODO: optimize with option-chaining
+        let current_pos = if let Some(sel) = data_state.selected_line_index {
+            bookmark_indices
+                .iter()
+                .position(|&idx| idx == sel)
+                .unwrap_or(if delta >= 0 {
+                    0
+                } else {
+                    bookmark_indices.len() - 1
+                })
+        } else if delta >= 0 {
+            0
+        } else {
+            bookmark_indices.len() - 1
+        };
+
+        let new_pos = if delta < 0 {
+            current_pos.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            (current_pos + delta as usize).min(bookmark_indices.len() - 1)
+        };
+
+        let new_line_index = bookmark_indices[new_pos];
+        data_state.selected_line_index = Some(new_line_index);
+        data_state.selected_timestamp = data_state
+            .lines
+            .get(new_line_index)
+            .and_then(|l| l.timestamp);
+    }
+
+    /// Jump to the first bookmark (Vim-style gg)
+    pub fn jump_to_top_in_bookmarks(&mut self, data_state: &mut LogView) {
+        if data_state.bookmarks.is_empty() {
+            return;
+        }
+
+        let first_index = *data_state.bookmarks.keys().min().unwrap();
+        data_state.selected_line_index = Some(first_index);
+        data_state.selected_timestamp = data_state.lines.get(first_index).and_then(|l| l.timestamp);
+    }
+
+    /// Jump to the last bookmark (Vim-style G)
+    pub fn jump_to_bottom_in_bookmarks(&mut self, data_state: &mut LogView) {
+        if data_state.bookmarks.is_empty() {
+            return;
+        }
+
+        let last_index = data_state.bookmarks.keys().max().unwrap();
+        data_state.selected_line_index = Some(*last_index);
+        data_state.selected_timestamp = data_state.lines.get(*last_index).and_then(|l| l.timestamp);
+    }
+
+    /// Move selection up by one page in bookmarks view
+    pub fn page_up_in_bookmarks(&mut self, data_state: &mut LogView) {
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_bookmarks(-PAGE_SIZE, data_state);
+    }
+
+    /// Move selection down by one page in bookmarks view
+    pub fn page_down_in_bookmarks(&mut self, data_state: &mut LogView) {
+        const PAGE_SIZE: i32 = 25;
+        self.move_selection_in_bookmarks(PAGE_SIZE, data_state);
+    }
 }
 
 impl LogCrabTab for BookmarksView {
@@ -188,19 +265,21 @@ impl LogCrabTab for BookmarksView {
     fn process_events(&mut self, actions: &[InputAction], data_state: &mut LogView) {
         for action in actions {
             match action {
-                InputAction::MoveSelection(delta) => data_state.move_selection_in_bookmarks(*delta),
+                InputAction::MoveSelection(delta) => {
+                    self.move_selection_in_bookmarks(*delta, data_state)
+                }
                 InputAction::ToggleBookmark => data_state.toggle_bookmark_for_selected(), // TODO: should be noop
                 InputAction::JumpToTop => {
-                    data_state.jump_to_top_in_bookmarks();
+                    self.jump_to_top_in_bookmarks(data_state);
                 }
                 InputAction::JumpToBottom => {
-                    data_state.jump_to_bottom_in_bookmarks();
+                    self.jump_to_bottom_in_bookmarks(data_state);
                 }
                 InputAction::PageUp => {
-                    data_state.page_up_in_bookmarks();
+                    self.page_up_in_bookmarks(data_state);
                 }
                 InputAction::PageDown => {
-                    data_state.page_down_in_bookmarks();
+                    self.page_down_in_bookmarks(data_state);
                 }
                 InputAction::FocusSearch(_idx) => {}
                 InputAction::NewFilterTab => {}
