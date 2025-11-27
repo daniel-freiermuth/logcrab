@@ -27,68 +27,48 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
+use crate::input::InputAction;
 use crate::ui::LogView;
 
-/// Type of tab content in the dock system
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TabType {
-    Filter(usize),
-    Bookmarks(BookmarksView),
-}
-
-/// Tab content for dock system
-#[derive(PartialEq)]
-pub struct TabContent {
-    pub tab_type: TabType,
-    pub title: String,
+pub trait LogCrabTab {
+    fn title(&mut self) -> egui::WidgetText;
+    fn render(
+        &mut self,
+        ui: &mut egui::Ui,
+        data_state: &mut LogView,
+        global_config: &mut GlobalConfig,
+    );
+    fn process_events(&mut self, actions: &Vec<InputAction>, data_state: &mut LogView);
+    fn on_close(&mut self, _filter_to_remove: &mut Option<usize>) -> OnCloseResponse {
+        OnCloseResponse::Close
+    }
+    fn filter_got_removed(&mut self, _filter_index: usize) {
+        // Default implementation does nothing
+    }
+    fn get_filter_index(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// TabViewer implementation for dock system
 pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogView,
-    pub focus_search_next_frame: &'a mut Option<usize>,
     pub global_config: &'a mut GlobalConfig,
     pub filter_to_remove: &'a mut Option<usize>,
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
-    type Tab = TabContent;
+    type Tab = Box<dyn LogCrabTab>;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        // For filter tabs, check if there's a custom name
-        if let TabType::Filter(index) = &tab.tab_type {
-            if let Some(custom_name) = self.log_view.get_filter_name(*index) {
-                return custom_name.into();
-            }
-        }
-        (&tab.title).into()
+        tab.title()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        // Render content
-        match &mut tab.tab_type {
-            TabType::Filter(index) => {
-                // If Ctrl+L was pressed for this filter, set flag before rendering
-                if *self.focus_search_next_frame == Some(*index) {
-                    self.log_view.focus_search_input(*index);
-                    *self.focus_search_next_frame = None;
-                }
-
-                self.log_view.render_filter(ui, *index, self.global_config);
-            }
-            TabType::Bookmarks(bookmarks_view) => {
-                bookmarks_view.render_bookmarks(ui, self.log_view);
-            }
-        }
+        tab.render(ui, self.log_view, self.global_config);
     }
 
     fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
-        // When closing a filter tab, mark it for removal
-        // We can't remove it here because we need to update all other tabs' indices
-        if let TabType::Filter(index) = &tab.tab_type {
-            *self.filter_to_remove = Some(*index);
-        }
-        // Return Close to allow the tab to be closed
-        OnCloseResponse::Close
+        tab.on_close(self.filter_to_remove)
     }
 }

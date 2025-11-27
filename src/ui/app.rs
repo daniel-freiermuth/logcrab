@@ -1,4 +1,4 @@
-use super::tabs::{navigation, LogCrabTabViewer, TabContent, TabType};
+use super::tabs::{navigation, LogCrabTabViewer};
 use super::windows;
 
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ use egui_dock::{DockArea, DockState, Node};
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{InputAction, KeyboardBindings, PaneDirection, ShortcutAction};
-use crate::ui::tabs::BookmarksView;
+use crate::ui::tabs::{BookmarksView, FilterView, LogCrabTab};
 use crate::ui::LogView;
 
 /// Main application state
@@ -36,7 +36,7 @@ pub struct LogCrabApp {
     initial_file: Option<PathBuf>,
 
     /// Dock state for VS Code-like tiling layout
-    dock_state: DockState<TabContent>,
+    dock_state: DockState<Box<dyn LogCrabTab>>,
 
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
@@ -71,24 +71,27 @@ pub struct LogCrabApp {
     /// Request to navigate to a neighboring pane
     navigate_pane_direction: Option<PaneDirection>,
 
+    filter_counter: usize,
+
     /// Whether to show the CPU profiler window
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
 }
 
 impl LogCrabApp {
+    fn create_filter_view(&mut self) -> Box<FilterView> {
+        let filter_name = format!("Filter {}", self.filter_counter + 1);
+        let index = self.filter_counter;
+        self.filter_counter += 1;
+        Box::new(FilterView::new(filter_name, index))
+    }
+
     pub fn new(_cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
         // Initialize dock state with two filter tabs by default
-        let dock_state = DockState::new(vec![
-            TabContent {
-                tab_type: TabType::Filter(0),
-                title: "Filter 1".to_string(),
-            },
-            TabContent {
-                tab_type: TabType::Filter(1),
-                title: "Filter 2".to_string(),
-            },
-        ]);
+        let initial_tabs: Vec<Box<dyn LogCrabTab>> =
+            vec![Box::new(FilterView::new("Filter 1".to_string(), 0))];
+        let n_initial_tabs = initial_tabs.len();
+        let dock_state: DockState<Box<dyn LogCrabTab>> = DockState::new(initial_tabs);
 
         // Load global configuration
         let global_config = GlobalConfig::load();
@@ -117,6 +120,7 @@ impl LogCrabApp {
             request_new_bookmarks_tab: false,
             filter_to_remove: None,
             navigate_pane_direction: None,
+            filter_counter: n_initial_tabs,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
@@ -149,55 +153,54 @@ impl LogCrabApp {
     /// Process background file loading messages
     fn process_file_loading(&mut self, ctx: &egui::Context) {
         let mut should_clear_receiver = false;
-        if let Some(ref rx) = self.load_receiver {
-            while let Ok(msg) = rx.try_recv() {
-                match msg {
-                    LoadMessage::Progress(progress, status) => {
-                        self.load_progress = progress;
-                        self.status_message = status;
-                    }
-                    LoadMessage::Complete(lines, path) => {
-                        self.log_view.set_lines(lines);
-                        let additional_filters = self.log_view.set_bookmarks_file(path.clone());
+        while let Some(msg) = self
+            .load_receiver
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        {
+            match msg {
+                LoadMessage::Progress(progress, status) => {
+                    self.load_progress = progress;
+                    self.status_message = status;
+                }
+                LoadMessage::Complete(lines, path) => {
+                    self.log_view.set_lines(lines);
+                    let additional_filters = self.log_view.set_bookmarks_file(path.clone());
 
-                        // Create tabs for any additional filters loaded from the crab file
-                        for i in 0..additional_filters {
-                            let filter_index = 2 + i; // First 2 filters already have tabs
-                            self.dock_state.push_to_focused_leaf(TabContent {
-                                tab_type: TabType::Filter(filter_index),
-                                title: format!("Filter {}", filter_index + 1),
-                            });
-                        }
+                    // Create tabs for any additional filters loaded from the crab file
+                    for _ in 0..additional_filters {
+                        let filter = self.create_filter_view();
+                        self.dock_state.push_to_focused_leaf(filter);
+                    }
 
-                        self.current_file = Some(path.clone());
-                        self.update_window_title(ctx);
-                        self.status_message = format!(
-                            "Loaded {} lines - calculating anomaly scores in background...",
-                            self.log_view.lines.len()
-                        );
-                        self.is_loading = false;
-                        self.load_progress = 0.0;
-                        // Keep receiver open for scoring progress
-                    }
-                    LoadMessage::ScoringProgress(progress, status) => {
-                        self.load_progress = progress;
-                        self.status_message = status;
-                    }
-                    LoadMessage::ScoringComplete(lines) => {
-                        self.log_view.set_lines(lines);
-                        self.status_message = format!(
-                            "Ready. {} lines loaded with anomaly scores",
-                            self.log_view.lines.len()
-                        );
-                        self.load_progress = 1.0;
-                        should_clear_receiver = true;
-                    }
-                    LoadMessage::Error(err) => {
-                        self.status_message = err;
-                        self.is_loading = false;
-                        self.load_progress = 0.0;
-                        should_clear_receiver = true;
-                    }
+                    self.current_file = Some(path.clone());
+                    self.update_window_title(ctx);
+                    self.status_message = format!(
+                        "Loaded {} lines - calculating anomaly scores in background...",
+                        self.log_view.lines.len()
+                    );
+                    self.is_loading = false;
+                    self.load_progress = 0.0;
+                    // Keep receiver open for scoring progress
+                }
+                LoadMessage::ScoringProgress(progress, status) => {
+                    self.load_progress = progress;
+                    self.status_message = status;
+                }
+                LoadMessage::ScoringComplete(lines) => {
+                    self.log_view.set_lines(lines);
+                    self.status_message = format!(
+                        "Ready. {} lines loaded with anomaly scores",
+                        self.log_view.lines.len()
+                    );
+                    self.load_progress = 1.0;
+                    should_clear_receiver = true;
+                }
+                LoadMessage::Error(err) => {
+                    self.status_message = err;
+                    self.is_loading = false;
+                    self.load_progress = 0.0;
+                    should_clear_receiver = true;
                 }
             }
         }
@@ -227,20 +230,15 @@ impl LogCrabApp {
 
         ui.menu_button("View", |ui| {
             if ui.button("Add Filter Tab").clicked() {
-                let filter_index = self.log_view.filter_count();
                 self.log_view.add_filter();
-                self.dock_state.push_to_focused_leaf(TabContent {
-                    tab_type: TabType::Filter(filter_index),
-                    title: format!("Filter {}", filter_index + 1),
-                });
+                let filter = self.create_filter_view();
+                self.dock_state.push_to_focused_leaf(filter);
                 ui.close();
             }
 
             if ui.button("Add Bookmarks Tab").clicked() {
-                self.dock_state.push_to_focused_leaf(TabContent {
-                    tab_type: TabType::Bookmarks(BookmarksView::default()),
-                    title: "Bookmarks".to_string(),
-                });
+                self.dock_state
+                    .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 ui.close();
             }
         });
@@ -330,11 +328,14 @@ impl LogCrabApp {
                 ui,
                 &mut LogCrabTabViewer {
                     log_view: &mut self.log_view,
-                    focus_search_next_frame: &mut self.focus_search_next_frame,
                     global_config: &mut self.global_config,
                     filter_to_remove: &mut self.filter_to_remove,
                 },
             );
+            if let Some(index) = self.focus_search_next_frame {
+                self.log_view.focus_search_input(index);
+                self.focus_search_next_frame = None;
+            }
         }
     }
 
@@ -342,14 +343,11 @@ impl LogCrabApp {
     fn handle_tab_operations(&mut self) {
         // Handle add tab request
         if let Some(node) = self.add_tab_after.take() {
-            let filter_index = self.log_view.filter_count();
             self.log_view.add_filter();
             self.dock_state
                 .set_focused_node_and_surface((egui_dock::SurfaceIndex::main(), node));
-            self.dock_state.push_to_focused_leaf(TabContent {
-                tab_type: TabType::Filter(filter_index),
-                title: format!("Filter {}", filter_index + 1),
-            });
+            let filter = self.create_filter_view();
+            self.dock_state.push_to_focused_leaf(filter);
         }
 
         // Handle new filter tab request (Ctrl+T)
@@ -358,10 +356,8 @@ impl LogCrabApp {
             let filter_index = self.log_view.filter_count();
             self.log_view.add_filter();
 
-            self.dock_state.push_to_focused_leaf(TabContent {
-                tab_type: TabType::Filter(filter_index),
-                title: format!("Filter {}", filter_index + 1),
-            });
+            let filter = self.create_filter_view();
+            self.dock_state.push_to_focused_leaf(filter);
 
             // Focus the search input in the new tab
             self.focus_search_next_frame = Some(filter_index);
@@ -371,10 +367,8 @@ impl LogCrabApp {
         if self.request_new_bookmarks_tab {
             self.request_new_bookmarks_tab = false;
 
-            self.dock_state.push_to_focused_leaf(TabContent {
-                tab_type: TabType::Bookmarks(BookmarksView::default()),
-                title: "Bookmarks".to_string(),
-            });
+            self.dock_state
+                .push_to_focused_leaf(Box::new(BookmarksView::default()));
         }
 
         // Handle filter removal (must be done after DockArea to avoid borrowing issues)
@@ -383,11 +377,7 @@ impl LogCrabApp {
 
             // Update all filter tab indices that are greater than the removed index
             for (_, tab) in self.dock_state.iter_all_tabs_mut() {
-                if let TabType::Filter(idx) = &mut tab.tab_type {
-                    if *idx > filter_index {
-                        *idx -= 1;
-                    }
-                }
+                tab.filter_got_removed(filter_index);
             }
         }
     }
@@ -408,14 +398,8 @@ impl LogCrabApp {
         }
 
         // Get the currently focused tab directly from dock state
-        let focused_tab = self
-            .dock_state
-            .find_active_focused()
-            .map(|(_, tab)| tab.tab_type.clone());
-        let active_filter_index = match &focused_tab {
-            Some(TabType::Filter(idx)) => Some(*idx),
-            _ => None,
-        };
+        let focused_tab = self.dock_state.find_active_focused().map(|(_, tab)| tab);
+        let active_filter_index = focused_tab.as_ref().and_then(|t| t.get_filter_index());
 
         let (actions, events_to_remove, shortcuts_changed) = self.shortcut_bindings.process_input(
             raw_input,
@@ -430,21 +414,15 @@ impl LogCrabApp {
             let _ = self.global_config.save();
         }
 
+        if let Some(focused_tab) = focused_tab {
+            focused_tab.process_events(&actions, &mut self.log_view);
+        }
+
         // Execute all generated actions
         for action in actions {
             match action {
-                InputAction::MoveSelection(delta) => match focused_tab {
-                    Some(TabType::Filter(idx)) => {
-                        self.log_view.move_selection_in_filter(idx, delta);
-                    }
-                    Some(TabType::Bookmarks(_)) => {
-                        self.log_view.move_selection_in_bookmarks(delta);
-                    }
-                    None => {}
-                },
-                InputAction::ToggleBookmark => {
-                    self.log_view.toggle_bookmark_for_selected();
-                }
+                InputAction::MoveSelection(_delta) => {}
+                InputAction::ToggleBookmark => {}
                 InputAction::FocusSearch(idx) => {
                     self.focus_search_next_frame = Some(idx);
                 }
@@ -506,42 +484,10 @@ impl LogCrabApp {
                         }
                     }
                 }
-                InputAction::JumpToTop => match focused_tab {
-                    Some(TabType::Filter(idx)) => {
-                        self.log_view.jump_to_top_in_filter(idx);
-                    }
-                    Some(TabType::Bookmarks(_)) => {
-                        self.log_view.jump_to_top_in_bookmarks();
-                    }
-                    None => {}
-                },
-                InputAction::JumpToBottom => match focused_tab {
-                    Some(TabType::Filter(idx)) => {
-                        self.log_view.jump_to_bottom_in_filter(idx);
-                    }
-                    Some(TabType::Bookmarks(_)) => {
-                        self.log_view.jump_to_bottom_in_bookmarks();
-                    }
-                    None => {}
-                },
-                InputAction::PageUp => match focused_tab {
-                    Some(TabType::Filter(idx)) => {
-                        self.log_view.page_up_in_filter(idx);
-                    }
-                    Some(TabType::Bookmarks(_)) => {
-                        self.log_view.page_up_in_bookmarks();
-                    }
-                    None => {}
-                },
-                InputAction::PageDown => match focused_tab {
-                    Some(TabType::Filter(idx)) => {
-                        self.log_view.page_down_in_filter(idx);
-                    }
-                    Some(TabType::Bookmarks(_)) => {
-                        self.log_view.page_down_in_bookmarks();
-                    }
-                    None => {}
-                },
+                InputAction::JumpToTop => {}
+                InputAction::JumpToBottom => {}
+                InputAction::PageUp => {}
+                InputAction::PageDown => {}
                 InputAction::OpenFile => {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("log", &["log", "txt", "dlt"])
