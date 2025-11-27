@@ -185,11 +185,7 @@ impl LogCrabTab for BookmarksView {
         self.render_bookmarks(ui, data_state);
     }
 
-    fn process_events(
-        &mut self,
-        actions: &Vec<crate::input::InputAction>,
-        data_state: &mut LogView,
-    ) {
+    fn process_events(&mut self, actions: &[InputAction], data_state: &mut LogView) {
         for action in actions {
             match action {
                 InputAction::MoveSelection(delta) => data_state.move_selection_in_bookmarks(*delta),

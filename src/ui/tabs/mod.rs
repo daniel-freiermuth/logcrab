@@ -21,7 +21,7 @@ pub mod filter_tab;
 pub mod navigation;
 
 pub use bookmarks_tab::BookmarksView;
-pub use filter_tab::{FilterView, FilterViewEvent};
+pub use filter_tab::FilterView;
 
 use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::TabViewer;
@@ -38,7 +38,7 @@ pub trait LogCrabTab {
         data_state: &mut LogView,
         global_config: &mut GlobalConfig,
     );
-    fn process_events(&mut self, actions: &Vec<InputAction>, data_state: &mut LogView);
+    fn process_events(&mut self, actions: &[InputAction], data_state: &mut LogView);
     fn on_close(&mut self, _filter_to_remove: &mut Option<usize>) -> OnCloseResponse {
         OnCloseResponse::Close
     }

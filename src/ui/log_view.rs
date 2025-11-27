@@ -15,12 +15,10 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
-use crate::config::GlobalConfig;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
-use crate::ui::tabs::{FilterView, FilterViewEvent};
 use crate::ui::windows::ChangeFilternameWindow;
-use egui::{Color32, Ui};
+use egui::Color32;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -57,7 +55,7 @@ pub struct LogView {
     pub lines: Arc<Vec<LogLine>>,
     pub min_score_filter: f64,
     // Multiple filter views
-    filters: Vec<FilterState>,
+    pub filters: Vec<FilterState>,
     // Selected line tracking
     pub selected_line_index: Option<usize>,
     pub selected_timestamp: Option<DateTime<Local>>,
@@ -65,7 +63,7 @@ pub struct LogView {
     pub bookmarks: HashMap<usize, Bookmark>,
     // .crab file path
     crab_file: Option<PathBuf>,
-    change_filtername_window: Option<ChangeFilternameWindow>,
+    pub change_filtername_window: Option<ChangeFilternameWindow>,
 }
 
 impl LogView {
@@ -406,7 +404,7 @@ impl LogView {
         }
     }
 
-    fn toggle_bookmark(&mut self, line_index: usize) {
+    pub fn toggle_bookmark(&mut self, line_index: usize) {
         if let std::collections::hash_map::Entry::Vacant(e) = self.bookmarks.entry(line_index) {
             let timestamp = if line_index < self.lines.len() {
                 self.lines[line_index].timestamp
@@ -440,156 +438,6 @@ impl LogView {
     pub fn toggle_bookmark_for_selected(&mut self) {
         if let Some(selected_idx) = self.selected_line_index {
             self.toggle_bookmark(selected_idx);
-        }
-    }
-
-    /// Render a specific filter view
-    pub fn render_filter(
-        &mut self,
-        ui: &mut Ui,
-        filter_index: usize,
-        global_config: &mut GlobalConfig,
-    ) {
-        if filter_index >= self.filters.len() {
-            ui.label("Invalid filter index");
-            return;
-        }
-
-        // Convert bookmarks HashMap to simple HashMap<usize, String> for the component
-        let bookmarked_lines: HashMap<usize, String> = self
-            .bookmarks
-            .iter()
-            .map(|(&idx, bookmark)| (idx, bookmark.name.clone()))
-            .collect();
-
-        // Get current filter's search text for favorite checking
-        let current_search = self.filters[filter_index].search_text.clone();
-        let current_case_insensitive = self.filters[filter_index].case_insensitive;
-
-        // Check if current filter matches any global favorite
-        let is_favorite = global_config.favorite_filters.iter().any(|f| {
-            f.search_text == current_search && f.case_insensitive == current_case_insensitive
-        });
-
-        // Update the filter's favorite status (for UI display only, not saved to .crab)
-        self.filters[filter_index].is_favorite = is_favorite;
-
-        // Temporarily take out the filter we're rendering
-        let mut current_filter = std::mem::replace(
-            &mut self.filters[filter_index],
-            FilterState::new(Color32::YELLOW),
-        );
-
-        // Use global favorites instead of per-file favorites
-        let temp_filters: Vec<FilterState> = global_config
-            .favorite_filters
-            .iter()
-            .map(|fav| {
-                let mut f = FilterState::new(Color32::YELLOW);
-                f.search_text = fav.search_text.clone();
-                f.case_insensitive = fav.case_insensitive;
-                f.is_favorite = true;
-                f
-            })
-            .collect();
-
-        // Render using FilterView
-        let events = FilterView::render(
-            ui,
-            &self.lines,
-            &mut current_filter,
-            filter_index,
-            &temp_filters,
-            self.selected_line_index,
-            self.selected_timestamp,
-            &bookmarked_lines,
-            self.min_score_filter,
-        );
-
-        // Put the filter back
-        self.filters[filter_index] = current_filter;
-
-        // Handle events
-        for event in events {
-            match event {
-                FilterViewEvent::LineSelected {
-                    line_index,
-                    timestamp,
-                } => {
-                    self.selected_line_index = Some(line_index);
-                    self.selected_timestamp = timestamp;
-                }
-                FilterViewEvent::BookmarkToggled { line_index } => {
-                    self.toggle_bookmark(line_index);
-                }
-                FilterViewEvent::FilterNameEditRequested => {
-                    // Prompt for new name
-                    let starting_name = if let Some(current_name) = &self.filters[filter_index].name
-                    {
-                        current_name.clone()
-                    } else {
-                        format!("Filter {}", filter_index + 1)
-                    };
-                    self.change_filtername_window =
-                        Some(ChangeFilternameWindow::new(starting_name));
-                }
-                FilterViewEvent::FavoriteToggled => {
-                    let search_text = self.filters[filter_index].search_text.clone();
-                    let case_insensitive = self.filters[filter_index].case_insensitive;
-
-                    // Check if this filter is already a favorite
-                    if let Some(pos) = global_config.favorite_filters.iter().position(|f| {
-                        f.search_text == search_text && f.case_insensitive == case_insensitive
-                    }) {
-                        // Remove from favorites
-                        global_config.favorite_filters.remove(pos);
-                        self.filters[filter_index].is_favorite = false;
-                        log::info!("Removed favorite: '{}'", search_text);
-                    } else {
-                        // Add to favorites
-                        let name = self.filters[filter_index]
-                            .name
-                            .clone()
-                            .unwrap_or_else(|| search_text.clone());
-                        global_config
-                            .favorite_filters
-                            .push(crate::config::FavoriteFilter {
-                                name,
-                                search_text,
-                                case_insensitive,
-                            });
-                        self.filters[filter_index].is_favorite = true;
-                        log::info!(
-                            "Added favorite: '{}'",
-                            self.filters[filter_index].search_text
-                        );
-                    }
-
-                    // Save global config
-                    let _ = global_config.save();
-                }
-                FilterViewEvent::FilterModified => {
-                    // Filter search text or case sensitivity changed, save to .crab file
-                    self.save_crab_file();
-                }
-            }
-        }
-
-        // Handle filter name editing dialog
-        if let Some(ref mut window) = self.change_filtername_window {
-            match window.render(ui) {
-                Ok(Some(new_name)) => {
-                    self.set_filter_name(filter_index, Some(new_name));
-                    self.change_filtername_window = None;
-                }
-                Ok(None) => {
-                    // Still editing
-                }
-                Err(_) => {
-                    // Cancelled
-                    self.change_filtername_window = None;
-                }
-            }
         }
     }
 }
