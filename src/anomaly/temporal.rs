@@ -1,27 +1,26 @@
 use crate::anomaly::scorer::AnomalyScorer;
 use crate::parser::line::LogLine;
-use ahash::AHashMap;
 use chrono::{DateTime, Duration, Local};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 /// Temporal anomaly scorer based on time windows
 pub struct TemporalScorer {
     window_duration: Duration,
     // Track when each template was last seen
-    last_seen: AHashMap<String, DateTime<Local>>,
+    last_seen: HashMap<String, DateTime<Local>>,
     // Track recent timestamps for burst detection
     recent_timestamps: VecDeque<DateTime<Local>>,
     // Track template counts within window
-    window_template_counts: AHashMap<String, u32>,
+    window_template_counts: HashMap<String, u32>,
 }
 
 impl TemporalScorer {
     pub fn new(window_seconds: i64) -> Self {
         TemporalScorer {
             window_duration: Duration::seconds(window_seconds),
-            last_seen: AHashMap::new(),
+            last_seen: HashMap::new(),
             recent_timestamps: VecDeque::new(),
-            window_template_counts: AHashMap::new(),
+            window_template_counts: HashMap::new(),
         }
     }
 

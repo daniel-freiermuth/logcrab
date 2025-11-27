@@ -1,17 +1,18 @@
+use std::collections::HashMap;
+
 use crate::anomaly::scorer::AnomalyScorer;
 use crate::parser::line::LogLine;
-use ahash::AHashMap;
 
 /// Scores based on template rarity (inverse frequency)
 pub struct RarityScorer {
-    template_counts: AHashMap<String, u32>,
+    template_counts: HashMap<String, u32>,
     total_lines: u32,
 }
 
 impl RarityScorer {
     pub fn new() -> Self {
         RarityScorer {
-            template_counts: AHashMap::new(),
+            template_counts: HashMap::new(),
             total_lines: 0,
         }
     }
