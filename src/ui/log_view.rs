@@ -44,6 +44,27 @@ struct SavedFilter {
     name: Option<String>,
 }
 
+impl From<&SavedFilter> for FilterState {
+    fn from(saved_filter: &SavedFilter) -> FilterState {
+        let mut filter = FilterState::new(Color32::YELLOW);
+        filter.search_text = saved_filter.search_text.clone();
+        filter.case_insensitive = saved_filter.case_insensitive;
+        filter.name = saved_filter.name.clone();
+        filter.update_search_regex();
+        filter
+    }
+}
+
+impl From<&FilterState> for SavedFilter {
+    fn from(filter: &FilterState) -> SavedFilter {
+        SavedFilter {
+            search_text: filter.search_text.clone(),
+            case_insensitive: filter.case_insensitive,
+            name: filter.name.clone(),
+        }
+    }
+}
+
 /// .crab file format - stores all session data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrabFile {
@@ -193,10 +214,7 @@ impl LogView {
                         }
 
                         // Restore filter settings
-                        self.filters[i].search_text = saved_filter.search_text.clone();
-                        self.filters[i].case_insensitive = saved_filter.case_insensitive;
-                        self.filters[i].name = saved_filter.name.clone();
-                        self.filters[i].update_search_regex();
+                        self.filters[i] = saved_filter.into();
                         log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
                     }
                 } else {
@@ -213,15 +231,7 @@ impl LogView {
             log::debug!("Saving .crab file: {:?}", path);
             let crab_data = CrabFile {
                 bookmarks: self.bookmarks.values().cloned().collect(),
-                filters: self
-                    .filters
-                    .iter()
-                    .map(|f| SavedFilter {
-                        search_text: f.search_text.clone(),
-                        case_insensitive: f.case_insensitive,
-                        name: f.name.clone(),
-                    })
-                    .collect(),
+                filters: self.filters.iter().map(|f| f.into()).collect(),
             };
 
             if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
