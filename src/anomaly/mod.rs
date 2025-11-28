@@ -13,10 +13,10 @@ use temporal::TemporalScorer;
 /// Create the default anomaly scoring pipeline
 pub fn create_default_scorer() -> CompositeScorer {
     CompositeScorer::new()
-        .add_scorer(Box::new(RarityScorer::new()), 3.0) // Rarity is most important
+        .add_scorer(Box::new(RarityScorer::new()), 5.0) // Rarity is most important
         .add_scorer(Box::new(TemporalScorer::new(30)), 2.0) // Temporal patterns
         .add_scorer(Box::new(EntropyScorer::new()), 1.5) // Message entropy
-        .add_scorer(Box::new(KeywordScorer::new()), 2.5) // Keyword detection (error/warning/fail)
+        .add_scorer(Box::new(KeywordScorer::new()), 2.0) // Keyword detection (error/warning/fail)
 }
 
 /// Normalize anomaly scores to 0-100 range
