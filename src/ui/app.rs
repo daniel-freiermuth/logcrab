@@ -309,17 +309,17 @@ impl LogCrabApp {
         } else {
             // Use dock area for VS Code-like draggable/tiling layout
             DockArea::new(&mut self.dock_state)
-            .show_add_buttons(true)
-            .show_add_popup(true)
-            .show_inside(
-                ui,
-                &mut LogCrabTabViewer {
-                    log_view: &mut self.log_view,
-                    global_config: &mut self.global_config,
-                    filter_to_remove: &mut self.filter_to_remove,
-                    pending_tab_add: &mut self.pending_tab_add,
-                },
-            );
+                .show_add_buttons(true)
+                .show_add_popup(true)
+                .show_inside(
+                    ui,
+                    &mut LogCrabTabViewer {
+                        log_view: &mut self.log_view,
+                        global_config: &mut self.global_config,
+                        filter_to_remove: &mut self.filter_to_remove,
+                        pending_tab_add: &mut self.pending_tab_add,
+                    },
+                );
         }
     }
 

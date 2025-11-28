@@ -83,7 +83,7 @@ impl LogTable {
 
         egui::ScrollArea::horizontal()
             .id_salt(format!("filtered_scroll_{}", filter_index))
-            .auto_shrink([false, false])  // Don't shrink, take all available space
+            .auto_shrink([false, false]) // Don't shrink, take all available space
             .show(ui, |ui| {
                 #[cfg(feature = "cpu-profiling")]
                 puffin::profile_scope!("filtered_table");
@@ -97,8 +97,8 @@ impl LogTable {
                     .sense(egui::Sense::click())
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .vscroll(true)
-                    .min_scrolled_height(available_height)  // Force table to fill available space
-                    .max_scroll_height(available_height)  // Don't exceed available space
+                    .min_scrolled_height(available_height) // Force table to fill available space
+                    .max_scroll_height(available_height) // Don't exceed available space
                     .column(Column::initial(60.0).resizable(true).clip(true))
                     .column(Column::initial(110.0).resizable(true).clip(true))
                     .column(Column::remainder().resizable(true).clip(true))

@@ -91,12 +91,12 @@ impl TabViewer for LogCrabTabViewer<'_> {
         _node: egui_dock::NodeIndex,
     ) {
         ui.set_min_width(150.0);
-        
+
         if ui.button("➕ Filter Tab").clicked() {
             *self.pending_tab_add = Some(PendingTabAdd::Filter);
             ui.close();
         }
-        
+
         if ui.button("⭐ Bookmarks Tab").clicked() {
             *self.pending_tab_add = Some(PendingTabAdd::Bookmarks);
             ui.close();

@@ -80,7 +80,7 @@ impl BookmarkPanel {
 
         egui::ScrollArea::horizontal()
             .id_salt("bookmarks_scroll")
-            .auto_shrink([false, false])  // Don't shrink, take all available space
+            .auto_shrink([false, false]) // Don't shrink, take all available space
             .show(ui, |ui| {
                 // Calculate available height to make table fill the pane
                 let available_height = ui.available_height();
@@ -91,8 +91,8 @@ impl BookmarkPanel {
                     .sense(egui::Sense::click())
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .vscroll(true)
-                    .min_scrolled_height(available_height)  // Force table to fill available space
-                    .max_scroll_height(available_height)  // Don't exceed available space
+                    .min_scrolled_height(available_height) // Force table to fill available space
+                    .max_scroll_height(available_height) // Don't exceed available space
                     .column(Column::initial(60.0).resizable(true).clip(true))
                     .column(Column::initial(110.0).resizable(true).clip(true))
                     .column(Column::initial(200.0).resizable(true).clip(true))

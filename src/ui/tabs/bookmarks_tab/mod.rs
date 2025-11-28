@@ -244,7 +244,7 @@ impl LogCrabTab for BookmarksView {
                 InputAction::MoveSelection(delta) => {
                     self.move_selection_in_bookmarks(*delta, data_state)
                 }
-                InputAction::ToggleBookmark => {}, // TODO: should be noop
+                InputAction::ToggleBookmark => {} // TODO: should be noop
                 InputAction::JumpToTop => {
                     self.jump_to_top_in_bookmarks(data_state);
                 }
