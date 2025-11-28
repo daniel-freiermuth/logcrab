@@ -454,9 +454,7 @@ impl LogCrabApp {
                         }
                     }
                 }
-                InputAction::RenameFilter(idx) => {
-                    self.log_view.start_rename_filter(idx);
-                }
+                InputAction::RenameFilter(_idx) => {}
             }
         }
 

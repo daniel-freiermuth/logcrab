@@ -475,7 +475,9 @@ impl LogCrabTab for FilterView {
                 InputAction::ReverseCycleTab => {}
                 InputAction::OpenFile => {}
                 InputAction::NavigatePane(_direction) => {}
-                InputAction::RenameFilter(_idx) => {}
+                InputAction::RenameFilter(_idx) => {
+                    data_state.start_rename_filter(self.index);
+                }
             }
         }
     }
