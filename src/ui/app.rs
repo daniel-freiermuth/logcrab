@@ -8,9 +8,9 @@ use egui_dock::{DockArea, DockState, Node};
 
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
-use crate::input::{InputAction, KeyboardBindings, ShortcutAction};
+use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, FilterView, LogCrabTab, PendingTabAdd};
-use crate::ui::LogView;
+use crate::ui::{LogView, PaneDirection};
 
 /// Main application state
 pub struct LogCrabApp {
@@ -359,21 +359,20 @@ impl LogCrabApp {
         // Execute all generated actions
         for action in actions {
             match action {
-                InputAction::MoveSelection(_delta) => {}
-                InputAction::ToggleBookmark => {}
-                InputAction::FocusSearch => {}
-                InputAction::NewFilterTab => {
+                ShortcutAction::ToggleBookmark => {}
+                ShortcutAction::FocusSearch => {}
+                ShortcutAction::NewFilterTab => {
                     self.log_view.add_filter();
 
                     let mut filter = self.create_filter_view();
                     filter.focus_search_next_frame();
                     self.dock_state.push_to_focused_leaf(filter);
                 }
-                InputAction::NewBookmarksTab => {
+                ShortcutAction::NewBookmarksTab => {
                     self.dock_state
                         .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 }
-                InputAction::CloseTab => {
+                ShortcutAction::CloseTab => {
                     // Close the currently focused/active tab (the one the user is viewing)
                     // focused_leaf() returns which pane has keyboard focus
                     if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
@@ -387,7 +386,7 @@ impl LogCrabApp {
                         }
                     }
                 }
-                InputAction::CycleTab => {
+                ShortcutAction::CycleTab => {
                     // Cycle to the next tab in the active pane
                     if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
                         let surface = &mut self.dock_state[surface_idx];
@@ -404,7 +403,7 @@ impl LogCrabApp {
                         }
                     }
                 }
-                InputAction::ReverseCycleTab => {
+                ShortcutAction::ReverseCycleTab => {
                     // Cycle to the previous tab in the active pane
                     if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
                         let surface = &mut self.dock_state[surface_idx];
@@ -425,11 +424,11 @@ impl LogCrabApp {
                         }
                     }
                 }
-                InputAction::JumpToTop => {}
-                InputAction::JumpToBottom => {}
-                InputAction::PageUp => {}
-                InputAction::PageDown => {}
-                InputAction::OpenFile => {
+                ShortcutAction::JumpToTop => {}
+                ShortcutAction::JumpToBottom => {}
+                ShortcutAction::PageUp => {}
+                ShortcutAction::PageDown => {}
+                ShortcutAction::OpenFile => {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("log", &["log", "txt", "dlt"])
                         .pick_file()
@@ -437,27 +436,34 @@ impl LogCrabApp {
                         self.load_file(path, ctx.clone());
                     }
                 }
-                InputAction::NavigatePane(direction) => {
-                    let tree = self.dock_state.main_surface_mut();
-
-                    // Get the currently focused node
-                    if let Some(current_node) = tree.focused_leaf() {
-                        // Find the neighbor in the specified direction
-                        let neighbor = navigation::find_neighbor(tree, current_node, direction);
-
-                        // If we found a neighbor, focus it
-                        if let Some(neighbor_idx) = neighbor {
-                            tree.set_focused_node(neighbor_idx);
-                        }
-                    }
-                }
-                InputAction::RenameFilter => {}
+                ShortcutAction::RenameFilter => {}
+                ShortcutAction::MoveUp => {}
+                ShortcutAction::MoveDown => {}
+                ShortcutAction::FocusPaneLeft => self.navigate_pane(PaneDirection::Left),
+                ShortcutAction::FocusPaneDown => self.navigate_pane(PaneDirection::Down),
+                ShortcutAction::FocusPaneUp => self.navigate_pane(PaneDirection::Up),
+                ShortcutAction::FocusPaneRight => self.navigate_pane(PaneDirection::Right),
             }
         }
 
         // Remove consumed events in reverse order
         for idx in events_to_remove.into_iter().rev() {
             raw_input.events.remove(idx);
+        }
+    }
+
+    fn navigate_pane(&mut self, direction: PaneDirection) {
+        let tree = self.dock_state.main_surface_mut();
+
+        // Get the currently focused node
+        if let Some(current_node) = tree.focused_leaf() {
+            // Find the neighbor in the specified direction
+            let neighbor = navigation::find_neighbor(tree, current_node, direction);
+
+            // If we found a neighbor, focus it
+            if let Some(neighbor_idx) = neighbor {
+                tree.set_focused_node(neighbor_idx);
+            }
         }
     }
 }

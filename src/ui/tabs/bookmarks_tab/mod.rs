@@ -21,7 +21,7 @@ pub mod bookmark_panel;
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
 use crate::{
-    input::InputAction,
+    input::ShortcutAction,
     parser::line::LogLine,
     ui::{tabs::LogCrabTab, LogView},
 };
@@ -238,34 +238,36 @@ impl LogCrabTab for BookmarksView {
         self.render_bookmarks(ui, data_state);
     }
 
-    fn process_events(&mut self, actions: &[InputAction], data_state: &mut LogView) {
+    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogView) {
         for action in actions {
             match action {
-                InputAction::MoveSelection(delta) => {
-                    self.move_selection_in_bookmarks(*delta, data_state)
-                }
-                InputAction::ToggleBookmark => {} // TODO: should be noop
-                InputAction::JumpToTop => {
+                ShortcutAction::MoveDown => self.move_selection_in_bookmarks(1, data_state),
+                ShortcutAction::MoveUp => self.move_selection_in_bookmarks(-1, data_state),
+                ShortcutAction::ToggleBookmark => {}
+                ShortcutAction::JumpToTop => {
                     self.jump_to_top_in_bookmarks(data_state);
                 }
-                InputAction::JumpToBottom => {
+                ShortcutAction::JumpToBottom => {
                     self.jump_to_bottom_in_bookmarks(data_state);
                 }
-                InputAction::PageUp => {
+                ShortcutAction::PageUp => {
                     self.page_up_in_bookmarks(data_state);
                 }
-                InputAction::PageDown => {
+                ShortcutAction::PageDown => {
                     self.page_down_in_bookmarks(data_state);
                 }
-                InputAction::FocusSearch => {}
-                InputAction::NewFilterTab => {}
-                InputAction::NewBookmarksTab => {}
-                InputAction::ReverseCycleTab => {}
-                InputAction::OpenFile => {}
-                InputAction::NavigatePane(_direction) => {}
-                InputAction::RenameFilter => {}
-                InputAction::CloseTab => todo!(),
-                InputAction::CycleTab => {}
+                ShortcutAction::FocusSearch => {}
+                ShortcutAction::NewFilterTab => {}
+                ShortcutAction::NewBookmarksTab => {}
+                ShortcutAction::ReverseCycleTab => {}
+                ShortcutAction::OpenFile => {}
+                ShortcutAction::RenameFilter => {}
+                ShortcutAction::CloseTab => {}
+                ShortcutAction::CycleTab => {}
+                ShortcutAction::FocusPaneLeft => {}
+                ShortcutAction::FocusPaneDown => {}
+                ShortcutAction::FocusPaneUp => {}
+                ShortcutAction::FocusPaneRight => {}
             }
         }
     }

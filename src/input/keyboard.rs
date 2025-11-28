@@ -16,7 +16,6 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::actions::{InputAction, PaneDirection};
 use crate::config::GlobalConfig;
 use keybinds::Keybinds;
 use serde::{Deserialize, Serialize};
@@ -401,7 +400,7 @@ impl KeyboardBindings {
         &mut self,
         raw_input: &egui::RawInput,
         pending_rebind: &mut Option<ShortcutAction>,
-    ) -> (Vec<InputAction>, Vec<usize>, bool) {
+    ) -> (Vec<ShortcutAction>, Vec<usize>, bool) {
         let mut actions = Vec::new();
         let mut events_to_consume = Vec::new();
         let mut shortcuts_changed = false;
@@ -422,8 +421,7 @@ impl KeyboardBindings {
 
                 // Convert egui key to keybinds format and dispatch
                 if let Some(shortcut_action) = self.dispatcher.dispatch(key_event) {
-                    // Convert ShortcutAction to InputAction
-                    Self::action_to_input(shortcut_action, &mut actions);
+                    actions.push(*shortcut_action);
                     // Mark this event for consumption
                     events_to_consume.push(idx);
                 }
@@ -431,40 +429,6 @@ impl KeyboardBindings {
         }
 
         (actions, events_to_consume, shortcuts_changed)
-    }
-
-    /// Convert a ShortcutAction to an InputAction
-    fn action_to_input(action: &ShortcutAction, actions: &mut Vec<InputAction>) {
-        match action {
-            ShortcutAction::MoveUp => actions.push(InputAction::MoveSelection(-1)),
-            ShortcutAction::MoveDown => actions.push(InputAction::MoveSelection(1)),
-            ShortcutAction::ToggleBookmark => actions.push(InputAction::ToggleBookmark),
-            ShortcutAction::FocusSearch => actions.push(InputAction::FocusSearch),
-
-            ShortcutAction::NewFilterTab => actions.push(InputAction::NewFilterTab),
-            ShortcutAction::NewBookmarksTab => actions.push(InputAction::NewBookmarksTab),
-            ShortcutAction::CloseTab => actions.push(InputAction::CloseTab),
-            ShortcutAction::JumpToTop => actions.push(InputAction::JumpToTop),
-            ShortcutAction::JumpToBottom => actions.push(InputAction::JumpToBottom),
-            ShortcutAction::PageUp => actions.push(InputAction::PageUp),
-            ShortcutAction::PageDown => actions.push(InputAction::PageDown),
-            ShortcutAction::OpenFile => actions.push(InputAction::OpenFile),
-            ShortcutAction::FocusPaneLeft => {
-                actions.push(InputAction::NavigatePane(PaneDirection::Left))
-            }
-            ShortcutAction::FocusPaneDown => {
-                actions.push(InputAction::NavigatePane(PaneDirection::Down))
-            }
-            ShortcutAction::FocusPaneUp => {
-                actions.push(InputAction::NavigatePane(PaneDirection::Up))
-            }
-            ShortcutAction::FocusPaneRight => {
-                actions.push(InputAction::NavigatePane(PaneDirection::Right))
-            }
-            ShortcutAction::CycleTab => actions.push(InputAction::CycleTab),
-            ShortcutAction::ReverseCycleTab => actions.push(InputAction::ReverseCycleTab),
-            ShortcutAction::RenameFilter => actions.push(InputAction::RenameFilter),
-        }
     }
 }
 

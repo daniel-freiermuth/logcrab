@@ -1,4 +1,4 @@
-use crate::input::PaneDirection;
+use crate::ui::PaneDirection;
 
 /// Find a neighboring leaf node in the specified direction
 pub fn find_neighbor<T>(

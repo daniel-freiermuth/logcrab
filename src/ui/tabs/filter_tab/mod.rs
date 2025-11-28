@@ -26,7 +26,7 @@ pub use histogram::Histogram;
 pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
-use crate::input::InputAction;
+use crate::input::ShortcutAction;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
 use crate::ui::tabs::LogCrabTab;
@@ -444,40 +444,46 @@ impl LogCrabTab for FilterView {
         self.render_filter(ui, self.index, data_state, global_config);
     }
 
-    fn process_events(&mut self, actions: &[InputAction], data_state: &mut LogView) {
+    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogView) {
         for action in actions {
             match action {
-                InputAction::MoveSelection(delta) => {
-                    self.move_selection_in_filter(*delta, data_state);
+                ShortcutAction::MoveDown => {
+                    self.move_selection_in_filter(1, data_state);
                 }
-                InputAction::ToggleBookmark => {
+                ShortcutAction::MoveUp => {
+                    self.move_selection_in_filter(-1, data_state);
+                }
+                ShortcutAction::ToggleBookmark => {
                     data_state.toggle_bookmark_for_selected();
                 }
-                InputAction::JumpToTop => {
+                ShortcutAction::JumpToTop => {
                     self.jump_to_top_in_filter(data_state);
                 }
-                InputAction::JumpToBottom => {
+                ShortcutAction::JumpToBottom => {
                     self.jump_to_bottom_in_filter(data_state);
                 }
-                InputAction::PageUp => {
+                ShortcutAction::PageUp => {
                     self.page_up_in_filter(data_state);
                 }
-                InputAction::PageDown => {
+                ShortcutAction::PageDown => {
                     self.page_down_in_filter(data_state);
                 }
-                InputAction::FocusSearch => {
+                ShortcutAction::FocusSearch => {
                     self.focus_search_next_frame();
                 }
-                InputAction::NewFilterTab => {}
-                InputAction::NewBookmarksTab => {}
-                InputAction::CloseTab => {}
-                InputAction::CycleTab => {}
-                InputAction::ReverseCycleTab => {}
-                InputAction::OpenFile => {}
-                InputAction::NavigatePane(_direction) => {}
-                InputAction::RenameFilter => {
+                ShortcutAction::NewFilterTab => {}
+                ShortcutAction::NewBookmarksTab => {}
+                ShortcutAction::CloseTab => {}
+                ShortcutAction::CycleTab => {}
+                ShortcutAction::ReverseCycleTab => {}
+                ShortcutAction::OpenFile => {}
+                ShortcutAction::RenameFilter => {
                     data_state.start_rename_filter(self.index);
                 }
+                ShortcutAction::FocusPaneLeft => {}
+                ShortcutAction::FocusPaneDown => {}
+                ShortcutAction::FocusPaneUp => {}
+                ShortcutAction::FocusPaneRight => {}
             }
         }
     }

@@ -27,7 +27,7 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
-use crate::input::InputAction;
+use crate::input::ShortcutAction;
 use crate::ui::LogView;
 
 pub trait LogCrabTab {
@@ -38,7 +38,7 @@ pub trait LogCrabTab {
         data_state: &mut LogView,
         global_config: &mut GlobalConfig,
     );
-    fn process_events(&mut self, actions: &[InputAction], data_state: &mut LogView);
+    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogView);
     fn on_close(&mut self, _filter_to_remove: &mut Option<usize>) -> OnCloseResponse {
         OnCloseResponse::Close
     }
