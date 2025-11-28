@@ -91,7 +91,7 @@ impl LogTable {
                 // Calculate available height to make table fill the pane
                 let available_height = ui.available_height();
                 let header_height = ui.text_style_height(&egui::TextStyle::Heading);
-                let body_height = available_height - header_height;
+                let body_height = available_height - header_height - 1.0;
 
                 let mut table = TableBuilder::new(ui)
                     .striped(true)
