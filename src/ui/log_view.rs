@@ -53,7 +53,6 @@ struct CrabFile {
 
 pub struct LogView {
     pub lines: Arc<Vec<LogLine>>,
-    pub min_score_filter: f64,
     // Multiple filter views
     pub filters: Vec<FilterState>,
     // Selected line tracking
@@ -75,7 +74,6 @@ impl LogView {
 
         LogView {
             lines: Arc::new(Vec::new()),
-            min_score_filter: 0.0,
             filters,
             selected_line_index: None,
             bookmarks: HashMap::new(),
@@ -147,7 +145,7 @@ impl LogView {
         self.lines = lines;
         // Request background filtering for all filters
         for filter in &mut self.filters {
-            filter.request_filter_update(Arc::clone(&self.lines), self.min_score_filter);
+            filter.request_filter_update(Arc::clone(&self.lines));
         }
     }
 
@@ -161,7 +159,7 @@ impl LogView {
         // This ensures filters loaded from .crab file start background filtering immediately
         for filter in &mut self.filters {
             if filter.filter_dirty {
-                filter.request_filter_update(Arc::clone(&self.lines), self.min_score_filter);
+                filter.request_filter_update(Arc::clone(&self.lines));
             }
         }
 

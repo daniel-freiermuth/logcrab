@@ -30,7 +30,6 @@ struct FilterRequest {
     filter_id: usize, // Unique identifier for each filter instance
     search_text: String,
     case_insensitive: bool,
-    min_score: f64,
     generation: u64,
     lines: Arc<Vec<LogLine>>,        // Shared read-only access to log lines
     result_tx: Sender<FilterResult>, // Each filter has its own result channel
@@ -149,11 +148,6 @@ impl GlobalFilterWorker {
 
                     let mut indices = Vec::with_capacity(request.lines.len() / 10);
                     for (idx, line) in request.lines.iter().enumerate() {
-                        // Check score filter
-                        if line.anomaly_score < request.min_score {
-                            continue;
-                        }
-
                         // Check search filter
                         if let Some(ref regex) = search_regex {
                             // fancy-regex returns Result<bool>, handle it
@@ -218,7 +212,6 @@ pub struct FilterState {
     filter_result_rx: Receiver<FilterResult>,
     filter_result_tx: Sender<FilterResult>, // Keep sender to create requests
     filter_generation: u64,
-    pending_min_score: f64,
     pub is_filtering: bool, // True when request sent but result not yet received
 }
 
@@ -245,7 +238,6 @@ impl FilterState {
             filter_result_rx,
             filter_result_tx: result_tx,
             filter_generation: 0,
-            pending_min_score: 0.0,
             is_filtering: false,
         }
     }
@@ -277,12 +269,11 @@ impl FilterState {
     }
 
     /// Send a filter request to the background thread
-    pub fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>, min_score_filter: f64) {
+    pub fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
         self.filter_generation += 1;
-        self.pending_min_score = min_score_filter;
 
         // Only mark as filtering if we have search text
         // (min_score filtering is usually fast enough to not need indication)
@@ -299,7 +290,6 @@ impl FilterState {
             filter_id: self.filter_id,
             search_text: self.search_text.clone(),
             case_insensitive: self.case_insensitive,
-            min_score: min_score_filter,
             generation: self.filter_generation,
             lines,
             result_tx: self.filter_result_tx.clone(),
@@ -351,7 +341,6 @@ impl FilterState {
     pub fn rebuild_filtered_indices(
         &mut self,
         lines: &[LogLine],
-        min_score_filter: f64,
         selected_line_index: Option<usize>,
     ) -> Option<usize> {
         #[cfg(feature = "cpu-profiling")]
@@ -361,7 +350,7 @@ impl FilterState {
         self.filtered_indices.reserve(lines.len() / 10);
 
         for (idx, line) in lines.iter().enumerate() {
-            if line.anomaly_score >= min_score_filter && self.matches_search(line) {
+            if self.matches_search(line) {
                 self.filtered_indices.push(idx);
             }
         }

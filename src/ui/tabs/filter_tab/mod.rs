@@ -78,7 +78,6 @@ impl FilterView {
         all_filters: &[FilterState],
         selected_line_index: Option<usize>,
         bookmarked_lines: &HashMap<usize, String>,
-        min_score_filter: f64,
     ) -> Vec<FilterViewEvent> {
         let mut events = Vec::new();
 
@@ -107,12 +106,12 @@ impl FilterView {
             match event {
                 FilterInternalEvent::SearchChanged => {
                     filter.update_search_regex();
-                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
+                    filter.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::CaseInsensitiveToggled => {
                     filter.update_search_regex();
-                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
+                    filter.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::FavoriteSelected {
@@ -122,7 +121,7 @@ impl FilterView {
                     filter.search_text = search_text;
                     filter.case_insensitive = case_insensitive;
                     filter.update_search_regex();
-                    filter.request_filter_update(Arc::clone(lines), min_score_filter);
+                    filter.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::FilterNameEditRequested => {
@@ -143,7 +142,7 @@ impl FilterView {
         // - filter_dirty is true (needs filtering)
         // - AND we're NOT currently waiting for a background result
         let mut scroll_to_row = if filter.filter_dirty && !filter.is_filtering {
-            filter.rebuild_filtered_indices(lines, min_score_filter, selected_line_index)
+            filter.rebuild_filtered_indices(lines, selected_line_index)
         } else {
             None
         };
@@ -269,7 +268,6 @@ impl FilterView {
             &temp_filters,
             data_state.selected_line_index,
             &bookmarked_lines,
-            data_state.min_score_filter,
         );
 
         // Put the filter back
