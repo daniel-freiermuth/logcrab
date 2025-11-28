@@ -90,6 +90,8 @@ impl LogTable {
 
                 // Calculate available height to make table fill the pane
                 let available_height = ui.available_height();
+                let header_height = ui.text_style_height(&egui::TextStyle::Heading);
+                let body_height = available_height - header_height;
 
                 let mut table = TableBuilder::new(ui)
                     .striped(true)
@@ -97,8 +99,8 @@ impl LogTable {
                     .sense(egui::Sense::click())
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .vscroll(true)
-                    .min_scrolled_height(available_height) // Force table to fill available space
-                    .max_scroll_height(available_height) // Don't exceed available space
+                    .min_scrolled_height(body_height) // Force table to fill available space minus header
+                    .max_scroll_height(body_height) // Don't exceed available space
                     .column(Column::initial(60.0).resizable(true).clip(true))
                     .column(Column::initial(110.0).resizable(true).clip(true))
                     .column(Column::remainder().resizable(true).clip(true))
@@ -109,7 +111,7 @@ impl LogTable {
                 }
 
                 table
-                    .header(20.0, |mut header| {
+                    .header(header_height, |mut header| {
                         header.col(|ui| {
                             ui.strong("Line");
                         });
