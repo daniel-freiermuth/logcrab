@@ -340,13 +340,10 @@ impl LogCrabApp {
 
         // Get the currently focused tab directly from dock state
         let focused_tab = self.dock_state.find_active_focused().map(|(_, tab)| tab);
-        let active_filter_index = focused_tab.as_ref().and_then(|t| t.get_filter_index());
 
-        let (actions, events_to_remove, shortcuts_changed) = self.shortcut_bindings.process_input(
-            raw_input,
-            &mut self.pending_rebind,
-            active_filter_index,
-        );
+        let (actions, events_to_remove, shortcuts_changed) = self
+            .shortcut_bindings
+            .process_input(raw_input, &mut self.pending_rebind);
 
         // Save shortcuts if they were changed
         if shortcuts_changed {
@@ -364,7 +361,7 @@ impl LogCrabApp {
             match action {
                 InputAction::MoveSelection(_delta) => {}
                 InputAction::ToggleBookmark => {}
-                InputAction::FocusSearch(_idx) => {}
+                InputAction::FocusSearch => {}
                 InputAction::NewFilterTab => {
                     self.log_view.add_filter();
 
@@ -454,7 +451,7 @@ impl LogCrabApp {
                         }
                     }
                 }
-                InputAction::RenameFilter(_idx) => {}
+                InputAction::RenameFilter => {}
             }
         }
 

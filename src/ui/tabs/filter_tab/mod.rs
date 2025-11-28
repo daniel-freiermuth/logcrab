@@ -465,7 +465,7 @@ impl LogCrabTab for FilterView {
                 InputAction::PageDown => {
                     self.page_down_in_filter(data_state);
                 }
-                InputAction::FocusSearch(_idx) => {
+                InputAction::FocusSearch => {
                     self.focus_search_next_frame();
                 }
                 InputAction::NewFilterTab => {}
@@ -475,7 +475,7 @@ impl LogCrabTab for FilterView {
                 InputAction::ReverseCycleTab => {}
                 InputAction::OpenFile => {}
                 InputAction::NavigatePane(_direction) => {}
-                InputAction::RenameFilter(_idx) => {
+                InputAction::RenameFilter => {
                     data_state.start_rename_filter(self.index);
                 }
             }
@@ -494,8 +494,5 @@ impl LogCrabTab for FilterView {
         if filter_index < self.index {
             self.index -= 1;
         }
-    }
-    fn get_filter_index(&self) -> Option<usize> {
-        Some(self.index)
     }
 }

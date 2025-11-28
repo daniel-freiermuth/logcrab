@@ -257,13 +257,13 @@ impl LogCrabTab for BookmarksView {
                 InputAction::PageDown => {
                     self.page_down_in_bookmarks(data_state);
                 }
-                InputAction::FocusSearch(_idx) => {}
+                InputAction::FocusSearch => {}
                 InputAction::NewFilterTab => {}
                 InputAction::NewBookmarksTab => {}
                 InputAction::ReverseCycleTab => {}
                 InputAction::OpenFile => {}
                 InputAction::NavigatePane(_direction) => {}
-                InputAction::RenameFilter(_idx) => {}
+                InputAction::RenameFilter => {}
                 InputAction::CloseTab => todo!(),
                 InputAction::CycleTab => {}
             }

@@ -401,7 +401,6 @@ impl KeyboardBindings {
         &mut self,
         raw_input: &egui::RawInput,
         pending_rebind: &mut Option<ShortcutAction>,
-        active_filter_index: Option<usize>,
     ) -> (Vec<InputAction>, Vec<usize>, bool) {
         let mut actions = Vec::new();
         let mut events_to_consume = Vec::new();
@@ -424,7 +423,7 @@ impl KeyboardBindings {
                 // Convert egui key to keybinds format and dispatch
                 if let Some(shortcut_action) = self.dispatcher.dispatch(key_event) {
                     // Convert ShortcutAction to InputAction
-                    Self::action_to_input(shortcut_action, active_filter_index, &mut actions);
+                    Self::action_to_input(shortcut_action, &mut actions);
                     // Mark this event for consumption
                     events_to_consume.push(idx);
                 }
@@ -435,20 +434,13 @@ impl KeyboardBindings {
     }
 
     /// Convert a ShortcutAction to an InputAction
-    fn action_to_input(
-        action: &ShortcutAction,
-        active_filter_index: Option<usize>,
-        actions: &mut Vec<InputAction>,
-    ) {
+    fn action_to_input(action: &ShortcutAction, actions: &mut Vec<InputAction>) {
         match action {
             ShortcutAction::MoveUp => actions.push(InputAction::MoveSelection(-1)),
             ShortcutAction::MoveDown => actions.push(InputAction::MoveSelection(1)),
             ShortcutAction::ToggleBookmark => actions.push(InputAction::ToggleBookmark),
-            ShortcutAction::FocusSearch => {
-                if let Some(idx) = active_filter_index {
-                    actions.push(InputAction::FocusSearch(idx));
-                }
-            }
+            ShortcutAction::FocusSearch => actions.push(InputAction::FocusSearch),
+
             ShortcutAction::NewFilterTab => actions.push(InputAction::NewFilterTab),
             ShortcutAction::NewBookmarksTab => actions.push(InputAction::NewBookmarksTab),
             ShortcutAction::CloseTab => actions.push(InputAction::CloseTab),
@@ -471,11 +463,7 @@ impl KeyboardBindings {
             }
             ShortcutAction::CycleTab => actions.push(InputAction::CycleTab),
             ShortcutAction::ReverseCycleTab => actions.push(InputAction::ReverseCycleTab),
-            ShortcutAction::RenameFilter => {
-                if let Some(idx) = active_filter_index {
-                    actions.push(InputAction::RenameFilter(idx));
-                }
-            }
+            ShortcutAction::RenameFilter => actions.push(InputAction::RenameFilter),
         }
     }
 }

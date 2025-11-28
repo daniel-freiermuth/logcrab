@@ -35,7 +35,7 @@ pub enum InputAction {
     ToggleBookmark,
 
     /// Focus the search input for a specific filter
-    FocusSearch(usize),
+    FocusSearch,
 
     /// Create a new filter tab
     NewFilterTab,
@@ -71,5 +71,5 @@ pub enum InputAction {
     ReverseCycleTab,
 
     /// Open rename dialog for the current filter
-    RenameFilter(usize),
+    RenameFilter,
 }

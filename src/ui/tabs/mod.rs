@@ -45,9 +45,6 @@ pub trait LogCrabTab {
     fn filter_got_removed(&mut self, _filter_index: usize) {
         // Default implementation does nothing
     }
-    fn get_filter_index(&self) -> Option<usize> {
-        None
-    }
 }
 
 /// Pending tab addition request from the add button
