@@ -60,6 +60,7 @@ pub struct LogCrabApp {
     pending_tab_add: Option<PendingTabAdd>,
 
     filter_counter: usize,
+    monotonic_filter_counter: usize,
 
     /// Whether to show the CPU profiler window
     #[cfg(feature = "cpu-profiling")]
@@ -68,9 +69,10 @@ pub struct LogCrabApp {
 
 impl LogCrabApp {
     fn create_filter_view(&mut self) -> Box<FilterView> {
-        let filter_name = format!("Filter {}", self.filter_counter + 1);
+        let filter_name = format!("Filter {}", self.monotonic_filter_counter + 1);
         let index = self.filter_counter;
         self.filter_counter += 1;
+        self.monotonic_filter_counter += 1;
         Box::new(FilterView::new(filter_name, index))
     }
 
@@ -105,6 +107,7 @@ impl LogCrabApp {
             filter_to_remove: None,
             pending_tab_add: None,
             filter_counter: n_initial_tabs,
+            monotonic_filter_counter: n_initial_tabs,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
@@ -509,6 +512,7 @@ impl eframe::App for LogCrabApp {
         // Handle filter removal (must be done after DockArea to avoid borrowing issues)
         if let Some(filter_index) = self.filter_to_remove.take() {
             self.log_view.remove_filter(filter_index);
+            self.filter_counter -= 1;
 
             // Update all filter tab indices that are greater than the removed index
             for (_, tab) in self.dock_state.iter_all_tabs_mut() {
