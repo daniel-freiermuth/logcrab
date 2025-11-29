@@ -19,7 +19,6 @@ use crate::config::GlobalConfig;
 use crate::parser::line::LogLine;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::{FilterView, LogCrabTab, LogCrabTabViewer, PendingTabAdd};
-use crate::ui::windows::ChangeFilternameWindow;
 use egui::Color32;
 
 use chrono::{DateTime, Local};
@@ -90,7 +89,6 @@ pub struct LogViewState {
     pub selected_line_index: Option<usize>,
     // Bookmarks with names
     pub bookmarks: HashMap<usize, Bookmark>,
-    pub change_filtername_window: Option<ChangeFilternameWindow>,
 }
 
 impl LogView {
@@ -103,7 +101,6 @@ impl LogView {
                 lines: Arc::new(Vec::new()),
                 selected_line_index: None,
                 bookmarks: HashMap::new(),
-                change_filtername_window: None,
             },
         }
     }

@@ -51,6 +51,7 @@ pub struct FilterView {
     uuid: usize,
     should_focus_search: bool,
     state: FilterState,
+    change_filtername_window: Option<ChangeFilternameWindow>,
 }
 
 impl FilterView {
@@ -59,6 +60,7 @@ impl FilterView {
             uuid,
             should_focus_search: false,
             state,
+            change_filtername_window: None,
         }
     }
 
@@ -269,7 +271,7 @@ impl FilterView {
                 }
                 FilterViewEvent::FilterNameEditRequested => {
                     // Prompt for new name
-                    data_state.change_filtername_window =
+                    self.change_filtername_window =
                         Some(ChangeFilternameWindow::new(self.state.name.clone()));
                 }
                 FilterViewEvent::FavoriteToggled => {
@@ -309,11 +311,11 @@ impl FilterView {
         }
 
         // Handle filter name editing dialog
-        if let Some(ref mut window) = data_state.change_filtername_window {
+        if let Some(ref mut window) = self.change_filtername_window {
             match window.render(ui) {
                 Ok(Some(new_name)) => {
                     self.state.name = new_name;
-                    data_state.change_filtername_window = None;
+                    self.change_filtername_window = None;
                     should_save = true;
                 }
                 Ok(None) => {
@@ -321,7 +323,7 @@ impl FilterView {
                 }
                 Err(_) => {
                     // Cancelled
-                    data_state.change_filtername_window = None;
+                    self.change_filtername_window = None;
                 }
             }
         }
@@ -453,7 +455,7 @@ impl LogCrabTab for FilterView {
                 ShortcutAction::ReverseCycleTab => {}
                 ShortcutAction::OpenFile => {}
                 ShortcutAction::RenameFilter => {
-                    data_state.change_filtername_window =
+                    self.change_filtername_window =
                         Some(ChangeFilternameWindow::new(self.state.name.clone()));
                 }
                 ShortcutAction::FocusPaneLeft => {}
