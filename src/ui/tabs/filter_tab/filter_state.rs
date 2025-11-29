@@ -375,22 +375,17 @@ impl FilterState {
     /// Find the closest line by timestamp in the filtered results
     // TODO Implement via binary search
     pub fn find_closest_timestamp_index(&self, target_idx: usize) -> Option<usize> {
-        if self.filtered_indices.is_empty() {
-            return None;
-        }
-
-        let mut closest_idx = 0;
+        let mut closest_idx = None;
         let mut min_diff = i64::MAX;
 
         for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
             let diff = (line_idx as i64 - target_idx as i64).abs();
             if diff < min_diff {
                 min_diff = diff;
-                closest_idx = filtered_idx;
+                closest_idx = Some(filtered_idx);
             }
         }
-
-        Some(closest_idx)
+        closest_idx
     }
 
     /// Highlight search matches in text with background color
