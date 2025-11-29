@@ -47,7 +47,7 @@ pub struct SavedFilter {
 
 impl From<&SavedFilter> for FilterState {
     fn from(saved_filter: &SavedFilter) -> FilterState {
-        let mut filter = FilterState::new(saved_filter.name.clone(), Color32::YELLOW);
+        let mut filter = FilterState::new(saved_filter.name.clone());
         filter.search_text = saved_filter.search_text.clone();
         filter.case_insensitive = saved_filter.case_insensitive;
         filter.update_search_regex();
@@ -117,12 +117,9 @@ impl LogView {
         let color = colors[self.monotonic_filter_counter % colors.len()];
 
         let state = state.unwrap_or_else(|| {
-            FilterState::new(
-                format!("Filter {}", self.monotonic_filter_counter + 1),
-                color,
-            )
+            FilterState::new(format!("Filter {}", self.monotonic_filter_counter + 1))
         });
-        let mut filter = Box::new(FilterView::new(self.monotonic_filter_counter, state));
+        let mut filter = Box::new(FilterView::new(self.monotonic_filter_counter, color, state));
         if focus_search {
             filter.focus_search_next_frame();
         }

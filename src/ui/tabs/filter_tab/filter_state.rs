@@ -203,7 +203,6 @@ pub struct FilterState {
     pub filtered_indices: Vec<usize>,
     pub filter_dirty: bool,
     pub last_rendered_selection: Option<usize>,
-    pub highlight_color: Color32,
     pub name: String,
 
     // Background filtering - each filter has its own result channel
@@ -214,7 +213,7 @@ pub struct FilterState {
 }
 
 impl FilterState {
-    pub fn new(name: String, highlight_color: Color32) -> Self {
+    pub fn new(name: String) -> Self {
         // Create result channel for this specific filter
         let (result_tx, filter_result_rx) = channel::<FilterResult>();
 
@@ -232,7 +231,6 @@ impl FilterState {
             filtered_indices: Vec::new(),
             filter_dirty: true,
             last_rendered_selection: None,
-            highlight_color,
             name,
             filter_result_rx,
             filter_result_tx: result_tx,
@@ -374,7 +372,12 @@ impl FilterState {
     }
 
     /// Highlight search matches in text with background color
-    pub fn highlight_matches(&self, text: &str, base_color: Color32) -> LayoutJob {
+    pub fn highlight_matches(
+        &self,
+        text: &str,
+        base_color: Color32,
+        highlight_color: Color32,
+    ) -> LayoutJob {
         let mut job = LayoutJob::default();
 
         if let Ok(ref regex) = self.search_regex {
@@ -397,7 +400,7 @@ impl FilterState {
                     0.0,
                     TextFormat {
                         color: Color32::BLACK,
-                        background: self.highlight_color,
+                        background: highlight_color,
                         ..Default::default()
                     },
                 );

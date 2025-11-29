@@ -68,6 +68,7 @@ impl LogTable {
     /// Render a table of log lines
     ///
     /// Returns events that occurred (line clicks, bookmark toggles)
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         ui: &mut Ui,
         lines: &[LogLine],
@@ -76,6 +77,7 @@ impl LogTable {
         selected_line_index: Option<usize>,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         scroll_to_row: Option<usize>,
+        highlight_color: Color32,
     ) -> Vec<LogTableEvent> {
         let mut events = Vec::new();
         let visible_lines = filter.filtered_indices.len();
@@ -161,6 +163,7 @@ impl LogTable {
                                 is_selected,
                                 is_bookmarked,
                                 color,
+                                highlight_color,
                                 &mut row_clicked,
                                 &mut row_right_clicked,
                             );
@@ -175,6 +178,7 @@ impl LogTable {
                                 is_selected,
                                 is_bookmarked,
                                 color,
+                                highlight_color,
                                 &mut row_clicked,
                                 &mut row_right_clicked,
                             );
@@ -288,7 +292,8 @@ impl LogTable {
         filter: &FilterState,
         is_selected: bool,
         is_bookmarked: bool,
-        color: Color32,
+        bg_color: Color32,
+        highlight_color: Color32,
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
     ) {
@@ -319,7 +324,7 @@ impl LogTable {
                 "-".to_string()
             };
 
-            let job = filter.highlight_matches(&timestamp_str, color);
+            let job = filter.highlight_matches(&timestamp_str, bg_color, highlight_color);
             ui.label(job);
 
             let response = ui.interact(
@@ -345,7 +350,8 @@ impl LogTable {
         filter: &FilterState,
         is_selected: bool,
         is_bookmarked: bool,
-        color: Color32,
+        bg_color: Color32,
+        highlight_color: Color32,
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
     ) {
@@ -370,7 +376,7 @@ impl LogTable {
                 );
             }
 
-            let job = filter.highlight_matches(&line.message, color);
+            let job = filter.highlight_matches(&line.message, bg_color, highlight_color);
             ui.label(job);
 
             let response = ui.interact(

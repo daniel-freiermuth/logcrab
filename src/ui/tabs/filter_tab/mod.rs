@@ -32,7 +32,7 @@ use crate::ui::log_view::{LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
-use egui::Ui;
+use egui::{Color32, Ui};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -52,15 +52,17 @@ pub struct FilterView {
     should_focus_search: bool,
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
+    highlight_color: Color32,
 }
 
 impl FilterView {
-    pub fn new(uuid: usize, state: FilterState) -> Self {
+    pub fn new(uuid: usize, highlight_color: Color32, state: FilterState) -> Self {
         Self {
             uuid,
             should_focus_search: false,
             state,
             change_filtername_window: None,
+            highlight_color,
         }
     }
 
@@ -182,6 +184,7 @@ impl FilterView {
             selected_line_index,
             bookmarked_lines,
             scroll_to_row,
+            self.highlight_color,
         );
 
         // Handle table events
