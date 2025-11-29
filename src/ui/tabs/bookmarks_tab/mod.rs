@@ -90,7 +90,7 @@ impl BookmarksView {
             .collect()
     }
 
-    pub fn render_bookmarks(&mut self, ui: &mut Ui, data_state: &mut LogViewState) -> bool {
+    pub fn render_bookmarks(&mut self, ui: &mut Ui, data_state: &mut LogViewState) {
         // Convert bookmarks to BookmarkData format
         let mut bookmarks: Vec<BookmarkData> = data_state
             .bookmarks
@@ -114,7 +114,6 @@ impl BookmarksView {
         );
 
         // Handle events
-        let mut should_save = false;
         for event in events {
             match event {
                 BookmarksViewEvent::BookmarkClicked { line_index } => {
@@ -122,7 +121,7 @@ impl BookmarksView {
                 }
                 BookmarksViewEvent::BookmarkDeleted { line_index } => {
                     data_state.bookmarks.remove(&line_index);
-                    should_save = true;
+                    data_state.modified = true;
                 }
                 BookmarksViewEvent::BookmarkRenamed {
                     line_index,
@@ -130,8 +129,8 @@ impl BookmarksView {
                 } => {
                     if let Some(b) = data_state.bookmarks.get_mut(&line_index) {
                         b.name = new_name;
-                        should_save = true;
                     }
+                    data_state.modified = true;
                     self.edited_line_index = None;
                 }
                 BookmarksViewEvent::StartRenaming { line_index } => {
@@ -145,8 +144,6 @@ impl BookmarksView {
                 }
             }
         }
-
-        should_save
     }
 
     /// Move selection in bookmarks view
@@ -232,7 +229,7 @@ impl LogCrabTab for BookmarksView {
         ui: &mut egui::Ui,
         data_state: &mut LogViewState,
         _global_config: &mut crate::config::GlobalConfig,
-    ) -> bool {
+    ) {
         self.render_bookmarks(ui, data_state)
     }
 

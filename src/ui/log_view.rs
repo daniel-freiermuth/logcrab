@@ -89,6 +89,8 @@ pub struct LogViewState {
     pub selected_line_index: Option<usize>,
     // Bookmarks with names
     pub bookmarks: HashMap<usize, Bookmark>,
+    pub modified: bool,
+    last_saved: Option<DateTime<Local>>,
 }
 
 impl LogView {
@@ -101,6 +103,8 @@ impl LogView {
                 lines: Arc::new(Vec::new()),
                 selected_line_index: None,
                 bookmarks: HashMap::new(),
+                modified: false,
+                last_saved: None,
             },
         }
     }
@@ -124,7 +128,6 @@ impl LogView {
             filter.focus_search_next_frame();
         }
         self.dock_state.push_to_focused_leaf(filter);
-        self.save_crab_file();
         self.monotonic_filter_counter += 1;
     }
 
@@ -221,7 +224,6 @@ impl LogView {
         global_config: &mut GlobalConfig,
         pending_tab_add: &mut Option<PendingTabAdd>,
     ) {
-        let mut should_save = false;
         // Use dock area for VS Code-like draggable/tiling layout
         DockArea::new(&mut self.dock_state)
             .show_add_buttons(true)
@@ -232,12 +234,17 @@ impl LogView {
                     log_view: &mut self.state,
                     global_config,
                     pending_tab_add,
-                    should_save: &mut should_save,
                 },
             );
-
-        if should_save {
+        if self.state.modified
+            && self
+                .state
+                .last_saved
+                .is_none_or(|t| (Local::now() - t).num_seconds() >= 5)
+        {
             self.save_crab_file();
+            self.state.modified = false;
+            self.state.last_saved = Some(Local::now());
         }
     }
 

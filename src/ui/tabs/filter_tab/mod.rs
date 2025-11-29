@@ -182,7 +182,7 @@ impl FilterView {
         ui: &mut Ui,
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
-    ) -> bool {
+    ) {
         // Convert bookmarks HashMap to simple HashMap<usize, String> for the component
         let bookmarked_lines: HashMap<usize, String> = data_state
             .bookmarks
@@ -200,7 +200,6 @@ impl FilterView {
         );
 
         // Handle events
-        let mut should_save = false;
         for event in events {
             match event {
                 FilterViewEvent::LineSelected { line_index } => {
@@ -208,7 +207,7 @@ impl FilterView {
                 }
                 FilterViewEvent::BookmarkToggled { line_index } => {
                     data_state.toggle_bookmark(line_index);
-                    should_save = true;
+                    data_state.modified = true;
                 }
                 FilterViewEvent::FilterNameEditRequested => {
                     // Prompt for new name
@@ -242,7 +241,7 @@ impl FilterView {
                 }
                 FilterViewEvent::FilterModified => {
                     // Filter search text or case sensitivity changed, save to .crab file
-                    should_save = true;
+                    data_state.modified = true;
                 }
             }
         }
@@ -253,7 +252,7 @@ impl FilterView {
                 Ok(Some(new_name)) => {
                     self.state.name = new_name;
                     self.change_filtername_window = None;
-                    should_save = true;
+                    data_state.modified = true;
                 }
                 Ok(None) => {
                     // Still editing
@@ -264,7 +263,6 @@ impl FilterView {
                 }
             }
         }
-        should_save
     }
 
     /// Move selection within a filtered view (only through matched indices)
@@ -345,7 +343,7 @@ impl LogCrabTab for FilterView {
         ui: &mut egui::Ui,
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
-    ) -> bool {
+    ) {
         self.render_filter(ui, data_state, global_config)
     }
 

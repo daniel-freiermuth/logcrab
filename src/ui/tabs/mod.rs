@@ -39,7 +39,7 @@ pub trait LogCrabTab {
         ui: &mut egui::Ui,
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
-    ) -> bool;
+    );
     fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogViewState)
         -> bool;
     fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>);
@@ -58,7 +58,6 @@ pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogViewState,
     pub global_config: &'a mut GlobalConfig,
     pub pending_tab_add: &'a mut Option<PendingTabAdd>,
-    pub should_save: &'a mut bool,
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -69,9 +68,7 @@ impl TabViewer for LogCrabTabViewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        if tab.render(ui, self.log_view, self.global_config) {
-            *self.should_save = true;
-        }
+        tab.render(ui, self.log_view, self.global_config);
     }
 
     fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
