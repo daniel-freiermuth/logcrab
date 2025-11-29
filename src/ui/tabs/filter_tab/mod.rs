@@ -124,15 +124,12 @@ impl FilterView {
         ui.separator();
 
         // Check for completed filter results from background thread
-        self.state.check_filter_results();
-
-        // Check if selection changed
-        let scroll_to_row = if selected_line_index.is_some()
-            && self.state.last_rendered_selection != selected_line_index
-        {
+        let needs_scroll = self.state.check_filter_results()
+            || self.state.last_rendered_selection != selected_line_index;
+        let scroll_to_row = if needs_scroll {
+            self.state.last_rendered_selection = selected_line_index;
             if let Some(selected_idx) = selected_line_index {
                 // Mark as processed so we don't keep checking on every render
-                self.state.last_rendered_selection = selected_line_index;
                 self.state.find_closest_timestamp_index(selected_idx)
             } else {
                 None
@@ -412,8 +409,7 @@ impl LogCrabTab for FilterView {
         Some((&self.state).into())
     }
 
-    fn check_filter_results(&mut self) -> bool {
-        self.state.check_filter_results();
+    fn is_filtering(&mut self) -> bool {
         self.state.is_filtering
     }
 }

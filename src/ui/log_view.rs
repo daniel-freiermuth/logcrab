@@ -133,7 +133,7 @@ impl LogView {
     pub fn is_any_filter_active(&mut self) -> bool {
         let mut any_loading = false;
         for ((_, _), tab) in self.dock_state.iter_all_tabs_mut() {
-            if tab.check_filter_results() {
+            if tab.is_filtering() {
                 any_loading = true;
             }
         }

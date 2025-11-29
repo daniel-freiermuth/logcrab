@@ -281,12 +281,13 @@ impl FilterState {
     }
 
     /// Check for completed filter results from background thread
-    pub fn check_filter_results(&mut self) {
+    pub fn check_filter_results(&mut self) -> bool {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
         // Drain all available results, keeping only the newest
         // use with queue = 1
+        let mut updated = false;
         while let Ok(result) = self.filter_result_rx.try_recv() {
             // Only apply results from the current or newer generation
             if result.generation >= self.filter_generation {
@@ -299,8 +300,10 @@ impl FilterState {
                     );
                 }
                 self.is_filtering = false; // Filtering complete
+                updated = true;
             }
         }
+        updated
     }
 
     /// Find the closest line by timestamp in the filtered results

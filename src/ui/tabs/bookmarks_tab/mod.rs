@@ -281,7 +281,7 @@ impl LogCrabTab for BookmarksView {
         None
     }
 
-    fn check_filter_results(&mut self) -> bool {
+    fn is_filtering(&mut self) -> bool {
         false
     }
 }
