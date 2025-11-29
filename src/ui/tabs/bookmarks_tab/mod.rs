@@ -23,7 +23,7 @@ pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 use crate::{
     input::ShortcutAction,
     parser::line::LogLine,
-    ui::{tabs::LogCrabTab, LogView},
+    ui::{log_view::LogViewState, tabs::LogCrabTab},
 };
 use egui::Ui;
 
@@ -90,7 +90,7 @@ impl BookmarksView {
             .collect()
     }
 
-    pub fn render_bookmarks(&mut self, ui: &mut Ui, data_state: &mut LogView) {
+    pub fn render_bookmarks(&mut self, ui: &mut Ui, data_state: &mut LogViewState) -> bool {
         // Convert bookmarks to BookmarkData format
         let mut bookmarks: Vec<BookmarkData> = data_state
             .bookmarks
@@ -146,13 +146,11 @@ impl BookmarksView {
             }
         }
 
-        if should_save {
-            data_state.save_crab_file();
-        }
+        should_save
     }
 
     /// Move selection in bookmarks view
-    pub fn move_selection_in_bookmarks(&mut self, delta: i32, data_state: &mut LogView) {
+    pub fn move_selection_in_bookmarks(&mut self, delta: i32, data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -191,7 +189,7 @@ impl BookmarksView {
     }
 
     /// Jump to the first bookmark (Vim-style gg)
-    pub fn jump_to_top_in_bookmarks(&mut self, data_state: &mut LogView) {
+    pub fn jump_to_top_in_bookmarks(&mut self, data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -201,7 +199,7 @@ impl BookmarksView {
     }
 
     /// Jump to the last bookmark (Vim-style G)
-    pub fn jump_to_bottom_in_bookmarks(&mut self, data_state: &mut LogView) {
+    pub fn jump_to_bottom_in_bookmarks(&mut self, data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -212,13 +210,13 @@ impl BookmarksView {
     }
 
     /// Move selection up by one page in bookmarks view
-    pub fn page_up_in_bookmarks(&mut self, data_state: &mut LogView) {
+    pub fn page_up_in_bookmarks(&mut self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_bookmarks(-PAGE_SIZE, data_state);
     }
 
     /// Move selection down by one page in bookmarks view
-    pub fn page_down_in_bookmarks(&mut self, data_state: &mut LogView) {
+    pub fn page_down_in_bookmarks(&mut self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_bookmarks(PAGE_SIZE, data_state);
     }
@@ -232,13 +230,17 @@ impl LogCrabTab for BookmarksView {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
-        data_state: &mut LogView,
+        data_state: &mut LogViewState,
         _global_config: &mut crate::config::GlobalConfig,
-    ) {
-        self.render_bookmarks(ui, data_state);
+    ) -> bool {
+        self.render_bookmarks(ui, data_state)
     }
 
-    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogView) {
+    fn process_events(
+        &mut self,
+        actions: &[ShortcutAction],
+        data_state: &mut LogViewState,
+    ) -> bool {
         for action in actions {
             match action {
                 ShortcutAction::MoveDown => self.move_selection_in_bookmarks(1, data_state),
@@ -270,5 +272,16 @@ impl LogCrabTab for BookmarksView {
                 ShortcutAction::FocusPaneRight => {}
             }
         }
+        false
+    }
+
+    fn request_filter_update(&mut self, _lines: std::sync::Arc<Vec<LogLine>>) {}
+
+    fn try_into_stored_filter(&self) -> Option<crate::ui::log_view::SavedFilter> {
+        None
+    }
+
+    fn check_filter_results(&mut self) -> bool {
+        false
     }
 }

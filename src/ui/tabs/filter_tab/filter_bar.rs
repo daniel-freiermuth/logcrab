@@ -48,7 +48,7 @@ impl FilterBar {
     pub fn render(
         ui: &mut Ui,
         filter: &mut FilterState,
-        filter_index: usize,
+        filter_uuid: usize,
         favorites: &[FavoriteFilter],
         should_focus_search: bool,
     ) -> Vec<FilterInternalEvent> {
@@ -76,7 +76,7 @@ impl FilterBar {
 
             // Dropdown menu for favorites
             if !favorites.is_empty() {
-                egui::ComboBox::from_id_salt(format!("favorites_{}", filter_index))
+                egui::ComboBox::from_id_salt(format!("favorites_{}", filter_uuid))
                     .selected_text("⭐ Favorites")
                     .width(100.0)
                     .show_ui(ui, |ui| {

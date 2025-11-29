@@ -20,31 +20,31 @@ pub mod bookmarks_tab;
 pub mod filter_tab;
 pub mod navigation;
 
+use std::sync::Arc;
+
 pub use bookmarks_tab::BookmarksView;
 pub use filter_tab::FilterView;
 
-use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
-use crate::ui::LogView;
+use crate::parser::line::LogLine;
+use crate::ui::log_view::{LogViewState, SavedFilter};
 
 pub trait LogCrabTab {
     fn title(&mut self) -> egui::WidgetText;
     fn render(
         &mut self,
         ui: &mut egui::Ui,
-        data_state: &mut LogView,
+        data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
-    );
-    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogView);
-    fn on_close(&mut self, _filter_to_remove: &mut Option<usize>) -> OnCloseResponse {
-        OnCloseResponse::Close
-    }
-    fn filter_got_removed(&mut self, _filter_index: usize) {
-        // Default implementation does nothing
-    }
+    ) -> bool;
+    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogViewState)
+        -> bool;
+    fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>);
+    fn try_into_stored_filter(&self) -> Option<SavedFilter>;
+    fn check_filter_results(&mut self) -> bool;
 }
 
 /// Pending tab addition request from the add button
@@ -56,10 +56,10 @@ pub enum PendingTabAdd {
 
 /// TabViewer implementation for dock system
 pub struct LogCrabTabViewer<'a> {
-    pub log_view: &'a mut LogView,
+    pub log_view: &'a mut LogViewState,
     pub global_config: &'a mut GlobalConfig,
-    pub filter_to_remove: &'a mut Option<usize>,
     pub pending_tab_add: &'a mut Option<PendingTabAdd>,
+    pub should_save: &'a mut bool,
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -70,11 +70,9 @@ impl TabViewer for LogCrabTabViewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        tab.render(ui, self.log_view, self.global_config);
-    }
-
-    fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
-        tab.on_close(self.filter_to_remove)
+        if tab.render(ui, self.log_view, self.global_config) {
+            *self.should_save = true;
+        }
     }
 
     fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {

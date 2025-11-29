@@ -20,7 +20,6 @@ pub mod filter_bar;
 pub mod histogram;
 pub mod log_table;
 
-use egui_dock::tab_viewer::OnCloseResponse;
 pub use filter_bar::{FavoriteFilter, FilterBar, FilterInternalEvent};
 pub use histogram::Histogram;
 pub use log_table::{LogTable, LogTableEvent};
@@ -29,9 +28,9 @@ use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
+use crate::ui::log_view::{LogViewState, SavedFilter};
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
-use crate::ui::LogView;
 use egui::{Color32, Ui};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -49,16 +48,18 @@ pub enum FilterViewEvent {
 /// Orchestrates the filter view UI using reusable components
 pub struct FilterView {
     name: String,
-    index: usize,
+    uuid: usize,
     should_focus_search: bool,
+    state: FilterState,
 }
 
 impl FilterView {
-    pub fn new(name: String, index: usize) -> Self {
+    pub fn new(name: String, uuid: usize, color: Color32, state: Option<FilterState>) -> Self {
         Self {
             name,
-            index,
+            uuid,
             should_focus_search: false,
+            state: state.unwrap_or_else(|| FilterState::new(color)),
         }
     }
 
@@ -73,8 +74,6 @@ impl FilterView {
         &mut self,
         ui: &mut Ui,
         lines: &Arc<Vec<LogLine>>,
-        filter: &mut FilterState,
-        filter_index: usize,
         all_filters: &[FilterState],
         selected_line_index: Option<usize>,
         bookmarked_lines: &HashMap<usize, String>,
@@ -94,8 +93,8 @@ impl FilterView {
         // Render filter bar
         let filter_bar_events = FilterBar::render(
             ui,
-            filter,
-            filter_index,
+            &mut self.state,
+            self.uuid,
             &favorites,
             self.should_focus_search,
         );
@@ -105,23 +104,23 @@ impl FilterView {
         for event in filter_bar_events {
             match event {
                 FilterInternalEvent::SearchChanged => {
-                    filter.update_search_regex();
-                    filter.request_filter_update(Arc::clone(lines));
+                    self.state.update_search_regex();
+                    self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::CaseInsensitiveToggled => {
-                    filter.update_search_regex();
-                    filter.request_filter_update(Arc::clone(lines));
+                    self.state.update_search_regex();
+                    self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::FavoriteSelected {
                     search_text,
                     case_insensitive,
                 } => {
-                    filter.search_text = search_text;
-                    filter.case_insensitive = case_insensitive;
-                    filter.update_search_regex();
-                    filter.request_filter_update(Arc::clone(lines));
+                    self.state.search_text = search_text;
+                    self.state.case_insensitive = case_insensitive;
+                    self.state.update_search_regex();
+                    self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::FilterNameEditRequested => {
@@ -136,13 +135,14 @@ impl FilterView {
         ui.separator();
 
         // Check for completed filter results from background thread
-        filter.check_filter_results();
+        self.state.check_filter_results();
 
         // Rebuild filtered indices synchronously ONLY if:
         // - filter_dirty is true (needs filtering)
         // - AND we're NOT currently waiting for a background result
-        let mut scroll_to_row = if filter.filter_dirty && !filter.is_filtering {
-            filter.rebuild_filtered_indices(lines, selected_line_index)
+        let mut scroll_to_row = if self.state.filter_dirty && !self.state.is_filtering {
+            self.state
+                .rebuild_filtered_indices(lines, selected_line_index)
         } else {
             None
         };
@@ -150,10 +150,11 @@ impl FilterView {
         // Check if selection changed
         if scroll_to_row.is_none()
             && selected_line_index.is_some()
-            && filter.last_rendered_selection != selected_line_index
+            && self.state.last_rendered_selection != selected_line_index
         {
             if let Some(selected_idx) = selected_line_index {
-                if let Some(position) = filter
+                if let Some(position) = self
+                    .state
                     .filtered_indices
                     .iter()
                     .position(|&idx| idx == selected_idx)
@@ -161,18 +162,19 @@ impl FilterView {
                     scroll_to_row = Some(position);
                 } else {
                     // Line not in filtered results - try to find closest by timestamp
-                    if let Some(closest_pos) = filter.find_closest_timestamp_index(selected_idx) {
+                    if let Some(closest_pos) = self.state.find_closest_timestamp_index(selected_idx)
+                    {
                         scroll_to_row = Some(closest_pos);
                     }
                 }
                 // Mark as processed so we don't keep checking on every render
-                filter.last_rendered_selection = selected_line_index;
+                self.state.last_rendered_selection = selected_line_index;
             }
         }
 
         // Render histogram
         if let Some(hist_event) =
-            Histogram::render(ui, lines, &filter.filtered_indices, selected_line_index)
+            Histogram::render(ui, lines, &self.state.filtered_indices, selected_line_index)
         {
             events.push(FilterViewEvent::LineSelected {
                 line_index: hist_event.line_index,
@@ -185,8 +187,8 @@ impl FilterView {
         let table_events = LogTable::render(
             ui,
             lines,
-            filter,
-            filter_index,
+            &self.state,
+            self.uuid,
             selected_line_index,
             bookmarked_lines,
             scroll_to_row,
@@ -208,18 +210,12 @@ impl FilterView {
     }
 
     /// Render a specific filter view
-    pub fn render_filter(
+    fn render_filter(
         &mut self,
         ui: &mut Ui,
-        filter_index: usize,
-        data_state: &mut LogView,
+        data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
-    ) {
-        if filter_index >= data_state.filters.len() {
-            ui.label("Invalid filter index");
-            return;
-        }
-
+    ) -> bool {
         // Convert bookmarks HashMap to simple HashMap<usize, String> for the component
         let bookmarked_lines: HashMap<usize, String> = data_state
             .bookmarks
@@ -228,8 +224,8 @@ impl FilterView {
             .collect();
 
         // Get current filter's search text for favorite checking
-        let current_search = data_state.filters[filter_index].search_text.clone();
-        let current_case_insensitive = data_state.filters[filter_index].case_insensitive;
+        let current_search = self.state.search_text.clone();
+        let current_case_insensitive = self.state.case_insensitive;
 
         // Check if current filter matches any global favorite
         let is_favorite = global_config.favorite_filters.iter().any(|f| {
@@ -237,14 +233,7 @@ impl FilterView {
         });
 
         // Update the filter's favorite status (for UI display only, not saved to .crab)
-        data_state.filters[filter_index].is_favorite = is_favorite;
-
-        // Temporarily take out the filter we're rendering
-        // TODO
-        let mut current_filter = std::mem::replace(
-            &mut data_state.filters[filter_index],
-            FilterState::new(Color32::YELLOW),
-        );
+        self.state.is_favorite = is_favorite;
 
         // Use global favorites instead of per-file favorites
         let temp_filters: Vec<FilterState> = global_config
@@ -263,17 +252,13 @@ impl FilterView {
         let events = self.render(
             ui,
             &data_state.lines,
-            &mut current_filter,
-            filter_index,
             &temp_filters,
             data_state.selected_line_index,
             &bookmarked_lines,
         );
 
-        // Put the filter back
-        data_state.filters[filter_index] = current_filter;
-
         // Handle events
+        let mut should_save = false;
         for event in events {
             match event {
                 FilterViewEvent::LineSelected { line_index } => {
@@ -281,21 +266,21 @@ impl FilterView {
                 }
                 FilterViewEvent::BookmarkToggled { line_index } => {
                     data_state.toggle_bookmark(line_index);
+                    should_save = true;
                 }
                 FilterViewEvent::FilterNameEditRequested => {
                     // Prompt for new name
-                    let starting_name =
-                        if let Some(current_name) = &data_state.filters[filter_index].name {
-                            current_name.clone()
-                        } else {
-                            format!("Filter {}", filter_index + 1)
-                        };
+                    let starting_name = if let Some(current_name) = &self.state.name {
+                        current_name.clone()
+                    } else {
+                        self.name.clone()
+                    };
                     data_state.change_filtername_window =
                         Some(ChangeFilternameWindow::new(starting_name));
                 }
                 FilterViewEvent::FavoriteToggled => {
-                    let search_text = data_state.filters[filter_index].search_text.clone();
-                    let case_insensitive = data_state.filters[filter_index].case_insensitive;
+                    let search_text = self.state.search_text.clone();
+                    let case_insensitive = self.state.case_insensitive;
 
                     // Check if this filter is already a favorite
                     if let Some(pos) = global_config.favorite_filters.iter().position(|f| {
@@ -303,11 +288,12 @@ impl FilterView {
                     }) {
                         // Remove from favorites
                         global_config.favorite_filters.remove(pos);
-                        data_state.filters[filter_index].is_favorite = false;
+                        self.state.is_favorite = false;
                         log::info!("Removed favorite: '{}'", search_text);
                     } else {
                         // Add to favorites
-                        let name = data_state.filters[filter_index]
+                        let name = self
+                            .state
                             .name
                             .clone()
                             .unwrap_or_else(|| search_text.clone());
@@ -318,11 +304,8 @@ impl FilterView {
                                 search_text,
                                 case_insensitive,
                             });
-                        data_state.filters[filter_index].is_favorite = true;
-                        log::info!(
-                            "Added favorite: '{}'",
-                            data_state.filters[filter_index].search_text
-                        );
+                        self.state.is_favorite = true;
+                        log::info!("Added favorite: '{}'", self.state.search_text);
                     }
 
                     // Save global config
@@ -330,7 +313,7 @@ impl FilterView {
                 }
                 FilterViewEvent::FilterModified => {
                     // Filter search text or case sensitivity changed, save to .crab file
-                    data_state.save_crab_file();
+                    should_save = true;
                 }
             }
         }
@@ -339,7 +322,7 @@ impl FilterView {
         if let Some(ref mut window) = data_state.change_filtername_window {
             match window.render(ui) {
                 Ok(Some(new_name)) => {
-                    data_state.set_filter_name(filter_index, Some(new_name));
+                    self.state.name = Some(new_name);
                     data_state.change_filtername_window = None;
                 }
                 Ok(None) => {
@@ -351,11 +334,12 @@ impl FilterView {
                 }
             }
         }
+        should_save
     }
 
     /// Move selection within a filtered view (only through matched indices)
-    pub fn move_selection_in_filter(&mut self, delta: i32, data_state: &mut LogView) {
-        let filter = &data_state.filters[self.index];
+    pub fn move_selection_in_filter(&mut self, delta: i32, data_state: &mut LogViewState) {
+        let filter = &self.state;
         if filter.filtered_indices.is_empty() {
             return;
         }
@@ -388,8 +372,8 @@ impl FilterView {
     }
 
     /// Jump to the first line in a filtered view (Vim-style gg)
-    pub fn jump_to_top_in_filter(&mut self, data_state: &mut LogView) {
-        let filter = &data_state.filters[self.index];
+    pub fn jump_to_top_in_filter(&mut self, data_state: &mut LogViewState) {
+        let filter = &self.state;
         if filter.filtered_indices.is_empty() {
             return;
         }
@@ -399,8 +383,8 @@ impl FilterView {
     }
 
     /// Jump to the last line in a filtered view (Vim-style G)
-    pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut LogView) {
-        let filter = &data_state.filters[self.index];
+    pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut LogViewState) {
+        let filter = &self.state;
         if filter.filtered_indices.is_empty() {
             return;
         }
@@ -411,14 +395,14 @@ impl FilterView {
     }
 
     /// Move selection up by one page in a filtered view
-    pub fn page_up_in_filter(&mut self, data_state: &mut LogView) {
+    pub fn page_up_in_filter(&mut self, data_state: &mut LogViewState) {
         // A page is approximately 20-30 lines in typical terminal views
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_filter(-PAGE_SIZE, data_state);
     }
 
     /// Move selection down by one page in a filtered view
-    pub fn page_down_in_filter(&mut self, data_state: &mut LogView) {
+    pub fn page_down_in_filter(&mut self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_filter(PAGE_SIZE, data_state);
     }
@@ -432,17 +416,21 @@ impl LogCrabTab for FilterView {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
-        data_state: &mut LogView,
+        data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
-    ) {
-        if let Some(custom_name) = data_state.get_filter_name(self.index) {
+    ) -> bool {
+        if let Some(custom_name) = self.state.name.clone() {
             self.name = custom_name.clone();
         }
-
-        self.render_filter(ui, self.index, data_state, global_config);
+        self.render_filter(ui, data_state, global_config)
     }
 
-    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogView) {
+    fn process_events(
+        &mut self,
+        actions: &[ShortcutAction],
+        data_state: &mut LogViewState,
+    ) -> bool {
+        let mut should_save = false;
         for action in actions {
             match action {
                 ShortcutAction::MoveDown => {
@@ -453,6 +441,7 @@ impl LogCrabTab for FilterView {
                 }
                 ShortcutAction::ToggleBookmark => {
                     data_state.toggle_bookmark_for_selected();
+                    should_save = true;
                 }
                 ShortcutAction::JumpToTop => {
                     self.jump_to_top_in_filter(data_state);
@@ -476,7 +465,8 @@ impl LogCrabTab for FilterView {
                 ShortcutAction::ReverseCycleTab => {}
                 ShortcutAction::OpenFile => {}
                 ShortcutAction::RenameFilter => {
-                    data_state.start_rename_filter(self.index);
+                    data_state.change_filtername_window =
+                        Some(ChangeFilternameWindow::new(self.name.clone()));
                 }
                 ShortcutAction::FocusPaneLeft => {}
                 ShortcutAction::FocusPaneDown => {}
@@ -484,19 +474,19 @@ impl LogCrabTab for FilterView {
                 ShortcutAction::FocusPaneRight => {}
             }
         }
+        should_save
     }
 
-    fn on_close(&mut self, filter_to_remove: &mut Option<usize>) -> OnCloseResponse {
-        // When closing a filter tab, mark it for removal
-        // We can't remove it here because we need to update all other tabs' indices
-        *filter_to_remove = Some(self.index);
-        OnCloseResponse::Close
+    fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>) {
+        self.state.request_filter_update(lines);
     }
-    fn filter_got_removed(&mut self, filter_index: usize) {
-        // If a filter was removed, and its index is less than this filter's index,
-        // we need to decrement our index to stay in sync
-        if filter_index < self.index {
-            self.index -= 1;
-        }
+
+    fn try_into_stored_filter(&self) -> Option<SavedFilter> {
+        Some((&self.state).into())
+    }
+
+    fn check_filter_results(&mut self) -> bool {
+        self.state.check_filter_results();
+        self.state.is_filtering
     }
 }

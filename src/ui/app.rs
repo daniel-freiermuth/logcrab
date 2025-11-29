@@ -1,18 +1,18 @@
-use super::tabs::{navigation, LogCrabTabViewer};
+use super::tabs::navigation;
 use super::windows;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use egui_dock::{DockArea, DockState, Node};
+use egui_dock::Node;
 
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{KeyboardBindings, ShortcutAction};
-use crate::ui::tabs::{BookmarksView, FilterView, LogCrabTab, PendingTabAdd};
+use crate::ui::tabs::{BookmarksView, PendingTabAdd};
 use crate::ui::{LogView, PaneDirection};
 
-/// Main application state
+/// Main application
 pub struct LogCrabApp {
     /// The main log view component
     log_view: LogView,
@@ -35,9 +35,6 @@ pub struct LogCrabApp {
     /// Initial file to load from command line
     initial_file: Option<PathBuf>,
 
-    /// Dock state for VS Code-like tiling layout
-    dock_state: DockState<Box<dyn LogCrabTab>>,
-
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
 
@@ -53,14 +50,8 @@ pub struct LogCrabApp {
     /// Pending key rebind action
     pending_rebind: Option<ShortcutAction>,
 
-    /// Filter index to remove (set by on_close callback)
-    filter_to_remove: Option<usize>,
-
     /// Pending tab add request (set by add button callback)
     pending_tab_add: Option<PendingTabAdd>,
-
-    filter_counter: usize,
-    monotonic_filter_counter: usize,
 
     /// Whether to show the CPU profiler window
     #[cfg(feature = "cpu-profiling")]
@@ -68,25 +59,11 @@ pub struct LogCrabApp {
 }
 
 impl LogCrabApp {
-    fn create_filter_view(&mut self) -> Box<FilterView> {
-        let filter_name = format!("Filter {}", self.monotonic_filter_counter + 1);
-        let index = self.filter_counter;
-        self.filter_counter += 1;
-        self.monotonic_filter_counter += 1;
-        Box::new(FilterView::new(filter_name, index))
-    }
-
     pub fn new(_cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
-        // Initialize dock state with two filter tabs by default
-        let initial_tabs: Vec<Box<dyn LogCrabTab>> =
-            vec![Box::new(FilterView::new("Filter 1".to_string(), 0))];
-        let n_initial_tabs = initial_tabs.len();
-        let dock_state: DockState<Box<dyn LogCrabTab>> = DockState::new(initial_tabs);
-
         // Load global configuration
         let global_config = GlobalConfig::load();
 
-        LogCrabApp {
+        let mut app = LogCrabApp {
             log_view: LogView::new(),
             current_file: None,
             status_message: if file.is_some() {
@@ -98,19 +75,17 @@ impl LogCrabApp {
             load_progress: 0.0,
             load_receiver: None,
             initial_file: file,
-            dock_state,
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
-            filter_to_remove: None,
             pending_tab_add: None,
-            filter_counter: n_initial_tabs,
-            monotonic_filter_counter: n_initial_tabs,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
-        }
+        };
+        app.log_view.add_filter_view(false, None);
+        app
     }
 
     pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {
@@ -152,19 +127,13 @@ impl LogCrabApp {
                 }
                 LoadMessage::Complete(lines, path) => {
                     self.log_view.set_lines(lines);
-                    let additional_filters = self.log_view.set_bookmarks_file(path.clone());
-
-                    // Create tabs for any additional filters loaded from the crab file
-                    for _ in 0..additional_filters {
-                        let filter = self.create_filter_view();
-                        self.dock_state.push_to_focused_leaf(filter);
-                    }
+                    self.log_view.set_bookmarks_file(path.clone());
 
                     self.current_file = Some(path.clone());
                     self.update_window_title(ctx);
                     self.status_message = format!(
                         "Loaded {} lines - calculating anomaly scores in background...",
-                        self.log_view.lines.len()
+                        self.log_view.state.lines.len()
                     );
                     self.is_loading = false;
                     self.load_progress = 0.0;
@@ -178,7 +147,7 @@ impl LogCrabApp {
                     self.log_view.set_lines(lines);
                     self.status_message = format!(
                         "Ready. {} lines loaded with anomaly scores",
-                        self.log_view.lines.len()
+                        self.log_view.state.lines.len()
                     );
                     self.load_progress = 1.0;
                     should_clear_receiver = true;
@@ -217,14 +186,13 @@ impl LogCrabApp {
 
         ui.menu_button("View", |ui| {
             if ui.button("Add Filter Tab").clicked() {
-                self.log_view.add_filter();
-                let filter = self.create_filter_view();
-                self.dock_state.push_to_focused_leaf(filter);
+                self.log_view.add_filter_view(false, None);
                 ui.close();
             }
 
             if ui.button("Add Bookmarks Tab").clicked() {
-                self.dock_state
+                self.log_view
+                    .dock_state
                     .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 ui.close();
             }
@@ -277,7 +245,7 @@ impl LogCrabApp {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("central_panel");
 
-        if self.log_view.lines.is_empty() {
+        if self.log_view.state.lines.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(100.0);
                 ui.heading("Welcome to LogCrab 🦀");
@@ -310,19 +278,8 @@ impl LogCrabApp {
                 }
             });
         } else {
-            // Use dock area for VS Code-like draggable/tiling layout
-            DockArea::new(&mut self.dock_state)
-                .show_add_buttons(true)
-                .show_add_popup(true)
-                .show_inside(
-                    ui,
-                    &mut LogCrabTabViewer {
-                        log_view: &mut self.log_view,
-                        global_config: &mut self.global_config,
-                        filter_to_remove: &mut self.filter_to_remove,
-                        pending_tab_add: &mut self.pending_tab_add,
-                    },
-                );
+            self.log_view
+                .render(ui, &mut self.global_config, &mut self.pending_tab_add);
         }
     }
 
@@ -341,9 +298,6 @@ impl LogCrabApp {
             return;
         }
 
-        // Get the currently focused tab directly from dock state
-        let focused_tab = self.dock_state.find_active_focused().map(|(_, tab)| tab);
-
         let (actions, events_to_remove, shortcuts_changed) = self
             .shortcut_bindings
             .process_input(raw_input, &mut self.pending_rebind);
@@ -354,10 +308,7 @@ impl LogCrabApp {
                 .save_to_config(&mut self.global_config);
             let _ = self.global_config.save();
         }
-
-        if let Some(focused_tab) = focused_tab {
-            focused_tab.process_events(&actions, &mut self.log_view);
-        }
+        self.log_view.process_keyboard_input(&actions);
 
         // Execute all generated actions
         for action in actions {
@@ -365,34 +316,33 @@ impl LogCrabApp {
                 ShortcutAction::ToggleBookmark => {}
                 ShortcutAction::FocusSearch => {}
                 ShortcutAction::NewFilterTab => {
-                    self.log_view.add_filter();
-
-                    let mut filter = self.create_filter_view();
-                    filter.focus_search_next_frame();
-                    self.dock_state.push_to_focused_leaf(filter);
+                    self.log_view.add_filter_view(true, None);
                 }
                 ShortcutAction::NewBookmarksTab => {
-                    self.dock_state
+                    self.log_view
+                        .dock_state
                         .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 }
                 ShortcutAction::CloseTab => {
                     // Close the currently focused/active tab (the one the user is viewing)
                     // focused_leaf() returns which pane has keyboard focus
-                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
-                        let tree = &self.dock_state[surface_idx];
+                    if let Some((surface_idx, node_idx)) = self.log_view.dock_state.focused_leaf() {
+                        let tree = &self.log_view.dock_state[surface_idx];
 
                         // Each pane (leaf node) can have multiple tabs, but only one is "active" (visible).
                         // Get the active tab index from the leaf node
                         if let Node::Leaf(leaf) = &tree[node_idx] {
                             let active = leaf.active;
-                            self.dock_state.remove_tab((surface_idx, node_idx, active));
+                            self.log_view
+                                .dock_state
+                                .remove_tab((surface_idx, node_idx, active));
                         }
                     }
                 }
                 ShortcutAction::CycleTab => {
                     // Cycle to the next tab in the active pane
-                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
-                        let surface = &mut self.dock_state[surface_idx];
+                    if let Some((surface_idx, node_idx)) = self.log_view.dock_state.focused_leaf() {
+                        let surface = &mut self.log_view.dock_state[surface_idx];
 
                         // Get the number of tabs and current active tab
                         if let Node::Leaf(leaf) = &mut surface[node_idx] {
@@ -408,8 +358,8 @@ impl LogCrabApp {
                 }
                 ShortcutAction::ReverseCycleTab => {
                     // Cycle to the previous tab in the active pane
-                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
-                        let surface = &mut self.dock_state[surface_idx];
+                    if let Some((surface_idx, node_idx)) = self.log_view.dock_state.focused_leaf() {
+                        let surface = &mut self.log_view.dock_state[surface_idx];
 
                         // Get the number of tabs and current active tab
                         if let Node::Leaf(leaf) = &mut surface[node_idx] {
@@ -456,7 +406,7 @@ impl LogCrabApp {
     }
 
     fn navigate_pane(&mut self, direction: PaneDirection) {
-        let tree = self.dock_state.main_surface_mut();
+        let tree = self.log_view.dock_state.main_surface_mut();
 
         // Get the currently focused node
         if let Some(current_node) = tree.focused_leaf() {
@@ -509,27 +459,15 @@ impl eframe::App for LogCrabApp {
             self.render_central_panel(ui, ctx);
         });
 
-        // Handle filter removal (must be done after DockArea to avoid borrowing issues)
-        if let Some(filter_index) = self.filter_to_remove.take() {
-            self.log_view.remove_filter(filter_index);
-            self.filter_counter -= 1;
-
-            // Update all filter tab indices that are greater than the removed index
-            for (_, tab) in self.dock_state.iter_all_tabs_mut() {
-                tab.filter_got_removed(filter_index);
-            }
-        }
-
         // Handle tab addition from add button popup (must be done after DockArea)
         if let Some(tab_type) = self.pending_tab_add.take() {
             match tab_type {
                 PendingTabAdd::Filter => {
-                    self.log_view.add_filter();
-                    let filter = self.create_filter_view();
-                    self.dock_state.push_to_focused_leaf(filter);
+                    self.log_view.add_filter_view(false, None);
                 }
                 PendingTabAdd::Bookmarks => {
-                    self.dock_state
+                    self.log_view
+                        .dock_state
                         .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 }
             }

@@ -15,12 +15,15 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
+use crate::config::GlobalConfig;
 use crate::parser::line::LogLine;
 use crate::state::FilterState;
+use crate::ui::tabs::{FilterView, LogCrabTab, LogCrabTabViewer, PendingTabAdd};
 use crate::ui::windows::ChangeFilternameWindow;
 use egui::Color32;
 
 use chrono::{DateTime, Local};
+use egui_dock::{DockArea, DockState};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -37,7 +40,7 @@ pub struct Bookmark {
 
 /// Saved filter configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedFilter {
+pub struct SavedFilter {
     search_text: String,
     case_insensitive: bool,
     #[serde(default)]
@@ -73,39 +76,41 @@ struct CrabFile {
 }
 
 pub struct LogView {
+    // .crab file path
+    crab_file: Option<PathBuf>,
+
+    /// Dock state for VS Code-like tiling layout
+    pub dock_state: DockState<Box<dyn LogCrabTab>>,
+
+    monotonic_filter_counter: usize,
+    pub state: LogViewState,
+}
+
+pub struct LogViewState {
     pub lines: Arc<Vec<LogLine>>,
-    // Multiple filter views
-    pub filters: Vec<FilterState>,
     // Selected line tracking
     pub selected_line_index: Option<usize>,
     // Bookmarks with names
     pub bookmarks: HashMap<usize, Bookmark>,
-    // .crab file path
-    crab_file: Option<PathBuf>,
     pub change_filtername_window: Option<ChangeFilternameWindow>,
 }
 
 impl LogView {
     pub fn new() -> Self {
-        // Start with 2 filters by default (yellow and light blue highlights)
-        let filters = vec![
-            FilterState::new(Color32::YELLOW),
-            FilterState::new(Color32::LIGHT_BLUE),
-        ];
-
         LogView {
-            lines: Arc::new(Vec::new()),
-            filters,
-            selected_line_index: None,
-            bookmarks: HashMap::new(),
             crab_file: None,
-            change_filtername_window: None,
+            dock_state: DockState::new(Vec::new()),
+            monotonic_filter_counter: 0,
+            state: LogViewState {
+                lines: Arc::new(Vec::new()),
+                selected_line_index: None,
+                bookmarks: HashMap::new(),
+                change_filtername_window: None,
+            },
         }
     }
 
-    pub fn add_filter(&mut self) {
-        log::debug!("Adding new filter (index: {})", self.filters.len());
-        // Cycle through different highlight colors
+    pub fn add_filter_view(&mut self, focus_search: bool, state: Option<FilterState>) {
         let colors = [
             Color32::YELLOW,
             Color32::LIGHT_BLUE,
@@ -114,82 +119,64 @@ impl LogView {
             Color32::from_rgb(255, 150, 255), // Light magenta
             Color32::from_rgb(150, 255, 255), // Light cyan
         ];
-        let color = colors[self.filters.len() % colors.len()];
-        self.filters.push(FilterState::new(color));
-        self.save_crab_file();
-    }
+        let color = colors[self.monotonic_filter_counter % colors.len()];
 
-    pub fn remove_filter(&mut self, index: usize) {
-        log::debug!("Removing filter at index: {}", index);
-        self.filters.remove(index);
+        let filter_name = format!("Filter {}", self.monotonic_filter_counter + 1);
+        let mut filter = Box::new(FilterView::new(
+            filter_name,
+            self.monotonic_filter_counter,
+            color,
+            state,
+        ));
+        if focus_search {
+            filter.focus_search_next_frame();
+        }
+        self.dock_state.push_to_focused_leaf(filter);
         self.save_crab_file();
+        self.monotonic_filter_counter += 1;
     }
 
     /// Check if any filter is currently processing in the background
     /// Also checks for completed filter results to update status
     pub fn is_any_filter_active(&mut self) -> bool {
-        // Check all filters for completed results, even if they're not being rendered
-        for filter in &mut self.filters {
-            filter.check_filter_results();
+        let mut any_loading = false;
+        for ((_, _), tab) in self.dock_state.iter_all_tabs_mut() {
+            if tab.check_filter_results() {
+                any_loading = true;
+            }
         }
-        // Return true if any filter is still processing
-        self.filters.iter().any(|f| f.is_filtering)
-    }
-
-    /// Start renaming a filter (opens the rename dialog)
-    pub fn start_rename_filter(&mut self, filter_index: usize) {
-        let starting_name = if let Some(current_name) = &self.filters[filter_index].name {
-            current_name.clone()
-        } else {
-            format!("Filter {}", filter_index + 1)
-        };
-        self.change_filtername_window = Some(ChangeFilternameWindow::new(starting_name));
-    }
-
-    pub fn get_filter_name(&self, index: usize) -> Option<String> {
-        self.filters.get(index).and_then(|f| f.name.clone())
-    }
-
-    pub fn set_filter_name(&mut self, index: usize, name: Option<String>) {
-        if let Some(filter) = self.filters.get_mut(index) {
-            filter.name = name;
-            self.save_crab_file();
-        }
+        any_loading
     }
 
     pub fn set_lines(&mut self, lines: Arc<Vec<LogLine>>) {
         log::info!(
-            "Setting {} log lines, requesting background filtering for {} filters",
+            "Setting {} log lines, requesting background filtering",
             lines.len(),
-            self.filters.len()
         );
-        self.lines = lines;
+        self.state.lines = lines;
         // Request background filtering for all filters
-        for filter in &mut self.filters {
-            filter.request_filter_update(Arc::clone(&self.lines));
+        for ((_surface, _node), tab) in &mut self.dock_state.iter_all_tabs_mut() {
+            // TODO This is actually just a redraw
+            tab.request_filter_update(Arc::clone(&self.state.lines));
         }
     }
 
-    pub fn set_bookmarks_file(&mut self, log_file_path: PathBuf) -> usize {
+    // TODO
+    pub fn set_bookmarks_file(&mut self, log_file_path: PathBuf) {
         let crab_path = log_file_path.with_extension("crab");
         self.crab_file = Some(crab_path.clone());
-        let initial_filter_count = self.filters.len();
         self.load_crab_file();
 
         // Request filter updates for any newly loaded or restored filters
         // This ensures filters loaded from .crab file start background filtering immediately
-        for filter in &mut self.filters {
-            if filter.filter_dirty {
-                filter.request_filter_update(Arc::clone(&self.lines));
-            }
+        for ((_surface, _node), tab) in &mut self.dock_state.iter_all_tabs_mut() {
+            tab.request_filter_update(Arc::clone(&self.state.lines));
         }
-
-        // Return how many filters we have after loading
-        self.filters.len().saturating_sub(initial_filter_count)
     }
 
     fn load_crab_file(&mut self) {
-        self.bookmarks.clear();
+        self.state.bookmarks.clear();
+        self.dock_state.retain_tabs(|_| false);
 
         if let Some(ref path) = self.crab_file {
             log::debug!("Loading .crab file: {:?}", path);
@@ -203,18 +190,12 @@ impl LogView {
 
                     // Load bookmarks
                     for bookmark in crab_data.bookmarks {
-                        self.bookmarks.insert(bookmark.line_index, bookmark);
+                        self.state.bookmarks.insert(bookmark.line_index, bookmark);
                     }
 
                     // Load saved filters - create additional filters if needed
                     for (i, saved_filter) in crab_data.filters.iter().enumerate() {
-                        // Add new filter if we don't have enough
-                        while i >= self.filters.len() {
-                            self.add_filter();
-                        }
-
-                        // Restore filter settings
-                        self.filters[i] = saved_filter.into();
+                        self.add_filter_view(false, Some(saved_filter.into()));
                         log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
                     }
                 } else {
@@ -229,17 +210,23 @@ impl LogView {
     pub fn save_crab_file(&self) {
         if let Some(ref path) = self.crab_file {
             log::debug!("Saving .crab file: {:?}", path);
+            let filters = self
+                .dock_state
+                .iter_all_tabs()
+                .filter_map(|((_surface, _node), tab)| tab.try_into_stored_filter())
+                .collect::<Vec<SavedFilter>>();
+            let n_filters = filters.len();
             let crab_data = CrabFile {
-                bookmarks: self.bookmarks.values().cloned().collect(),
-                filters: self.filters.iter().map(|f| f.into()).collect(),
+                bookmarks: self.state.bookmarks.values().cloned().collect(),
+                filters,
             };
 
             if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
                 match fs::write(path, json) {
                     Ok(_) => log::debug!(
                         "Successfully saved .crab file with {} bookmarks, {} filters",
-                        self.bookmarks.len(),
-                        self.filters.len()
+                        self.state.bookmarks.len(),
+                        n_filters,
                     ),
                     Err(e) => log::error!("Failed to save .crab file: {}", e),
                 }
@@ -247,6 +234,43 @@ impl LogView {
         }
     }
 
+    pub fn render(
+        &mut self,
+        ui: &mut egui::Ui,
+        global_config: &mut GlobalConfig,
+        pending_tab_add: &mut Option<PendingTabAdd>,
+    ) {
+        let mut should_save = false;
+        // Use dock area for VS Code-like draggable/tiling layout
+        DockArea::new(&mut self.dock_state)
+            .show_add_buttons(true)
+            .show_add_popup(true)
+            .show_inside(
+                ui,
+                &mut LogCrabTabViewer {
+                    log_view: &mut self.state,
+                    global_config,
+                    pending_tab_add,
+                    should_save: &mut should_save,
+                },
+            );
+
+        if should_save {
+            self.save_crab_file();
+        }
+    }
+
+    pub fn process_keyboard_input(&mut self, actions: &[crate::input::ShortcutAction]) {
+        let focused_tab = self.dock_state.find_active_focused().map(|(_, tab)| tab);
+        if let Some(focused_tab) = focused_tab {
+            if focused_tab.process_events(actions, &mut self.state) {
+                self.save_crab_file();
+            }
+        }
+    }
+}
+
+impl LogViewState {
     pub fn toggle_bookmark(&mut self, line_index: usize) {
         if let std::collections::hash_map::Entry::Vacant(e) = self.bookmarks.entry(line_index) {
             let timestamp = if line_index < self.lines.len() {
@@ -274,7 +298,6 @@ impl LogView {
             log::debug!("Removing bookmark at line {}", line_index);
             self.bookmarks.remove(&line_index);
         }
-        self.save_crab_file();
     }
 
     /// Toggle bookmark for the currently selected line

@@ -73,7 +73,7 @@ impl LogTable {
         ui: &mut Ui,
         lines: &[LogLine],
         filter: &FilterState,
-        filter_index: usize,
+        ui_salt: usize,
         selected_line_index: Option<usize>,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         scroll_to_row: Option<usize>,
@@ -82,7 +82,7 @@ impl LogTable {
         let visible_lines = filter.filtered_indices.len();
 
         egui::ScrollArea::horizontal()
-            .id_salt(format!("filtered_scroll_{}", filter_index))
+            .id_salt(format!("filtered_scroll_{}", ui_salt))
             .auto_shrink([false, false]) // Don't shrink, take all available space
             .show(ui, |ui| {
                 #[cfg(feature = "cpu-profiling")]
@@ -143,7 +143,7 @@ impl LogTable {
                                 &mut row,
                                 line,
                                 line_idx,
-                                filter_index,
+                                ui_salt,
                                 is_selected,
                                 is_bookmarked,
                                 color,
@@ -157,7 +157,7 @@ impl LogTable {
                                 &mut row,
                                 line,
                                 line_idx,
-                                filter_index,
+                                ui_salt,
                                 filter,
                                 is_selected,
                                 is_bookmarked,
@@ -171,7 +171,7 @@ impl LogTable {
                                 &mut row,
                                 line,
                                 line_idx,
-                                filter_index,
+                                ui_salt,
                                 filter,
                                 is_selected,
                                 is_bookmarked,
@@ -185,7 +185,7 @@ impl LogTable {
                                 &mut row,
                                 line,
                                 line_idx,
-                                filter_index,
+                                ui_salt,
                                 is_selected,
                                 is_bookmarked,
                                 color,
@@ -215,7 +215,7 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        filter_index: usize,
+        ui_salt: usize,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
@@ -267,7 +267,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(filter_index).with("line"),
+                ui.id().with(line_idx).with(ui_salt).with("line"),
                 egui::Sense::click(),
             );
 
@@ -285,7 +285,7 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        filter_index: usize,
+        ui_salt: usize,
         filter: &FilterState,
         is_selected: bool,
         is_bookmarked: bool,
@@ -325,7 +325,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(filter_index).with("ts"),
+                ui.id().with(line_idx).with(ui_salt).with("ts"),
                 egui::Sense::click(),
             );
             if response.clicked() {
@@ -342,7 +342,7 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        filter_index: usize,
+        ui_salt: usize,
         filter: &FilterState,
         is_selected: bool,
         is_bookmarked: bool,
@@ -376,7 +376,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(filter_index).with("msg"),
+                ui.id().with(line_idx).with(ui_salt).with("msg"),
                 egui::Sense::click(),
             );
             let response = response.on_hover_text(&line.raw);
@@ -394,7 +394,7 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        filter_index: usize,
+        ui_salt: usize,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
@@ -429,7 +429,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(filter_index).with("score"),
+                ui.id().with(line_idx).with(ui_salt).with("score"),
                 egui::Sense::click(),
             );
             if response.clicked() {
