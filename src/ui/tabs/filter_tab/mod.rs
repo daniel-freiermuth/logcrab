@@ -314,6 +314,7 @@ impl FilterView {
                 Ok(Some(new_name)) => {
                     self.state.name = new_name;
                     data_state.change_filtername_window = None;
+                    should_save = true;
                 }
                 Ok(None) => {
                     // Still editing
