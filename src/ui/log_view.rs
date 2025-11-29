@@ -128,18 +128,6 @@ impl LogView {
         self.monotonic_filter_counter += 1;
     }
 
-    /// Check if any filter is currently processing in the background
-    /// Also checks for completed filter results to update status
-    pub fn is_any_filter_active(&mut self) -> bool {
-        let mut any_loading = false;
-        for ((_, _), tab) in self.dock_state.iter_all_tabs_mut() {
-            if tab.is_filtering() {
-                any_loading = true;
-            }
-        }
-        any_loading
-    }
-
     pub fn set_lines(&mut self, lines: Arc<Vec<LogLine>>) {
         log::info!(
             "Setting {} log lines, requesting background filtering",

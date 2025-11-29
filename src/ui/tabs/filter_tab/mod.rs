@@ -408,8 +408,4 @@ impl LogCrabTab for FilterView {
     fn try_into_stored_filter(&self) -> Option<SavedFilter> {
         Some((&self.state).into())
     }
-
-    fn is_filtering(&mut self) -> bool {
-        self.state.is_filtering
-    }
 }

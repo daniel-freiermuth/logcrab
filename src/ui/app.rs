@@ -9,6 +9,7 @@ use egui_dock::Node;
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{KeyboardBindings, ShortcutAction};
+use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
 use crate::ui::tabs::{BookmarksView, PendingTabAdd};
 use crate::ui::{LogView, PaneDirection};
 
@@ -230,7 +231,10 @@ impl LogCrabApp {
             }
 
             // Show filtering indicator if any filter is currently processing
-            if self.log_view.is_any_filter_active() {
+            if GlobalFilterWorker::get()
+                .is_filtering
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
                 ui.separator();
                 ui.spinner();
                 ui.label("Filtering...");

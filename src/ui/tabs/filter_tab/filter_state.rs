@@ -20,7 +20,7 @@ use crate::parser::line::LogLine;
 use egui::{text::LayoutJob, Color32, TextFormat};
 use fancy_regex::{Error, Regex};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
 
@@ -30,7 +30,6 @@ struct FilterRequest {
     filter_id: usize, // Unique identifier for each filter instance
     search_text: String,
     case_insensitive: bool,
-    generation: u64,
     lines: Arc<Vec<LogLine>>,        // Shared read-only access to log lines
     result_tx: Sender<FilterResult>, // Each filter has its own result channel
 }
@@ -38,31 +37,36 @@ struct FilterRequest {
 /// Result from background filtering
 struct FilterResult {
     filtered_indices: Vec<usize>,
-    generation: u64,
 }
 
 /// Global filter worker channels
-struct GlobalFilterWorker {
+pub struct GlobalFilterWorker {
     request_tx: Sender<FilterRequest>,
+    pub is_filtering: Arc<AtomicBool>,
 }
 
 impl GlobalFilterWorker {
-    fn get() -> &'static GlobalFilterWorker {
+    pub fn get() -> &'static GlobalFilterWorker {
         static INSTANCE: OnceLock<GlobalFilterWorker> = OnceLock::new();
+        let is_filtering = Arc::new(AtomicBool::new(false));
+        let is_filtering_copy = is_filtering.clone();
         INSTANCE.get_or_init(|| {
             let (request_tx, request_rx) = channel::<FilterRequest>();
 
             // Spawn the single global worker thread
             std::thread::spawn(move || {
-                Self::filter_worker(request_rx);
+                Self::filter_worker(request_rx, is_filtering_copy);
             });
 
-            GlobalFilterWorker { request_tx }
+            GlobalFilterWorker {
+                request_tx,
+                is_filtering,
+            }
         })
     }
 
     /// Single background worker that processes all filter requests
-    fn filter_worker(request_rx: Receiver<FilterRequest>) {
+    fn filter_worker(request_rx: Receiver<FilterRequest>, is_filtering: Arc<AtomicBool>) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
@@ -76,13 +80,8 @@ impl GlobalFilterWorker {
         let drain_pending = |pending: &mut HashMap<usize, FilterRequest>| {
             while let Ok(request) = request_rx.try_recv() {
                 let filter_id = request.filter_id;
-                if let Some(existing) = pending.get(&filter_id) {
-                    log::trace!(
-                        "Updating pending request for filter {} (gen {} -> {})",
-                        filter_id,
-                        existing.generation,
-                        request.generation
-                    );
+                if pending.contains_key(&filter_id) {
+                    log::trace!("Updating pending request for filter {}", filter_id,);
                 }
                 pending.insert(filter_id, request);
             }
@@ -90,6 +89,7 @@ impl GlobalFilterWorker {
 
         // Main processing loop
         while let Ok(first_request) = request_rx.recv() {
+            is_filtering.store(true, Ordering::Relaxed);
             #[cfg(feature = "cpu-profiling")]
             puffin::profile_scope!("process_filter_request");
             pending_requests.insert(first_request.filter_id, first_request);
@@ -105,8 +105,7 @@ impl GlobalFilterWorker {
                 #[cfg(feature = "cpu-profiling")]
                 puffin::profile_scope!("process_single_filter", format!("filter_{}", filter_id));
                 log::trace!(
-                    "Processing filter request (generation {}, search: '{}')",
-                    request.generation,
+                    "Processing filter request (search: '{}')",
                     request.search_text
                 );
 
@@ -163,20 +162,13 @@ impl GlobalFilterWorker {
                     indices
                 };
 
-                // Check one more time if a newer request arrived during processing
-                drain_pending(&mut pending_requests);
-
                 log::trace!(
-                    "Filter {} complete: {} matches (generation {})",
+                    "Filter {} complete: {} matches",
                     filter_id,
                     filtered_indices.len(),
-                    request.generation
                 );
 
-                let result = FilterResult {
-                    filtered_indices,
-                    generation: request.generation,
-                };
+                let result = FilterResult { filtered_indices };
 
                 // Send result back to the specific filter (ignore errors if filter is gone)
                 {
@@ -185,7 +177,11 @@ impl GlobalFilterWorker {
 
                     let _ = request.result_tx.send(result);
                 }
+
+                // Check one more time if a newer request arrived during processing
+                drain_pending(&mut pending_requests);
             }
+            is_filtering.store(false, Ordering::Relaxed);
         }
         log::debug!("Filter worker thread shutting down (channel closed)");
     }
@@ -207,8 +203,6 @@ pub struct FilterState {
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
     filter_result_tx: Sender<FilterResult>, // Keep sender to create requests
-    filter_generation: u64,
-    pub is_filtering: bool, // True when request sent but result not yet received
 }
 
 impl FilterState {
@@ -232,8 +226,6 @@ impl FilterState {
             name,
             filter_result_rx,
             filter_result_tx: result_tx,
-            filter_generation: 0,
-            is_filtering: false,
         }
     }
 
@@ -255,11 +247,8 @@ impl FilterState {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
-        self.filter_generation += 1;
-
         // Only mark as filtering if we have search text
         if !self.search_text.is_empty() {
-            self.is_filtering = true;
             log::debug!(
                 "Filter {}: Started background filtering for search: '{}'",
                 self.filter_id,
@@ -271,7 +260,6 @@ impl FilterState {
             filter_id: self.filter_id,
             search_text: self.search_text.clone(),
             case_insensitive: self.case_insensitive,
-            generation: self.filter_generation,
             lines,
             result_tx: self.filter_result_tx.clone(),
         };
@@ -285,25 +273,16 @@ impl FilterState {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
-        // Drain all available results, keeping only the newest
-        // use with queue = 1
-        let mut updated = false;
-        while let Ok(result) = self.filter_result_rx.try_recv() {
-            // Only apply results from the current or newer generation
-            if result.generation >= self.filter_generation {
-                self.filtered_indices = result.filtered_indices;
-                if self.is_filtering {
-                    log::debug!(
-                        "Filter {}: Completed background filtering (found {} matches)",
-                        self.filter_id,
-                        self.filtered_indices.len()
-                    );
-                }
-                self.is_filtering = false; // Filtering complete
-                updated = true;
-            }
+        if let Ok(result) = self.filter_result_rx.try_recv() {
+            self.filtered_indices = result.filtered_indices;
+            log::debug!(
+                "Filter {}: Completed background filtering (found {} matches)",
+                self.filter_id,
+                self.filtered_indices.len()
+            );
+            return true;
         }
-        updated
+        false
     }
 
     /// Find the closest line by timestamp in the filtered results

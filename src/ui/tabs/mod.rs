@@ -44,7 +44,6 @@ pub trait LogCrabTab {
         -> bool;
     fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>);
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
-    fn is_filtering(&mut self) -> bool;
 }
 
 /// Pending tab addition request from the add button

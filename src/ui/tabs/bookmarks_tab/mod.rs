@@ -280,8 +280,4 @@ impl LogCrabTab for BookmarksView {
     fn try_into_stored_filter(&self) -> Option<crate::ui::log_view::SavedFilter> {
         None
     }
-
-    fn is_filtering(&mut self) -> bool {
-        false
-    }
 }
