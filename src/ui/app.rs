@@ -63,7 +63,7 @@ impl LogCrabApp {
         // Load global configuration
         let global_config = GlobalConfig::load();
 
-        let mut app = LogCrabApp {
+        LogCrabApp {
             log_view: LogView::new(),
             current_file: None,
             status_message: if file.is_some() {
@@ -83,9 +83,7 @@ impl LogCrabApp {
             pending_tab_add: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
-        };
-        app.log_view.add_filter_view(false, None);
-        app
+        }
     }
 
     pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {

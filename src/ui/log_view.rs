@@ -191,16 +191,17 @@ impl LogView {
                         self.state.bookmarks.insert(bookmark.line_index, bookmark);
                     }
 
-                    // Load saved filters - create additional filters if needed
                     for (i, saved_filter) in crab_data.filters.iter().enumerate() {
                         self.add_filter_view(false, Some(saved_filter.into()));
                         log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
                     }
                 } else {
                     log::warn!("Failed to parse .crab file: {:?}", path);
+                    self.add_filter_view(false, None);
                 }
             } else {
-                log::debug!(".crab file does not exist yet: {:?}", path);
+                log::info!(".crab file does not exist yet: {:?}", path);
+                self.add_filter_view(false, None);
             }
         }
     }
