@@ -16,8 +16,9 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::state::filter_state::FilterState;
 use egui::{Color32, Ui};
+
+use crate::ui::tabs::filter_tab::filter_state::FilterState;
 
 /// Favorite filter for quick selection
 pub struct FavoriteFilter {

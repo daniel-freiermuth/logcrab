@@ -19,7 +19,6 @@ mod config;
 mod core;
 mod input;
 mod parser;
-mod state;
 mod ui;
 
 use clap::Parser;

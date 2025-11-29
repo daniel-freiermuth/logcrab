@@ -16,8 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::parser::line::LogLine;
-use crate::state::FilterState;
+use crate::{parser::line::LogLine, ui::tabs::filter_tab::filter_state::FilterState};
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 

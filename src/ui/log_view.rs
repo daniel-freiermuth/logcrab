@@ -17,7 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 use crate::config::GlobalConfig;
 use crate::parser::line::LogLine;
-use crate::state::FilterState;
+use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::{FilterView, LogCrabTab, LogCrabTabViewer, PendingTabAdd};
 use crate::ui::windows::ChangeFilternameWindow;
 use egui::Color32;

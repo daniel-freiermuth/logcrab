@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod filter_bar;
+pub mod filter_state;
 pub mod histogram;
 pub mod log_table;
 
@@ -27,8 +28,8 @@ pub use log_table::{LogTable, LogTableEvent};
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
 use crate::parser::line::LogLine;
-use crate::state::FilterState;
 use crate::ui::log_view::{LogViewState, SavedFilter};
+use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
 use egui::{Color32, Ui};
