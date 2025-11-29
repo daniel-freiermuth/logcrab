@@ -201,7 +201,6 @@ pub struct FilterState {
     pub search_regex: Result<Regex, Error>,
     pub case_insensitive: bool,
     pub filtered_indices: Vec<usize>,
-    pub filter_dirty: bool,
     pub last_rendered_selection: Option<usize>,
     pub name: String,
 
@@ -229,7 +228,6 @@ impl FilterState {
             search_regex: initial_regex,
             case_insensitive: false,
             filtered_indices: Vec::new(),
-            filter_dirty: true,
             last_rendered_selection: None,
             name,
             filter_result_rx,
@@ -248,18 +246,18 @@ impl FilterState {
             self.search_text.clone()
         };
         self.search_regex = Regex::new(&pattern);
-        self.filter_dirty = true;
     }
 
     /// Send a filter request to the background thread
     pub fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>) {
+        self.update_search_regex();
+
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
         self.filter_generation += 1;
 
         // Only mark as filtering if we have search text
-        // (min_score filtering is usually fast enough to not need indication)
         if !self.search_text.is_empty() {
             self.is_filtering = true;
             log::debug!(
@@ -283,18 +281,16 @@ impl FilterState {
     }
 
     /// Check for completed filter results from background thread
-    pub fn check_filter_results(&mut self) -> bool {
+    pub fn check_filter_results(&mut self) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
-        let mut updated = false;
-
         // Drain all available results, keeping only the newest
+        // use with queue = 1
         while let Ok(result) = self.filter_result_rx.try_recv() {
             // Only apply results from the current or newer generation
             if result.generation >= self.filter_generation {
                 self.filtered_indices = result.filtered_indices;
-                self.filter_dirty = false;
                 if self.is_filtering {
                     log::debug!(
                         "Filter {}: Completed background filtering (found {} matches)",
@@ -303,56 +299,8 @@ impl FilterState {
                     );
                 }
                 self.is_filtering = false; // Filtering complete
-                updated = true;
             }
         }
-
-        updated
-    }
-
-    /// Check if a line matches the current search criteria
-    pub fn matches_search(&self, line: &LogLine) -> bool {
-        if let Ok(ref regex) = self.search_regex {
-            regex.is_match(&line.message).unwrap_or(false)
-                || regex.is_match(&line.raw).unwrap_or(false)
-        } else {
-            true
-        }
-    }
-
-    /// Rebuild the filtered indices based on current filter criteria
-    pub fn rebuild_filtered_indices(
-        &mut self,
-        lines: &[LogLine],
-        selected_line_index: Option<usize>,
-    ) -> Option<usize> {
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_function!();
-
-        self.filtered_indices.clear();
-        self.filtered_indices.reserve(lines.len() / 10);
-
-        for (idx, line) in lines.iter().enumerate() {
-            if self.matches_search(line) {
-                self.filtered_indices.push(idx);
-            }
-        }
-        self.filter_dirty = false;
-        self.is_filtering = false; // Clear filtering flag since we did it synchronously
-
-        // Find selected line in filtered results
-        if let Some(selected_line_idx) = selected_line_index {
-            if let Some(position) = self
-                .filtered_indices
-                .iter()
-                .position(|&idx| idx == selected_line_idx)
-            {
-                return Some(position);
-            }
-            return self.find_closest_timestamp_index(selected_line_idx);
-        }
-
-        None
     }
 
     /// Find the closest line by timestamp in the filtered results

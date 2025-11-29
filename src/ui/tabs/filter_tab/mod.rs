@@ -96,12 +96,10 @@ impl FilterView {
         for event in filter_bar_events {
             match event {
                 FilterInternalEvent::SearchChanged => {
-                    self.state.update_search_regex();
                     self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::CaseInsensitiveToggled => {
-                    self.state.update_search_regex();
                     self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
@@ -111,7 +109,6 @@ impl FilterView {
                 } => {
                     self.state.search_text = search_text;
                     self.state.case_insensitive = case_insensitive;
-                    self.state.update_search_regex();
                     self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
@@ -129,40 +126,20 @@ impl FilterView {
         // Check for completed filter results from background thread
         self.state.check_filter_results();
 
-        // Rebuild filtered indices synchronously ONLY if:
-        // - filter_dirty is true (needs filtering)
-        // - AND we're NOT currently waiting for a background result
-        let mut scroll_to_row = if self.state.filter_dirty && !self.state.is_filtering {
-            self.state
-                .rebuild_filtered_indices(lines, selected_line_index)
-        } else {
-            None
-        };
-
         // Check if selection changed
-        if scroll_to_row.is_none()
-            && selected_line_index.is_some()
+        let scroll_to_row = if selected_line_index.is_some()
             && self.state.last_rendered_selection != selected_line_index
         {
             if let Some(selected_idx) = selected_line_index {
-                if let Some(position) = self
-                    .state
-                    .filtered_indices
-                    .iter()
-                    .position(|&idx| idx == selected_idx)
-                {
-                    scroll_to_row = Some(position);
-                } else {
-                    // Line not in filtered results - try to find closest by timestamp
-                    if let Some(closest_pos) = self.state.find_closest_timestamp_index(selected_idx)
-                    {
-                        scroll_to_row = Some(closest_pos);
-                    }
-                }
                 // Mark as processed so we don't keep checking on every render
                 self.state.last_rendered_selection = selected_line_index;
+                self.state.find_closest_timestamp_index(selected_idx)
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // Render histogram
         if let Some(hist_event) =
