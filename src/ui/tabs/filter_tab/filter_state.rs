@@ -205,7 +205,6 @@ pub struct FilterState {
     pub filter_dirty: bool,
     pub last_rendered_selection: Option<usize>,
     pub highlight_color: Color32,
-    pub is_favorite: bool,
     pub name: String,
 
     // Background filtering - each filter has its own result channel
@@ -233,7 +232,6 @@ impl FilterState {
             filter_dirty: true,
             last_rendered_selection: None,
             highlight_color,
-            is_favorite: false,
             name,
             filter_result_rx,
             filter_result_tx: result_tx,

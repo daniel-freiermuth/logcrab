@@ -18,13 +18,7 @@
 
 use egui::{Color32, Ui};
 
-use crate::ui::tabs::filter_tab::filter_state::FilterState;
-
-/// Favorite filter for quick selection
-pub struct FavoriteFilter {
-    pub search_text: String,
-    pub case_insensitive: bool,
-}
+use crate::{config::FavoriteFilter, ui::tabs::filter_tab::filter_state::FilterState};
 
 /// Events emitted by the filter bar
 #[derive(Debug, Clone)]
@@ -64,9 +58,12 @@ impl FilterBar {
                 events.push(FilterInternalEvent::FilterNameEditRequested);
             }
 
-            let star_text = if filter.is_favorite { "⭐" } else { "☆" };
+            let mut is_favorite = favorites.iter().any(|fav| {
+                fav.search_text == filter.search_text
+                    && fav.case_insensitive == filter.case_insensitive
+            });
             if ui
-                .button(star_text)
+                .toggle_value(&mut is_favorite, "⭐")
                 .on_hover_text("Toggle favorite filter")
                 .clicked()
             {

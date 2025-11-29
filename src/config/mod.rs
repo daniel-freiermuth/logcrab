@@ -36,7 +36,6 @@ pub struct GlobalConfig {
 /// A favorite filter that can be quickly added to any log
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteFilter {
-    pub name: String,
     pub search_text: String,
     pub case_insensitive: bool,
 }

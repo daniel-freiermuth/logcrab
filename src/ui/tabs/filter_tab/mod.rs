@@ -21,18 +21,18 @@ pub mod filter_state;
 pub mod histogram;
 pub mod log_table;
 
-pub use filter_bar::{FavoriteFilter, FilterBar, FilterInternalEvent};
+pub use filter_bar::{FilterBar, FilterInternalEvent};
 pub use histogram::Histogram;
 pub use log_table::{LogTable, LogTableEvent};
 
-use crate::config::GlobalConfig;
+use crate::config::{FavoriteFilter, GlobalConfig};
 use crate::input::ShortcutAction;
 use crate::parser::line::LogLine;
 use crate::ui::log_view::{LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
-use egui::{Color32, Ui};
+use egui::Ui;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -70,33 +70,22 @@ impl FilterView {
     /// Render a complete filter view
     ///
     /// Returns events that occurred during rendering
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         ui: &mut Ui,
         lines: &Arc<Vec<LogLine>>,
-        all_filters: &[FilterState],
+        favorites: &[FavoriteFilter],
         selected_line_index: Option<usize>,
         bookmarked_lines: &HashMap<usize, String>,
     ) -> Vec<FilterViewEvent> {
         let mut events = Vec::new();
-
-        // Collect favorite filters from all filters
-        let favorites: Vec<FavoriteFilter> = all_filters
-            .iter()
-            .filter(|f| f.is_favorite && !f.search_text.is_empty())
-            .map(|f| FavoriteFilter {
-                search_text: f.search_text.clone(),
-                case_insensitive: f.case_insensitive,
-            })
-            .collect();
 
         // Render filter bar
         let filter_bar_events = FilterBar::render(
             ui,
             &mut self.state,
             self.uuid,
-            &favorites,
+            favorites,
             self.should_focus_search,
         );
         self.should_focus_search = false;
@@ -224,36 +213,11 @@ impl FilterView {
             .map(|(&idx, bookmark)| (idx, bookmark.name.clone()))
             .collect();
 
-        // Get current filter's search text for favorite checking
-        let current_search = self.state.search_text.clone();
-        let current_case_insensitive = self.state.case_insensitive;
-
-        // Check if current filter matches any global favorite
-        let is_favorite = global_config.favorite_filters.iter().any(|f| {
-            f.search_text == current_search && f.case_insensitive == current_case_insensitive
-        });
-
-        // Update the filter's favorite status (for UI display only, not saved to .crab)
-        self.state.is_favorite = is_favorite;
-
-        // Use global favorites instead of per-file favorites
-        let temp_filters: Vec<FilterState> = global_config
-            .favorite_filters
-            .iter()
-            .map(|fav| {
-                let mut f = FilterState::new(self.state.name.clone(), Color32::YELLOW);
-                f.search_text = fav.search_text.clone();
-                f.case_insensitive = fav.case_insensitive;
-                f.is_favorite = true;
-                f
-            })
-            .collect();
-
         // Render using FilterView
         let events = self.render(
             ui,
             &data_state.lines,
-            &temp_filters,
+            global_config.favorite_filters.as_slice(),
             data_state.selected_line_index,
             &bookmarked_lines,
         );
@@ -284,19 +248,15 @@ impl FilterView {
                     }) {
                         // Remove from favorites
                         global_config.favorite_filters.remove(pos);
-                        self.state.is_favorite = false;
                         log::info!("Removed favorite: '{}'", search_text);
                     } else {
                         // Add to favorites
-                        let name = self.state.name.clone();
                         global_config
                             .favorite_filters
                             .push(crate::config::FavoriteFilter {
-                                name,
                                 search_text,
                                 case_insensitive,
                             });
-                        self.state.is_favorite = true;
                         log::info!("Added favorite: '{}'", self.state.search_text);
                     }
 
