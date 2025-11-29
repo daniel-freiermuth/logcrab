@@ -120,10 +120,9 @@ impl FilterBar {
             }
 
             // Display regex validation status
-            if let Some(ref error) = filter.regex_error {
-                ui.colored_label(Color32::RED, format!("❌ {}", error));
-            } else if filter.search_regex.is_some() {
-                ui.colored_label(Color32::GREEN, "✓ Valid regex");
+            match &filter.search_regex {
+                Ok(_) => ui.colored_label(Color32::GREEN, "✓ Valid regex"),
+                Err(err) => ui.colored_label(Color32::RED, format!("❌ {}", err)),
             }
         });
 

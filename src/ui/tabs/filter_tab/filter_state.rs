@@ -18,7 +18,7 @@
 
 use crate::parser::line::LogLine;
 use egui::{text::LayoutJob, Color32, TextFormat};
-use fancy_regex::Regex;
+use fancy_regex::{Error, Regex};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -198,8 +198,7 @@ static NEXT_FILTER_ID: AtomicUsize = AtomicUsize::new(0);
 pub struct FilterState {
     filter_id: usize, // Unique identifier for this filter instance
     pub search_text: String,
-    pub search_regex: Option<Regex>,
-    pub regex_error: Option<String>,
+    pub search_regex: Result<Regex, Error>,
     pub case_insensitive: bool,
     pub filtered_indices: Vec<usize>,
     pub filter_dirty: bool,
@@ -222,11 +221,13 @@ impl FilterState {
         // Assign unique filter ID
         let filter_id = NEXT_FILTER_ID.fetch_add(1, Ordering::Relaxed);
 
+        let initial_filter = String::new();
+        let initial_regex = Regex::new(&initial_filter);
+
         FilterState {
             filter_id,
-            search_text: String::new(),
-            search_regex: None,
-            regex_error: None,
+            search_text: initial_filter,
+            search_regex: initial_regex,
             case_insensitive: false,
             filtered_indices: Vec::new(),
             filter_dirty: true,
@@ -242,27 +243,13 @@ impl FilterState {
 
     /// Update the search regex based on current search text
     pub fn update_search_regex(&mut self) {
-        if self.search_text.is_empty() {
-            self.search_regex = None;
-            self.regex_error = None;
+        // Use fancy-regex with (?i) inline flag for case-insensitive matching
+        let pattern = if self.case_insensitive {
+            format!("(?i){}", self.search_text)
         } else {
-            // Use fancy-regex with (?i) inline flag for case-insensitive matching
-            let pattern = if self.case_insensitive {
-                format!("(?i){}", self.search_text)
-            } else {
-                self.search_text.clone()
-            };
-            match Regex::new(&pattern) {
-                Ok(regex) => {
-                    self.search_regex = Some(regex);
-                    self.regex_error = None;
-                }
-                Err(e) => {
-                    self.search_regex = None;
-                    self.regex_error = Some(e.to_string());
-                }
-            }
-        }
+            self.search_text.clone()
+        };
+        self.search_regex = Regex::new(&pattern);
         self.filter_dirty = true;
     }
 
@@ -327,7 +314,7 @@ impl FilterState {
 
     /// Check if a line matches the current search criteria
     pub fn matches_search(&self, line: &LogLine) -> bool {
-        if let Some(ref regex) = self.search_regex {
+        if let Ok(ref regex) = self.search_regex {
             regex.is_match(&line.message).unwrap_or(false)
                 || regex.is_match(&line.raw).unwrap_or(false)
         } else {
@@ -390,7 +377,7 @@ impl FilterState {
     pub fn highlight_matches(&self, text: &str, base_color: Color32) -> LayoutJob {
         let mut job = LayoutJob::default();
 
-        if let Some(ref regex) = self.search_regex {
+        if let Ok(ref regex) = self.search_regex {
             let mut last_end = 0;
 
             for mat in regex.find_iter(text).flatten() {
