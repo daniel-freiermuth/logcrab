@@ -340,14 +340,11 @@ impl FilterView {
         // Determine current position within filtered list
         // TODO: start from current selected line even if not in filtered list
         let current_pos = if let Some(sel) = data_state.selected_line_index {
-            filter
-                .filtered_indices
-                .iter()
-                .position(|&idx| idx == sel)
-                .unwrap_or({
-                    // Fallback: choose nearest by timestamp if available later improvements; for now start at beginning
-                    0
-                })
+            if let Some(pos) = self.state.find_closest_timestamp_index(sel) {
+                pos
+            } else {
+                return;
+            }
         } else if delta >= 0 {
             0
         } else {
