@@ -206,7 +206,7 @@ pub struct FilterState {
     pub last_rendered_selection: Option<usize>,
     pub highlight_color: Color32,
     pub is_favorite: bool,
-    pub name: Option<String>,
+    pub name: String,
 
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
@@ -216,7 +216,7 @@ pub struct FilterState {
 }
 
 impl FilterState {
-    pub fn new(highlight_color: Color32) -> Self {
+    pub fn new(name: String, highlight_color: Color32) -> Self {
         // Create result channel for this specific filter
         let (result_tx, filter_result_rx) = channel::<FilterResult>();
 
@@ -234,7 +234,7 @@ impl FilterState {
             last_rendered_selection: None,
             highlight_color,
             is_favorite: false,
-            name: None,
+            name,
             filter_result_rx,
             filter_result_tx: result_tx,
             filter_generation: 0,

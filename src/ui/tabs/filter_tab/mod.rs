@@ -48,19 +48,17 @@ pub enum FilterViewEvent {
 
 /// Orchestrates the filter view UI using reusable components
 pub struct FilterView {
-    name: String,
     uuid: usize,
     should_focus_search: bool,
     state: FilterState,
 }
 
 impl FilterView {
-    pub fn new(name: String, uuid: usize, color: Color32, state: Option<FilterState>) -> Self {
+    pub fn new(uuid: usize, state: FilterState) -> Self {
         Self {
-            name,
             uuid,
             should_focus_search: false,
-            state: state.unwrap_or_else(|| FilterState::new(color)),
+            state,
         }
     }
 
@@ -241,7 +239,7 @@ impl FilterView {
             .favorite_filters
             .iter()
             .map(|fav| {
-                let mut f = FilterState::new(Color32::YELLOW);
+                let mut f = FilterState::new(self.state.name.clone(), Color32::YELLOW);
                 f.search_text = fav.search_text.clone();
                 f.case_insensitive = fav.case_insensitive;
                 f.is_favorite = true;
@@ -271,13 +269,8 @@ impl FilterView {
                 }
                 FilterViewEvent::FilterNameEditRequested => {
                     // Prompt for new name
-                    let starting_name = if let Some(current_name) = &self.state.name {
-                        current_name.clone()
-                    } else {
-                        self.name.clone()
-                    };
                     data_state.change_filtername_window =
-                        Some(ChangeFilternameWindow::new(starting_name));
+                        Some(ChangeFilternameWindow::new(self.state.name.clone()));
                 }
                 FilterViewEvent::FavoriteToggled => {
                     let search_text = self.state.search_text.clone();
@@ -293,11 +286,7 @@ impl FilterView {
                         log::info!("Removed favorite: '{}'", search_text);
                     } else {
                         // Add to favorites
-                        let name = self
-                            .state
-                            .name
-                            .clone()
-                            .unwrap_or_else(|| search_text.clone());
+                        let name = self.state.name.clone();
                         global_config
                             .favorite_filters
                             .push(crate::config::FavoriteFilter {
@@ -323,7 +312,7 @@ impl FilterView {
         if let Some(ref mut window) = data_state.change_filtername_window {
             match window.render(ui) {
                 Ok(Some(new_name)) => {
-                    self.state.name = Some(new_name);
+                    self.state.name = new_name;
                     data_state.change_filtername_window = None;
                 }
                 Ok(None) => {
@@ -411,7 +400,7 @@ impl FilterView {
 
 impl LogCrabTab for FilterView {
     fn title(&mut self) -> egui::WidgetText {
-        self.name.clone().into()
+        self.state.name.clone().into()
     }
 
     fn render(
@@ -420,9 +409,6 @@ impl LogCrabTab for FilterView {
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
     ) -> bool {
-        if let Some(custom_name) = self.state.name.clone() {
-            self.name = custom_name.clone();
-        }
         self.render_filter(ui, data_state, global_config)
     }
 
@@ -467,7 +453,7 @@ impl LogCrabTab for FilterView {
                 ShortcutAction::OpenFile => {}
                 ShortcutAction::RenameFilter => {
                     data_state.change_filtername_window =
-                        Some(ChangeFilternameWindow::new(self.name.clone()));
+                        Some(ChangeFilternameWindow::new(self.state.name.clone()));
                 }
                 ShortcutAction::FocusPaneLeft => {}
                 ShortcutAction::FocusPaneDown => {}

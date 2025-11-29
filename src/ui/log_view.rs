@@ -43,16 +43,14 @@ pub struct Bookmark {
 pub struct SavedFilter {
     search_text: String,
     case_insensitive: bool,
-    #[serde(default)]
-    name: Option<String>,
+    name: String,
 }
 
 impl From<&SavedFilter> for FilterState {
     fn from(saved_filter: &SavedFilter) -> FilterState {
-        let mut filter = FilterState::new(Color32::YELLOW);
+        let mut filter = FilterState::new(saved_filter.name.clone(), Color32::YELLOW);
         filter.search_text = saved_filter.search_text.clone();
         filter.case_insensitive = saved_filter.case_insensitive;
-        filter.name = saved_filter.name.clone();
         filter.update_search_regex();
         filter
     }
@@ -121,13 +119,13 @@ impl LogView {
         ];
         let color = colors[self.monotonic_filter_counter % colors.len()];
 
-        let filter_name = format!("Filter {}", self.monotonic_filter_counter + 1);
-        let mut filter = Box::new(FilterView::new(
-            filter_name,
-            self.monotonic_filter_counter,
-            color,
-            state,
-        ));
+        let state = state.unwrap_or_else(|| {
+            FilterState::new(
+                format!("Filter {}", self.monotonic_filter_counter + 1),
+                color,
+            )
+        });
+        let mut filter = Box::new(FilterView::new(self.monotonic_filter_counter, state));
         if focus_search {
             filter.focus_search_next_frame();
         }
