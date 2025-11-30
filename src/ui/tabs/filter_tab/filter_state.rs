@@ -150,14 +150,14 @@ impl GlobalFilterWorker {
                         // Check search filter
                         if let Some(ref regex) = search_regex {
                             // fancy-regex returns Result<bool>, handle it
-                            let matches = regex.is_match(&line.message).unwrap_or(false)
-                                || regex.is_match(&line.raw).unwrap_or(false);
-                            if !matches {
-                                continue;
+                            if regex.is_match(&line.message).unwrap_or(false)
+                                || regex.is_match(&line.raw).unwrap_or(false)
+                            {
+                                indices.push(idx);
                             }
+                        } else {
+                            indices.push(idx);
                         }
-
-                        indices.push(idx);
                     }
                     indices
                 };
