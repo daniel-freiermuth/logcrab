@@ -20,8 +20,6 @@ pub mod bookmarks_tab;
 pub mod filter_tab;
 pub mod navigation;
 
-use std::sync::Arc;
-
 pub use bookmarks_tab::BookmarksView;
 pub use filter_tab::FilterView;
 
@@ -29,7 +27,6 @@ use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
-use crate::parser::line::LogLine;
 use crate::ui::log_view::{LogViewState, SavedFilter};
 
 pub trait LogCrabTab {
@@ -42,7 +39,6 @@ pub trait LogCrabTab {
     );
     fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogViewState)
         -> bool;
-    fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>);
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
 }
 

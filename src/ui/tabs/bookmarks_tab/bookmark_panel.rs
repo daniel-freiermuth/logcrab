@@ -63,7 +63,7 @@ impl BookmarkPanel {
         ui: &mut Ui,
         lines: &[LogLine],
         bookmarks: &[BookmarkData],
-        selected_line_index: Option<usize>,
+        selected_line_index: usize,
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
     ) -> Vec<BookmarkPanelEvent> {
@@ -125,7 +125,7 @@ impl BookmarkPanel {
                             let bookmark = &bookmarks[row_index];
                             let line_idx = bookmark.line_index;
 
-                            let is_selected = selected_line_index == Some(line_idx);
+                            let is_selected = selected_line_index == line_idx;
                             let color = if line_idx < lines.len() {
                                 score_to_color(lines[line_idx].anomaly_score)
                             } else {

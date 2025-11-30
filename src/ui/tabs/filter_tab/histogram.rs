@@ -36,7 +36,7 @@ impl Histogram {
         ui: &mut Ui,
         lines: &[LogLine],
         filtered_indices: &[usize],
-        selected_line_index: Option<usize>,
+        selected_line_index: usize,
     ) -> Option<HistogramClickEvent> {
         if lines.is_empty() || filtered_indices.is_empty() {
             if lines.is_empty() {
@@ -84,7 +84,7 @@ impl Histogram {
         ui: &mut Ui,
         lines: &[LogLine],
         filtered_indices: &[usize],
-        selected_line_index: Option<usize>,
+        selected_line_index: usize,
     ) -> Option<HistogramClickEvent> {
         // Get time range from filtered lines only
         let first_ts = filtered_indices
@@ -112,31 +112,21 @@ impl Histogram {
         // Count lines per bucket (only filtered lines)
         let mut buckets = vec![0usize; NUM_BUCKETS];
         for &line_idx in filtered_indices {
-            if line_idx < lines.len() {
-                if let Some(ts) = lines[line_idx].timestamp {
-                    let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-                    let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
-                    buckets[bucket_idx] += 1;
-                }
+            if let Some(ts) = lines[line_idx].timestamp {
+                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+                let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
+                buckets[bucket_idx] += 1;
             }
         }
 
         let max_count = *buckets.iter().max().unwrap_or(&1);
 
         // Calculate selected line position if present
-        let selected_bucket = if let Some(sel_idx) = selected_line_index {
-            if sel_idx < lines.len() {
-                if let Some(sel_ts) = lines[sel_idx].timestamp {
-                    let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
-                    // Only show indicator if the selected time is within this filter's time range
-                    if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
-                        Some(((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+        let selected_bucket = if let Some(sel_ts) = lines[selected_line_index].timestamp {
+            let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
+            // Only show indicator if the selected time is within this filter's time range
+            if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
+                Some(((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1))
             } else {
                 None
             }
@@ -255,16 +245,12 @@ impl Histogram {
                 start_time.format("%H:%M:%S"),
                 end_time.format("%H:%M:%S")
             ));
-            if let Some(sel_idx) = selected_line_index {
-                if sel_idx < lines.len() {
-                    if let Some(sel_ts) = lines[sel_idx].timestamp {
-                        ui.separator();
-                        ui.colored_label(
-                            Color32::YELLOW,
-                            format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
-                        );
-                    }
-                }
+            if let Some(sel_ts) = lines[selected_line_index].timestamp {
+                ui.separator();
+                ui.colored_label(
+                    Color32::YELLOW,
+                    format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
+                );
             }
         });
 

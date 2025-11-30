@@ -77,7 +77,7 @@ impl FilterView {
         ui: &mut Ui,
         lines: &Arc<Vec<LogLine>>,
         favorites: &[FavoriteFilter],
-        selected_line_index: Option<usize>,
+        selected_line_index: usize,
         bookmarked_lines: &HashMap<usize, String>,
     ) -> Vec<FilterViewEvent> {
         let mut events = Vec::new();
@@ -128,12 +128,8 @@ impl FilterView {
             || self.state.last_rendered_selection != selected_line_index;
         let scroll_to_row = if needs_scroll {
             self.state.last_rendered_selection = selected_line_index;
-            if let Some(selected_idx) = selected_line_index {
-                // Mark as processed so we don't keep checking on every render
-                self.state.find_closest_timestamp_index(selected_idx)
-            } else {
-                None
-            }
+            // Mark as processed so we don't keep checking on every render
+            Some(self.state.find_closest_timestamp_index(selected_line_index))
         } else {
             None
         };
@@ -203,7 +199,7 @@ impl FilterView {
         for event in events {
             match event {
                 FilterViewEvent::LineSelected { line_index } => {
-                    data_state.selected_line_index = Some(line_index);
+                    data_state.selected_line_index = line_index;
                 }
                 FilterViewEvent::BookmarkToggled { line_index } => {
                     data_state.toggle_bookmark(line_index);
@@ -273,18 +269,9 @@ impl FilterView {
         }
 
         // Determine current position within filtered list
-        // TODO: start from current selected line even if not in filtered list
-        let current_pos = if let Some(sel) = data_state.selected_line_index {
-            if let Some(pos) = self.state.find_closest_timestamp_index(sel) {
-                pos
-            } else {
-                return;
-            }
-        } else if delta >= 0 {
-            0
-        } else {
-            filter.filtered_indices.len() - 1
-        };
+        let current_pos = self
+            .state
+            .find_closest_timestamp_index(data_state.selected_line_index);
 
         let new_pos = if delta < 0 {
             current_pos.saturating_sub(delta.unsigned_abs() as usize)
@@ -293,7 +280,7 @@ impl FilterView {
         };
 
         let new_line_index = filter.filtered_indices[new_pos];
-        data_state.selected_line_index = Some(new_line_index);
+        data_state.selected_line_index = new_line_index;
     }
 
     /// Jump to the first line in a filtered view (Vim-style gg)
@@ -304,7 +291,7 @@ impl FilterView {
         }
 
         let first_line_index = filter.filtered_indices[0];
-        data_state.selected_line_index = Some(first_line_index);
+        data_state.selected_line_index = first_line_index;
     }
 
     /// Jump to the last line in a filtered view (Vim-style G)
@@ -316,7 +303,7 @@ impl FilterView {
 
         let last_pos = filter.filtered_indices.len() - 1;
         let last_line_index = filter.filtered_indices[last_pos];
-        data_state.selected_line_index = Some(last_line_index);
+        data_state.selected_line_index = last_line_index;
     }
 
     /// Move selection up by one page in a filtered view
@@ -330,6 +317,10 @@ impl FilterView {
     pub fn page_down_in_filter(&mut self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_filter(PAGE_SIZE, data_state);
+    }
+
+    pub fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>) {
+        self.state.request_filter_update(lines);
     }
 }
 
@@ -397,10 +388,6 @@ impl LogCrabTab for FilterView {
             }
         }
         should_save
-    }
-
-    fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>) {
-        self.state.request_filter_update(lines);
     }
 
     fn try_into_stored_filter(&self) -> Option<SavedFilter> {

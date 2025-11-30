@@ -197,7 +197,7 @@ pub struct FilterState {
     pub search_regex: Result<Regex, Error>,
     pub case_insensitive: bool,
     pub filtered_indices: Vec<usize>,
-    pub last_rendered_selection: Option<usize>,
+    pub last_rendered_selection: usize,
     pub name: String,
 
     // Background filtering - each filter has its own result channel
@@ -222,7 +222,7 @@ impl FilterState {
             search_regex: initial_regex,
             case_insensitive: false,
             filtered_indices: Vec::new(),
-            last_rendered_selection: None,
+            last_rendered_selection: 0,
             name,
             filter_result_rx,
             filter_result_tx: result_tx,
@@ -287,15 +287,15 @@ impl FilterState {
 
     /// Find the closest line by timestamp in the filtered results
     // TODO Implement via binary search
-    pub fn find_closest_timestamp_index(&self, target_idx: usize) -> Option<usize> {
-        let mut closest_idx = None;
+    pub fn find_closest_timestamp_index(&self, target_idx: usize) -> usize {
+        let mut closest_idx = 0;
         let mut min_diff = i64::MAX;
 
         for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
             let diff = (line_idx as i64 - target_idx as i64).abs();
             if diff < min_diff {
                 min_diff = diff;
-                closest_idx = Some(filtered_idx);
+                closest_idx = filtered_idx;
             }
         }
         closest_idx

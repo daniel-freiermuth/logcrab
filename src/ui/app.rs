@@ -1,22 +1,24 @@
-use super::tabs::navigation;
 use super::windows;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use egui_dock::Node;
-
 use crate::config::GlobalConfig;
 use crate::core::{LoadMessage, LogFileLoader};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
-use crate::ui::tabs::{BookmarksView, PendingTabAdd};
-use crate::ui::{LogView, PaneDirection};
+use crate::ui::tabs::BookmarksView;
+use crate::ui::LogView;
 
 /// Main application
+/// Responsibilities:
+/// - Main window
+/// - File loading
+/// - Right now, scoring. Should be moved into LogView
+/// - Keyboard shortcut processing
 pub struct LogCrabApp {
     /// The main log view component
-    log_view: LogView,
+    log_view: Option<LogView>,
 
     /// Currently loaded file path
     current_file: Option<PathBuf>,
@@ -51,9 +53,6 @@ pub struct LogCrabApp {
     /// Pending key rebind action
     pending_rebind: Option<ShortcutAction>,
 
-    /// Pending tab add request (set by add button callback)
-    pending_tab_add: Option<PendingTabAdd>,
-
     /// Whether to show the CPU profiler window
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
@@ -65,7 +64,7 @@ impl LogCrabApp {
         let global_config = GlobalConfig::load();
 
         LogCrabApp {
-            log_view: LogView::new(),
+            log_view: None,
             current_file: None,
             status_message: if file.is_some() {
                 "Loading file...".to_string()
@@ -81,13 +80,15 @@ impl LogCrabApp {
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
-            pending_tab_add: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         }
     }
 
     pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {
+        self.log_view = None;
+        self.current_file = Some(path.clone());
+        self.update_window_title(&ctx);
         self.is_loading = true;
         self.load_progress = 0.0;
         self.status_message = format!("Loading {}...", path.display());
@@ -125,17 +126,19 @@ impl LogCrabApp {
                     self.status_message = status;
                 }
                 LoadMessage::Complete(lines, path) => {
-                    self.log_view.set_lines(lines);
-                    self.log_view.set_bookmarks_file(path.clone());
-
-                    self.current_file = Some(path.clone());
-                    self.update_window_title(ctx);
+                    let n_lines = lines.len();
                     self.status_message = format!(
                         "Loaded {} lines - calculating anomaly scores in background...",
-                        self.log_view.state.lines.len()
+                        n_lines
                     );
                     self.is_loading = false;
                     self.load_progress = 0.0;
+
+                    if n_lines > 0 {
+                        let crab_path = path.with_extension("crab");
+                        self.log_view = Some(LogView::new(lines, crab_path));
+                    }
+                    self.update_window_title(ctx);
                     // Keep receiver open for scoring progress
                 }
                 LoadMessage::ScoringProgress(progress, status) => {
@@ -143,11 +146,12 @@ impl LogCrabApp {
                     self.status_message = status;
                 }
                 LoadMessage::ScoringComplete(lines) => {
-                    self.log_view.set_lines(lines);
-                    self.status_message = format!(
-                        "Ready. {} lines loaded with anomaly scores",
-                        self.log_view.state.lines.len()
-                    );
+                    let n_lines = lines.len();
+                    if let Some(ref mut log_view) = self.log_view {
+                        log_view.state.lines = lines;
+                    }
+                    self.status_message =
+                        format!("Ready. {} lines loaded with anomaly scores", n_lines);
                     self.load_progress = 1.0;
                     should_clear_receiver = true;
                 }
@@ -184,16 +188,18 @@ impl LogCrabApp {
         });
 
         ui.menu_button("View", |ui| {
-            if ui.button("Add Filter Tab").clicked() {
-                self.log_view.add_filter_view(false, None);
-                ui.close();
-            }
+            if let Some(ref mut log_view) = &mut self.log_view {
+                if ui.button("Add Filter Tab").clicked() {
+                    log_view.add_filter_view(false, None);
+                    ui.close();
+                }
 
-            if ui.button("Add Bookmarks Tab").clicked() {
-                self.log_view
-                    .dock_state
-                    .push_to_focused_leaf(Box::new(BookmarksView::default()));
-                ui.close();
+                if ui.button("Add Bookmarks Tab").clicked() {
+                    log_view
+                        .dock_state
+                        .push_to_focused_leaf(Box::new(BookmarksView::default()));
+                    ui.close();
+                }
             }
         });
 
@@ -247,7 +253,9 @@ impl LogCrabApp {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("central_panel");
 
-        if self.log_view.state.lines.is_empty() {
+        if let Some(ref mut log_view) = self.log_view {
+            log_view.render(ui, &mut self.global_config);
+        } else {
             ui.vertical_centered(|ui| {
                 ui.add_space(100.0);
                 ui.heading("Welcome to LogCrab 🦀");
@@ -279,9 +287,6 @@ impl LogCrabApp {
                     }
                 }
             });
-        } else {
-            self.log_view
-                .render(ui, &mut self.global_config, &mut self.pending_tab_add);
         }
     }
 
@@ -310,75 +315,20 @@ impl LogCrabApp {
                 .save_to_config(&mut self.global_config);
             let _ = self.global_config.save();
         }
-        self.log_view.process_keyboard_input(&actions);
 
-        // Execute all generated actions
+        if let Some(ref mut log_view) = self.log_view {
+            log_view.process_keyboard_input(&actions);
+        }
+
         for action in actions {
             match action {
                 ShortcutAction::ToggleBookmark => {}
                 ShortcutAction::FocusSearch => {}
-                ShortcutAction::NewFilterTab => {
-                    self.log_view.add_filter_view(true, None);
-                }
-                ShortcutAction::NewBookmarksTab => {
-                    self.log_view
-                        .dock_state
-                        .push_to_focused_leaf(Box::new(BookmarksView::default()));
-                }
-                ShortcutAction::CloseTab => {
-                    // Close the currently focused/active tab (the one the user is viewing)
-                    // focused_leaf() returns which pane has keyboard focus
-                    if let Some((surface_idx, node_idx)) = self.log_view.dock_state.focused_leaf() {
-                        let tree = &self.log_view.dock_state[surface_idx];
-
-                        // Each pane (leaf node) can have multiple tabs, but only one is "active" (visible).
-                        // Get the active tab index from the leaf node
-                        if let Node::Leaf(leaf) = &tree[node_idx] {
-                            let active = leaf.active;
-                            self.log_view
-                                .dock_state
-                                .remove_tab((surface_idx, node_idx, active));
-                        }
-                    }
-                }
-                ShortcutAction::CycleTab => {
-                    // Cycle to the next tab in the active pane
-                    if let Some((surface_idx, node_idx)) = self.log_view.dock_state.focused_leaf() {
-                        let surface = &mut self.log_view.dock_state[surface_idx];
-
-                        // Get the number of tabs and current active tab
-                        if let Node::Leaf(leaf) = &mut surface[node_idx] {
-                            let tab_count = leaf.tabs.len();
-                            if tab_count > 1 {
-                                let active = leaf.active;
-                                // Cycle to next tab (wrap around to 0 if at the end)
-                                let next_tab = (active.0 + 1) % tab_count;
-                                leaf.active = egui_dock::TabIndex(next_tab);
-                            }
-                        }
-                    }
-                }
-                ShortcutAction::ReverseCycleTab => {
-                    // Cycle to the previous tab in the active pane
-                    if let Some((surface_idx, node_idx)) = self.log_view.dock_state.focused_leaf() {
-                        let surface = &mut self.log_view.dock_state[surface_idx];
-
-                        // Get the number of tabs and current active tab
-                        if let Node::Leaf(leaf) = &mut surface[node_idx] {
-                            let tab_count = leaf.tabs.len();
-                            if tab_count > 1 {
-                                let active = leaf.active;
-                                // Cycle to previous tab (wrap around to last if at the beginning)
-                                let prev_tab = if active.0 == 0 {
-                                    tab_count - 1
-                                } else {
-                                    active.0 - 1
-                                };
-                                leaf.active = egui_dock::TabIndex(prev_tab);
-                            }
-                        }
-                    }
-                }
+                ShortcutAction::NewFilterTab => {}
+                ShortcutAction::NewBookmarksTab => {}
+                ShortcutAction::CloseTab => {}
+                ShortcutAction::CycleTab => {}
+                ShortcutAction::ReverseCycleTab => {}
                 ShortcutAction::JumpToTop => {}
                 ShortcutAction::JumpToBottom => {}
                 ShortcutAction::PageUp => {}
@@ -394,31 +344,16 @@ impl LogCrabApp {
                 ShortcutAction::RenameFilter => {}
                 ShortcutAction::MoveUp => {}
                 ShortcutAction::MoveDown => {}
-                ShortcutAction::FocusPaneLeft => self.navigate_pane(PaneDirection::Left),
-                ShortcutAction::FocusPaneDown => self.navigate_pane(PaneDirection::Down),
-                ShortcutAction::FocusPaneUp => self.navigate_pane(PaneDirection::Up),
-                ShortcutAction::FocusPaneRight => self.navigate_pane(PaneDirection::Right),
+                ShortcutAction::FocusPaneLeft => {}
+                ShortcutAction::FocusPaneDown => {}
+                ShortcutAction::FocusPaneUp => {}
+                ShortcutAction::FocusPaneRight => {}
             }
         }
 
         // Remove consumed events in reverse order
         for idx in events_to_remove.into_iter().rev() {
             raw_input.events.remove(idx);
-        }
-    }
-
-    fn navigate_pane(&mut self, direction: PaneDirection) {
-        let tree = self.log_view.dock_state.main_surface_mut();
-
-        // Get the currently focused node
-        if let Some(current_node) = tree.focused_leaf() {
-            // Find the neighbor in the specified direction
-            let neighbor = navigation::find_neighbor(tree, current_node, direction);
-
-            // If we found a neighbor, focus it
-            if let Some(neighbor_idx) = neighbor {
-                tree.set_focused_node(neighbor_idx);
-            }
         }
     }
 }
@@ -444,9 +379,6 @@ impl eframe::App for LogCrabApp {
         // Check for messages from background thread
         self.process_file_loading(ctx);
 
-        // Update window title to show current file (if any)
-        self.update_window_title(ctx);
-
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.render_menu_bar(ui, ctx);
@@ -460,20 +392,6 @@ impl eframe::App for LogCrabApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_central_panel(ui, ctx);
         });
-
-        // Handle tab addition from add button popup (must be done after DockArea)
-        if let Some(tab_type) = self.pending_tab_add.take() {
-            match tab_type {
-                PendingTabAdd::Filter => {
-                    self.log_view.add_filter_view(false, None);
-                }
-                PendingTabAdd::Bookmarks => {
-                    self.log_view
-                        .dock_state
-                        .push_to_focused_leaf(Box::new(BookmarksView::default()));
-                }
-            }
-        }
 
         // Show windows
         if self.show_anomaly_explanation {

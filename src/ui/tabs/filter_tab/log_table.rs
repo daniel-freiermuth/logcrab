@@ -74,7 +74,7 @@ impl LogTable {
         lines: &[LogLine],
         filter: &FilterState,
         ui_salt: usize,
-        selected_line_index: Option<usize>,
+        selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         scroll_to_row: Option<usize>,
         highlight_color: Color32,
@@ -132,7 +132,7 @@ impl LogTable {
                             let line_idx = filter.filtered_indices[row_index];
                             let line = &lines[line_idx];
 
-                            let is_selected = selected_line_index == Some(line_idx);
+                            let is_selected = selected_line_index == line_idx;
                             let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
                             let color = score_to_color(line.anomaly_score);
 

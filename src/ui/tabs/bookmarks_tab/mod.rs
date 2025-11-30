@@ -52,7 +52,7 @@ impl BookmarksView {
         ui: &mut Ui,
         lines: &[LogLine],
         bookmarks: Vec<BookmarkData>,
-        selected_line_index: Option<usize>,
+        selected_line_index: usize,
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
     ) -> Vec<BookmarksViewEvent> {
@@ -117,7 +117,7 @@ impl BookmarksView {
         for event in events {
             match event {
                 BookmarksViewEvent::BookmarkClicked { line_index } => {
-                    data_state.selected_line_index = Some(line_index);
+                    data_state.selected_line_index = line_index;
                 }
                 BookmarksViewEvent::BookmarkDeleted { line_index } => {
                     data_state.bookmarks.remove(&line_index);
@@ -160,20 +160,14 @@ impl BookmarksView {
         // Find current position in bookmark list
         // TODO: here we should start from the current selected line, even if not a bookmark
         // TODO: optimize with option-chaining
-        let current_pos = if let Some(sel) = data_state.selected_line_index {
-            bookmark_indices
-                .iter()
-                .position(|&idx| idx == sel)
-                .unwrap_or(if delta >= 0 {
-                    0
-                } else {
-                    bookmark_indices.len() - 1
-                })
-        } else if delta >= 0 {
-            0
-        } else {
-            bookmark_indices.len() - 1
-        };
+        let current_pos = bookmark_indices
+            .iter()
+            .position(|&idx| idx == data_state.selected_line_index)
+            .unwrap_or(if delta >= 0 {
+                0
+            } else {
+                bookmark_indices.len() - 1
+            });
 
         let new_pos = if delta < 0 {
             current_pos.saturating_sub(delta.unsigned_abs() as usize)
@@ -182,7 +176,7 @@ impl BookmarksView {
         };
 
         let new_line_index = bookmark_indices[new_pos];
-        data_state.selected_line_index = Some(new_line_index);
+        data_state.selected_line_index = new_line_index;
     }
 
     /// Jump to the first bookmark (Vim-style gg)
@@ -192,7 +186,7 @@ impl BookmarksView {
         }
 
         let first_index = *data_state.bookmarks.keys().min().unwrap();
-        data_state.selected_line_index = Some(first_index);
+        data_state.selected_line_index = first_index;
     }
 
     /// Jump to the last bookmark (Vim-style G)
@@ -203,7 +197,7 @@ impl BookmarksView {
 
         // TODO
         let last_index = data_state.bookmarks.keys().max().unwrap();
-        data_state.selected_line_index = Some(*last_index);
+        data_state.selected_line_index = *last_index;
     }
 
     /// Move selection up by one page in bookmarks view
@@ -271,8 +265,6 @@ impl LogCrabTab for BookmarksView {
         }
         false
     }
-
-    fn request_filter_update(&mut self, _lines: std::sync::Arc<Vec<LogLine>>) {}
 
     fn try_into_stored_filter(&self) -> Option<crate::ui::log_view::SavedFilter> {
         None
