@@ -35,9 +35,6 @@ pub struct LogCrabApp {
     /// Receiver for background loading messages
     load_receiver: Option<Receiver<LoadMessage>>,
 
-    /// Initial file to load from command line
-    initial_file: Option<PathBuf>,
-
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
 
@@ -59,11 +56,11 @@ pub struct LogCrabApp {
 }
 
 impl LogCrabApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
         // Load global configuration
         let global_config = GlobalConfig::load();
 
-        LogCrabApp {
+        let mut app = LogCrabApp {
             log_view: None,
             current_file: None,
             status_message: if file.is_some() {
@@ -74,7 +71,6 @@ impl LogCrabApp {
             is_loading: false,
             load_progress: 0.0,
             load_receiver: None,
-            initial_file: file,
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
@@ -82,7 +78,17 @@ impl LogCrabApp {
             pending_rebind: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
+        };
+
+        // Load initial file if provided via command line
+        if let Some(file) = file {
+            if file.exists() {
+                app.load_file(file, cc.egui_ctx.clone());
+            } else {
+                app.status_message = format!("Error: File not found: {}", file.display());
+            }
         }
+        app
     }
 
     pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {
@@ -366,15 +372,6 @@ impl eframe::App for LogCrabApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
-
-        // Load initial file if provided via command line
-        if let Some(file) = self.initial_file.take() {
-            if file.exists() {
-                self.load_file(file, ctx.clone());
-            } else {
-                self.status_message = format!("Error: File not found: {}", file.display());
-            }
-        }
 
         // Check for messages from background thread
         self.process_file_loading(ctx);
