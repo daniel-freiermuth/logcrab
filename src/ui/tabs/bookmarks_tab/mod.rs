@@ -51,6 +51,7 @@ impl BookmarksView {
     pub fn render(
         ui: &mut Ui,
         lines: &[LogLine],
+        log_view_state: &LogViewState,
         bookmarks: Vec<BookmarkData>,
         selected_line_index: usize,
         editing_bookmark: Option<usize>,
@@ -58,6 +59,7 @@ impl BookmarksView {
     ) -> Vec<BookmarksViewEvent> {
         let panel_events = BookmarkPanel::render(
             ui,
+            log_view_state,
             lines,
             &bookmarks,
             selected_line_index,
@@ -107,6 +109,7 @@ impl BookmarksView {
         let events = BookmarksView::render(
             ui,
             &data_state.lines,
+            data_state,
             bookmarks,
             data_state.selected_line_index,
             self.edited_line_index,

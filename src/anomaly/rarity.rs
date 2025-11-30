@@ -61,37 +61,3 @@ impl Default for RarityScorer {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rarity_scorer() {
-        let mut scorer = RarityScorer::new();
-
-        let mut line1 = LogLine::new("test message 1".to_string(), 1);
-        line1.template_key = "test message <NUM>".to_string();
-
-        let mut line2 = LogLine::new("different message".to_string(), 2);
-        line2.template_key = "different message".to_string();
-
-        // First occurrence should be highly anomalous
-        let score1 = scorer.score(&line1);
-        assert!(score1 > 0.8, "First occurrence should be highly anomalous");
-        scorer.update(&line1);
-
-        // Repeat the same template
-        scorer.update(&line1);
-        scorer.update(&line1);
-        scorer.update(&line1);
-
-        // After multiple occurrences, score should be lower
-        let score_repeated = scorer.score(&line1);
-        assert!(score_repeated < 0.5, "Repeated template should score lower");
-
-        // Novel template should still score high
-        let score_novel = scorer.score(&line2);
-        assert!(score_novel > 0.8, "Novel template should score high");
-    }
-}

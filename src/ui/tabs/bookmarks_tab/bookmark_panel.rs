@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::parser::line::LogLine;
+use crate::{parser::line::LogLine, ui::log_view::LogViewState};
 use chrono::DateTime;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -26,7 +26,7 @@ use egui_extras::{Column, TableBuilder};
 pub struct BookmarkData {
     pub line_index: usize,
     pub name: String,
-    pub timestamp: Option<DateTime<chrono::Local>>,
+    pub timestamp: DateTime<chrono::Local>,
 }
 
 /// Events emitted by the bookmark panel
@@ -61,6 +61,7 @@ impl BookmarkPanel {
     /// Returns events that occurred (clicks, deletes, renames)
     pub fn render(
         ui: &mut Ui,
+        log_view_state: &LogViewState,
         lines: &[LogLine],
         bookmarks: &[BookmarkData],
         selected_line_index: usize,
@@ -126,29 +127,18 @@ impl BookmarkPanel {
                             let line_idx = bookmark.line_index;
 
                             let is_selected = selected_line_index == line_idx;
-                            let color = if line_idx < lines.len() {
-                                score_to_color(lines[line_idx].anomaly_score)
+                            let color = if let Some(score) = &log_view_state.scores {
+                                score_to_color(score[line_idx])
                             } else {
                                 Color32::WHITE
                             };
 
-                            let line_number = if line_idx < lines.len() {
-                                lines[line_idx].line_number
-                            } else {
-                                line_idx
-                            };
+                            let line_number = lines[line_idx].line_number;
 
-                            let timestamp_str = if let Some(ts) = bookmark.timestamp {
-                                ts.format("%H:%M:%S%.3f").to_string()
-                            } else {
-                                "-".to_string()
-                            };
+                            let timestamp_str =
+                                bookmark.timestamp.format("%H:%M:%S%.3f").to_string();
 
-                            let message = if line_idx < lines.len() {
-                                lines[line_idx].message.clone()
-                            } else {
-                                String::new()
-                            };
+                            let message = lines[line_idx].message.clone();
 
                             let mut row_clicked = false;
 

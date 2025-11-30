@@ -14,13 +14,9 @@ pub fn parse_logcat(raw: String, line_number: usize) -> Option<LogLine> {
     // Extract timestamp and treat everything after it as the message
     if let Ok(Some(caps)) = LOGCAT_TIMESTAMP.captures(&raw) {
         let message = caps[2].to_string();
-        let timestamp = parse_logcat_timestamp(&caps[1]);
-        let mut line = LogLine::new(raw, line_number);
-        line.message = message;
-        line.timestamp = timestamp;
-        return Some(line);
+        return parse_logcat_timestamp(&caps[1])
+            .map(|ts| LogLine::new(raw, line_number, message, ts));
     }
-
     None
 }
 
@@ -50,7 +46,6 @@ mod tests {
         let raw = "11-20 14:23:45.123  1234  5678 I ActivityManager: Start proc com.example.app"
             .to_string();
         let line = parse_logcat(raw, 1).unwrap();
-        assert!(line.timestamp.is_some());
         assert_eq!(line.message, "Start proc com.example.app");
     }
 
@@ -60,7 +55,6 @@ mod tests {
             "01-01 00:00:07.329  root     8     8 I CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf"
                 .to_string();
         let line = parse_logcat(raw, 1).unwrap();
-        assert!(line.timestamp.is_some());
         assert_eq!(line.message, "CAM-ICP: cam_icp_mgr_process_dbg_buf");
     }
 
@@ -68,7 +62,6 @@ mod tests {
     fn test_fallback_format() {
         let raw = "11-20 14:23:45.123 Some message without tag".to_string();
         let line = parse_logcat(raw, 1).unwrap();
-        assert!(line.timestamp.is_some());
         assert_eq!(line.message, "Some message without tag");
     }
 }

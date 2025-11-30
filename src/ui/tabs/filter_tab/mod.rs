@@ -75,6 +75,7 @@ impl FilterView {
     pub fn render(
         &mut self,
         ui: &mut Ui,
+        log_view_state: &LogViewState,
         lines: &Arc<Vec<LogLine>>,
         favorites: &[FavoriteFilter],
         selected_line_index: usize,
@@ -148,6 +149,7 @@ impl FilterView {
         // Render log table
         let table_events = LogTable::render(
             ui,
+            log_view_state,
             lines,
             &self.state,
             self.uuid,
@@ -189,6 +191,7 @@ impl FilterView {
         // Render using FilterView
         let events = self.render(
             ui,
+            data_state,
             &data_state.lines,
             global_config.favorite_filters.as_slice(),
             data_state.selected_line_index,

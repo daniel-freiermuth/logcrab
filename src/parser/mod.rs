@@ -19,22 +19,12 @@ lazy_static! {
 }
 
 pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
-    // Try logcat format
-    if let Some(mut line) = logcat::parse_logcat(raw.clone(), line_number) {
-        // Skip lines without timestamp
-        line.timestamp?;
-        line.template_key = normalize_message(&line.message);
-        return Some(line);
-    }
-
-    // Fall back to generic parser
-    let mut line = generic::parse_generic(raw, line_number);
-
-    // Skip lines without timestamp
-    line.timestamp?;
-
-    line.template_key = normalize_message(&line.message);
-    Some(line)
+    logcat::parse_logcat(raw.clone(), line_number)
+        .or_else(|| generic::parse_generic(raw, line_number))
+        .map(|mut line| {
+            line.template_key = normalize_message(&line.message);
+            line
+        })
 }
 
 /// Normalize a log message to create a template key

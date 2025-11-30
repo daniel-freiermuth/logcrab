@@ -38,7 +38,7 @@ use std::sync::Arc;
 pub struct Bookmark {
     pub line_index: usize,
     pub name: String,
-    pub timestamp: Option<DateTime<Local>>,
+    pub timestamp: DateTime<Local>,
 }
 
 /// Saved filter configuration
@@ -98,6 +98,7 @@ pub struct LogView {
 
 pub struct LogViewState {
     pub lines: Arc<Vec<LogLine>>,
+    pub scores: Option<Vec<f64>>,
     // Selected line tracking
     pub selected_line_index: usize,
     // Bookmarks with names
@@ -116,6 +117,7 @@ impl LogView {
             pending_tab_add: None,
             state: LogViewState {
                 lines,
+                scores: None,
                 selected_line_index: 0,
                 bookmarks: HashMap::new(),
                 modified: false,

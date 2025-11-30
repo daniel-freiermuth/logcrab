@@ -16,7 +16,10 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{parser::line::LogLine, ui::tabs::filter_tab::filter_state::FilterState};
+use crate::{
+    parser::line::LogLine,
+    ui::{log_view::LogViewState, tabs::filter_tab::filter_state::FilterState},
+};
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -71,6 +74,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         ui: &mut Ui,
+        log_view_state: &LogViewState,
         lines: &[LogLine],
         filter: &FilterState,
         ui_salt: usize,
@@ -134,7 +138,11 @@ impl LogTable {
 
                             let is_selected = selected_line_index == line_idx;
                             let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
-                            let color = score_to_color(line.anomaly_score);
+                            let color = if let Some(score) = &log_view_state.scores {
+                                score_to_color(score[line_idx])
+                            } else {
+                                Color32::WHITE
+                            };
 
                             let mut row_clicked = false;
                             let mut row_right_clicked = false;
@@ -186,7 +194,7 @@ impl LogTable {
                             // Score column
                             Self::render_score_column(
                                 &mut row,
-                                line,
+                                log_view_state,
                                 line_idx,
                                 ui_salt,
                                 is_selected,
@@ -318,11 +326,7 @@ impl LogTable {
                 );
             }
 
-            let timestamp_str = if let Some(ts) = line.timestamp {
-                ts.format("%H:%M:%S%.3f").to_string()
-            } else {
-                "-".to_string()
-            };
+            let timestamp_str = line.timestamp.format("%H:%M:%S%.3f").to_string();
 
             let job = filter.highlight_matches(&timestamp_str, bg_color, highlight_color);
             ui.label(job);
@@ -397,7 +401,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_score_column(
         row: &mut egui_extras::TableRow,
-        line: &LogLine,
+        log_view_state: &LogViewState,
         line_idx: usize,
         ui_salt: usize,
         is_selected: bool,
@@ -427,9 +431,12 @@ impl LogTable {
                 );
             }
 
-            let text = RichText::new(format!("{:.1}", line.anomaly_score))
-                .strong()
-                .color(color);
+            let anomaly_str = if let Some(score) = &log_view_state.scores {
+                format!("{:.1}", score[line_idx])
+            } else {
+                "-".to_string()
+            };
+            let text = RichText::new(anomaly_str).strong().color(color);
             ui.label(text);
 
             let response = ui.interact(

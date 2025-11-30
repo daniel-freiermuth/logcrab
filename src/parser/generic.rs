@@ -25,7 +25,7 @@ lazy_static! {
     ).unwrap();
 }
 
-pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
+pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
     let mut timestamp = None;
     let mut remaining = raw.as_str();
 
@@ -80,11 +80,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> LogLine {
         remaining.to_string()
     };
 
-    let mut line = LogLine::new(raw, line_number);
-    line.message = message;
-    line.timestamp = timestamp;
-
-    line
+    timestamp.map(|ts| LogLine::new(raw, line_number, message, ts))
 }
 
 #[cfg(test)]
@@ -95,15 +91,13 @@ mod tests {
     fn test_iso_timestamp() {
         let raw = "2025-11-20T14:23:45.123Z ERROR Connection failed".to_string();
         let line = parse_generic(raw, 1);
-        assert!(line.timestamp.is_some());
-        assert_eq!(line.message, "ERROR Connection failed");
+        assert_eq!(line.unwrap().message, "ERROR Connection failed");
     }
 
     #[test]
     fn test_syslog_format() {
         let raw = "Nov 20 14:23:45 INFO Application started".to_string();
         let line = parse_generic(raw, 1);
-        assert!(line.timestamp.is_some());
-        assert_eq!(line.message, "INFO Application started");
+        assert_eq!(line.unwrap().message, "INFO Application started");
     }
 }

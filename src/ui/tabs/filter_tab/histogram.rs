@@ -89,13 +89,13 @@ impl Histogram {
         // Get time range from filtered lines only
         let first_ts = filtered_indices
             .iter()
-            .filter(|&&idx| idx < lines.len())
-            .find_map(|&idx| lines[idx].timestamp);
+            .map(|&idx| lines[idx].timestamp)
+            .next();
         let last_ts = filtered_indices
             .iter()
             .rev()
-            .filter(|&&idx| idx < lines.len())
-            .find_map(|&idx| lines[idx].timestamp);
+            .map(|&idx| lines[idx].timestamp)
+            .next();
 
         if first_ts.is_none() || last_ts.is_none() {
             ui.label("No timestamps available for histogram");
@@ -112,17 +112,17 @@ impl Histogram {
         // Count lines per bucket (only filtered lines)
         let mut buckets = vec![0usize; NUM_BUCKETS];
         for &line_idx in filtered_indices {
-            if let Some(ts) = lines[line_idx].timestamp {
-                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-                let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
-                buckets[bucket_idx] += 1;
-            }
+            let ts = lines[line_idx].timestamp;
+            let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+            let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
+            buckets[bucket_idx] += 1;
         }
 
         let max_count = *buckets.iter().max().unwrap_or(&1);
 
         // Calculate selected line position if present
-        let selected_bucket = if let Some(sel_ts) = lines[selected_line_index].timestamp {
+        let selected_bucket = {
+            let sel_ts = lines[selected_line_index].timestamp;
             let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
             // Only show indicator if the selected time is within this filter's time range
             if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
@@ -130,8 +130,6 @@ impl Histogram {
             } else {
                 None
             }
-        } else {
-            None
         };
 
         // Render histogram
@@ -197,17 +195,14 @@ impl Histogram {
                     let mut min_diff = i64::MAX;
 
                     for &line_idx in filtered_indices {
-                        if line_idx < lines.len() {
-                            if let Some(ts) = lines[line_idx].timestamp {
-                                let ts_value = ts.timestamp();
-                                // Only consider lines that are actually in this bucket
-                                if ts_value >= bucket_start_time && ts_value < bucket_end_time {
-                                    let diff = (ts_value - click_time_in_bucket).abs();
-                                    if diff < min_diff {
-                                        min_diff = diff;
-                                        closest_idx = Some(line_idx);
-                                    }
-                                }
+                        let ts = lines[line_idx].timestamp;
+                        let ts_value = ts.timestamp();
+                        // Only consider lines that are actually in this bucket
+                        if ts_value >= bucket_start_time && ts_value < bucket_end_time {
+                            let diff = (ts_value - click_time_in_bucket).abs();
+                            if diff < min_diff {
+                                min_diff = diff;
+                                closest_idx = Some(line_idx);
                             }
                         }
                     }
@@ -217,14 +212,11 @@ impl Histogram {
                         let bucket_center_time =
                             bucket_start_time + (bucket_end_time - bucket_start_time) / 2;
                         for &line_idx in filtered_indices {
-                            if line_idx < lines.len() {
-                                if let Some(ts) = lines[line_idx].timestamp {
-                                    let diff = (ts.timestamp() - bucket_center_time).abs();
-                                    if diff < min_diff {
-                                        min_diff = diff;
-                                        closest_idx = Some(line_idx);
-                                    }
-                                }
+                            let ts = lines[line_idx].timestamp;
+                            let diff = (ts.timestamp() - bucket_center_time).abs();
+                            if diff < min_diff {
+                                min_diff = diff;
+                                closest_idx = Some(line_idx);
                             }
                         }
                     }
@@ -245,13 +237,12 @@ impl Histogram {
                 start_time.format("%H:%M:%S"),
                 end_time.format("%H:%M:%S")
             ));
-            if let Some(sel_ts) = lines[selected_line_index].timestamp {
-                ui.separator();
-                ui.colored_label(
-                    Color32::YELLOW,
-                    format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
-                );
-            }
+            let sel_ts = lines[selected_line_index].timestamp;
+            ui.separator();
+            ui.colored_label(
+                Color32::YELLOW,
+                format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
+            );
         });
 
         click_event

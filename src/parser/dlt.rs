@@ -14,12 +14,15 @@ pub fn parse_dlt_file<P: AsRef<Path>>(path: P) -> Result<Vec<LogLine>, String> {
     loop {
         match read_message(&mut reader, None) {
             Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
-                let log_line = convert_dlt_message(&msg, line_number);
-                lines.push(log_line);
-                line_number += 1;
+                if let Some(log_line) = convert_dlt_message(&msg, line_number) {
+                    lines.push(log_line);
+                    line_number += 1;
+                } else {
+                    log::warn!("Skipped DLT message without valid timestamp");
+                }
             }
             Ok(Some(_)) => {
-                // Ignore other variants
+                log::warn!("Skipped non-item DLT message");
             }
             Ok(None) => break,
             Err(e) => {
@@ -39,7 +42,7 @@ pub fn parse_dlt_file<P: AsRef<Path>>(path: P) -> Result<Vec<LogLine>, String> {
 // No parse_dlt_buffer needed; handled by parse_dlt_file
 
 /// Convert a dlt_core::dlt::Message to LogLine
-fn convert_dlt_message(msg: &Message, line_number: usize) -> LogLine {
+fn convert_dlt_message(msg: &Message, line_number: usize) -> Option<LogLine> {
     // Extract timestamp (if available) from header
     let timestamp = msg.header.timestamp.and_then(|ts| {
         // ts is in 0.1 ms since epoch
@@ -69,10 +72,7 @@ fn convert_dlt_message(msg: &Message, line_number: usize) -> LogLine {
         message.clone()
     };
 
-    let mut line = LogLine::new(raw, line_number);
-    line.message = message;
-    line.timestamp = timestamp;
-    line
+    timestamp.map(|ts| LogLine::new(raw, line_number, message, ts))
 }
 
 /// Format message info (log level, type, etc.)

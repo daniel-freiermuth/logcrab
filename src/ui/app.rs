@@ -147,14 +147,13 @@ impl LogCrabApp {
                     self.update_window_title(ctx);
                     // Keep receiver open for scoring progress
                 }
-                LoadMessage::ScoringProgress(progress, status) => {
-                    self.load_progress = progress;
+                LoadMessage::ScoringProgress(status) => {
                     self.status_message = status;
                 }
-                LoadMessage::ScoringComplete(lines) => {
-                    let n_lines = lines.len();
+                LoadMessage::ScoringComplete(scores) => {
+                    let n_lines = scores.len();
                     if let Some(ref mut log_view) = self.log_view {
-                        log_view.state.lines = lines;
+                        log_view.state.scores = Some(scores);
                     }
                     self.status_message =
                         format!("Ready. {} lines loaded with anomaly scores", n_lines);
