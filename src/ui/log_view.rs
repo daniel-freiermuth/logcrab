@@ -371,3 +371,10 @@ impl LogViewState {
         self.toggle_bookmark(self.selected_line_index);
     }
 }
+
+impl Drop for LogView {
+    fn drop(&mut self) {
+        log::debug!("Dropping LogView for file: {:?}", self.crab_file);
+        self.save_crab_file();
+    }
+}
