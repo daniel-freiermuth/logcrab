@@ -248,7 +248,11 @@ impl LogFileLoader {
                 ctx.request_repaint();
             }
 
-            let score = scorer.score(log_line);
+            let score = if idx < 10 {
+                0.0
+            } else {
+                scorer.score(log_line)
+            };
             raw_scores.push(score);
             scorer.update(log_line);
         }
