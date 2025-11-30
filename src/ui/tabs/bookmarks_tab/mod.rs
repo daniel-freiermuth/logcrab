@@ -42,6 +42,7 @@ pub enum BookmarksViewEvent {
 pub struct BookmarksView {
     edited_line_index: Option<usize>,
     bookmark_name_input: String,
+    enter_pressed_this_frame: bool,
 }
 
 impl BookmarksView {
@@ -92,7 +93,21 @@ impl BookmarksView {
             .collect()
     }
 
+    fn start_renaming_bookmark(&mut self, line_index: usize, data_state: &LogViewState) {
+        if let Some(bookmark) = data_state.bookmarks.get(&line_index) {
+            self.edited_line_index = Some(line_index);
+            self.bookmark_name_input = bookmark.name.clone();
+        }
+    }
+
     pub fn render_bookmarks(&mut self, ui: &mut Ui, data_state: &mut LogViewState) {
+        // Check if Enter was pressed this frame (when not editing)
+        if self.edited_line_index.is_none() {
+            self.enter_pressed_this_frame = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        } else {
+            self.enter_pressed_this_frame = false;
+        }
+
         // Convert bookmarks to BookmarkData format
         let mut bookmarks: Vec<BookmarkData> = data_state
             .bookmarks
@@ -137,10 +152,7 @@ impl BookmarksView {
                     self.edited_line_index = None;
                 }
                 BookmarksViewEvent::StartRenaming { line_index } => {
-                    if let Some(bookmark) = data_state.bookmarks.get(&line_index) {
-                        self.edited_line_index = Some(line_index);
-                        self.bookmark_name_input = bookmark.name.clone();
-                    }
+                    self.start_renaming_bookmark(line_index, data_state);
                 }
                 BookmarksViewEvent::CancelRenaming => {
                     self.edited_line_index = None;
@@ -235,6 +247,13 @@ impl LogCrabTab for BookmarksView {
         actions: &[ShortcutAction],
         data_state: &mut LogViewState,
     ) -> bool {
+        // Handle Enter key for starting bookmark rename (when not already editing)
+        // enter_pressed_this_frame is set during render when we have UI context
+        if self.enter_pressed_this_frame && self.edited_line_index.is_none() {
+            let selected_line_index = data_state.selected_line_index;
+            self.start_renaming_bookmark(selected_line_index, data_state);
+        }
+
         for action in actions {
             match action {
                 ShortcutAction::MoveDown => self.move_selection_in_bookmarks(1, data_state),

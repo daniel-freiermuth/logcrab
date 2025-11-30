@@ -249,10 +249,8 @@ impl BookmarkPanel {
                                         egui::Sense::click(),
                                     );
 
-                                    // Start editing on double-click or Enter key
-                                    let enter_pressed =
-                                        ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                    if response.double_clicked() || (is_selected && enter_pressed) {
+                                    // Start editing on double-click
+                                    if response.double_clicked() {
                                         events.push(BookmarkPanelEvent::StartRenaming {
                                             line_index: line_idx,
                                         });
