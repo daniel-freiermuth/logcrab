@@ -106,6 +106,7 @@ fn convert_dlt_message(msg: &Message, line_number: usize) -> Option<LogLine> {
             .iter()
             .filter_map(|arg| match &arg.value {
                 dlt_core::dlt::Value::StringVal(s) => Some(s.clone()),
+                dlt_core::dlt::Value::U32(v) => Some(format!("{}", v)),
                 _ => {
                     log::error!(
                         "Unsupported DLT verbose argument {:?} for line {}",
