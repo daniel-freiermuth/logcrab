@@ -17,7 +17,6 @@ pub fn parse_dlt_file<P: AsRef<Path>>(path: P) -> Result<Vec<LogLine>, String> {
                 if let Some(log_line) = convert_dlt_message(&msg, line_number) {
                     lines.push(log_line);
                     line_number += 1;
-                    log::info!("Parsed DLT message {:?} at line {}", msg, line_number - 1);
                 } else {
                     log::warn!("Skipped DLT message without valid timestamp");
                 }
