@@ -101,6 +101,20 @@ Contributions are welcome! Areas for improvement:
 - Performance optimizations
 - UI enhancements (keyboard shortcuts, themes, etc.)
 
+## Known bugs
+
+### Wayland protocol error
+When using the Wayland compositor, you might find the program exited after leaving the computer alone for a while.
+Particularly when there was a change in the display setup like screenlocking or suspending.
+```
+[2025-11-28T11:48:43.736Z INFO  tracing::span] read_socket;
+wl_registry@2: error 0: invalid global wl_output (151)
+wl_registry@2: error 0: invalid global wl_output (151)
+Protocol error 0 on object wl_registry@2: 
+Error: WinitEventLoop(ExitFailure(1))
+```
+The problem seems to be a Wayland protocol error by some party upon which the GUI library exits.
+
 ## Author
 
 Built with ❤️ for developers who deserve decent log analysis tools
