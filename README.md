@@ -42,6 +42,57 @@ $ cargo run --release
    - Detects sudden severity transitions
    - Tracks log level patterns over time
 
+## Related tools and inspiration
+
+### Chipmunk
+https://github.com/esrlabs/chipmunk
+DLT analyser with one supported filter. Saved filters with color-coding. Graphing. Written in Rust and Electron. Great DLT crate.
+
+#### How it compares
+- only single filter pane
+- no anomaly detection
+- only DLT
+
+### CatSpy
+https://github.com/Gegenbauer/CatSpy
+Adb logcat analysis tool. One filter tool with vertical vertical split.
+
+#### Caveats
+- Pagination
+- Bookmarks not saved
+- Selected line reset on filter change
+- View only synced one-way
+
+### Lnav
+https://github.com/tstack/lnav
+https://github.com/javierhz/lnav-logcat-Android
+Command line log analyzer. Doesn't support logcat or DLT off-the-shelf.
+
+### toolong
+https://github.com/Textualize/toolong
+
+### dlt-viewer
+https://github.com/COVESA/dlt-viewer
+
+### DLT message analyzer
+https://github.com/svlad-90/DLT-Message-Analyzer
+
+### Lognote
+https://github.com/cdcsgit/lognote
+
+### AngleGrinder
+https://github.com/rcoh/angle-grinder
+
+### Pidcat
+https://github.com/JakeWharton/pidcat
+
+### Rustycat
+https://github.com/cesarferreira/rustycat
+
+### Netdata
+https://github.com/netdata/netdata
+OS metric dashboard that just works™ and has anomaly detection included.
+
 ## Contributing
 
 Contributions are welcome! Areas for improvement:
