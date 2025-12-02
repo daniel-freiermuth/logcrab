@@ -95,7 +95,7 @@ impl LogFileLoader {
             return;
         }
         let file_size = metadata.unwrap().len();
-        log::debug!("File size: {} bytes", file_size);
+        log::info!("File size: {} bytes", file_size);
 
         // Check if this is a DLT binary file by extension or magic bytes
         let is_dlt_file = path
@@ -155,8 +155,26 @@ impl LogFileLoader {
 
         // Convert to UTF-8 with lossy conversion (replaces invalid UTF-8 with � character)
         let utf8_start = std::time::Instant::now();
-        let content = String::from_utf8_lossy(&buffer);
-        log::info!("UTF-8 conversion took {:?}", utf8_start.elapsed());
+        let mut content = String::from_utf8_lossy(&buffer).to_string();
+        let content_len = content.len();
+        
+        // Check for and remove null bytes which can cause string processing issues
+        let null_count = content.bytes().filter(|&b| b == 0).count();
+        if null_count > 0 {
+            log::warn!(
+                "File contains {} null bytes which will be removed to prevent parsing issues",
+                null_count
+            );
+            content = content.replace('\0', "");
+        }
+        
+        log::info!(
+            "UTF-8 conversion took {:?}, original bytes: {}, UTF-8 bytes: {}, null bytes: {}",
+            utf8_start.elapsed(),
+            buffer.len(),
+            content_len,
+            null_count
+        );
 
         let mut lines = Vec::new();
 
@@ -168,6 +186,12 @@ impl LogFileLoader {
 
         let parse_start = std::time::Instant::now();
         let mut file_line_number = 0;
+        let total_lines_in_content = content.lines().count();
+        log::info!(
+            "File contains {} lines (by line iterator count)",
+            total_lines_in_content
+        );
+
         for line_buffer in content.lines() {
             file_line_number += 1;
             bytes_read += line_buffer.len() + 1; // +1 for newline
@@ -199,6 +223,14 @@ impl LogFileLoader {
             parse_duration,
             lines.len(),
             path
+        );
+        log::info!("Total bytes read: {}", bytes_read);
+        log::info!(
+            "Line processing stats: file_line_number={}, lines_in_content={}, parsed_lines={}, skipped={}",
+            file_line_number,
+            total_lines_in_content,
+            lines.len(),
+            file_line_number - lines.len()
         );
 
         // Wrap in Arc for cheap cloning
