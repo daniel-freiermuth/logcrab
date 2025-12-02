@@ -32,7 +32,7 @@ use crate::ui::log_view::{FilterHighlight, LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
-use egui::{Color32, Ui};
+use egui::Ui;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -53,18 +53,16 @@ pub struct FilterView {
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
     filter_bar: FilterBar,
-    highlight_color: Color32,
 }
 
 impl FilterView {
-    pub fn new(uuid: usize, highlight_color: Color32, state: FilterState) -> Self {
+    pub fn new(uuid: usize, state: FilterState) -> Self {
         Self {
             uuid,
             should_focus_search: false,
             state,
             change_filtername_window: None,
             filter_bar: FilterBar::new(),
-            highlight_color,
         }
     }
 
@@ -93,7 +91,6 @@ impl FilterView {
             self.uuid,
             global_config,
             self.should_focus_search,
-            &mut self.highlight_color,
         );
         self.should_focus_search = false;
 
@@ -410,7 +407,7 @@ impl LogCrabTab for FilterView {
             .filter(|_| !self.state.search_text.is_empty())
             .map(|regex| FilterHighlight {
                 regex: regex.clone(),
-                color: self.highlight_color,
+                color: self.state.color,
             })
     }
 }

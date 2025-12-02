@@ -70,7 +70,6 @@ impl FilterBar {
         filter_uuid: usize,
         global_config: &mut GlobalConfig,
         should_focus_search: bool,
-        highlight_color: &mut Color32,
     ) -> Vec<FilterInternalEvent> {
         let mut events = Vec::new();
 
@@ -83,7 +82,7 @@ impl FilterBar {
                 events.push(FilterInternalEvent::FilterNameEditRequested);
             }
 
-            ui.color_edit_button_srgba(highlight_color)
+            ui.color_edit_button_srgba(&mut filter.color)
                 .on_hover_text("Choose highlight color for this filter");
 
             let current_favorite = global_config

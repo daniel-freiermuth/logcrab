@@ -122,17 +122,63 @@ pub struct Bookmark {
     pub timestamp: DateTime<Local>,
 }
 
+/// Helper to serialize/deserialize Color32
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct SerializableColor {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+impl From<Color32> for SerializableColor {
+    fn from(c: Color32) -> Self {
+        let [r, g, b, a] = c.to_array();
+        SerializableColor { r, g, b, a }
+    }
+}
+
+impl From<SerializableColor> for Color32 {
+    fn from(c: SerializableColor) -> Self {
+        Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+    }
+}
+
+fn serialize_color<S>(color: &Color32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    SerializableColor::from(*color).serialize(serializer)
+}
+
+fn deserialize_color<'de, D>(deserializer: D) -> Result<Color32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    SerializableColor::deserialize(deserializer).map(Color32::from)
+}
+
+fn default_filter_color() -> Color32 {
+    Color32::YELLOW // Default to yellow if not specified
+}
+
 /// Saved filter configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedFilter {
     search_text: String,
     case_insensitive: bool,
     name: String,
+    #[serde(
+        default = "default_filter_color",
+        serialize_with = "serialize_color",
+        deserialize_with = "deserialize_color"
+    )]
+    color: Color32,
 }
 
 impl From<&SavedFilter> for FilterState {
     fn from(saved_filter: &SavedFilter) -> FilterState {
-        let mut filter = FilterState::new(saved_filter.name.clone());
+        let mut filter = FilterState::new(saved_filter.name.clone(), saved_filter.color);
         filter.search_text = saved_filter.search_text.clone();
         filter.case_insensitive = saved_filter.case_insensitive;
         filter.update_search_regex();
@@ -146,6 +192,7 @@ impl From<&FilterState> for SavedFilter {
             search_text: filter.search_text.clone(),
             case_insensitive: filter.case_insensitive,
             name: filter.name.clone(),
+            color: filter.color,
         }
     }
 }
@@ -221,9 +268,12 @@ impl LogView {
         let color = colors[self.monotonic_filter_counter % colors.len()];
 
         let state = state.unwrap_or_else(|| {
-            FilterState::new(format!("Filter {}", self.monotonic_filter_counter + 1))
+            FilterState::new(
+                format!("Filter {}", self.monotonic_filter_counter + 1),
+                color,
+            )
         });
-        let mut filter = Box::new(FilterView::new(self.monotonic_filter_counter, color, state));
+        let mut filter = Box::new(FilterView::new(self.monotonic_filter_counter, state));
         if focus_search {
             filter.focus_search_next_frame();
         }

@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::parser::line::LogLine;
+use egui::Color32;
 use fancy_regex::{Error, Regex};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -198,6 +199,7 @@ pub struct FilterState {
     pub filtered_indices: Vec<usize>,
     pub last_rendered_selection: usize,
     pub name: String,
+    pub color: Color32,
 
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
@@ -205,7 +207,7 @@ pub struct FilterState {
 }
 
 impl FilterState {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, color: Color32) -> Self {
         // Create result channel for this specific filter
         let (result_tx, filter_result_rx) = channel::<FilterResult>();
 
@@ -223,6 +225,7 @@ impl FilterState {
             filtered_indices: Vec::new(),
             last_rendered_selection: 0,
             name,
+            color,
             filter_result_rx,
             filter_result_tx: result_tx,
         }
