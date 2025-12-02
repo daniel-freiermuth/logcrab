@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::input::ShortcutAction;
+use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,6 +39,33 @@ pub struct GlobalConfig {
 pub struct FavoriteFilter {
     pub search_text: String,
     pub case_insensitive: bool,
+    #[serde(default)]
+    pub name: String,
+}
+
+impl FavoriteFilter {
+    /// Create a new favorite with the given parameters, using search_text as the default name
+    pub fn new(search_text: String, case_insensitive: bool) -> Self {
+        let name = search_text.clone();
+        Self {
+            search_text,
+            case_insensitive,
+            name,
+        }
+    }
+
+    /// Get the display name for this favorite (returns name if set, otherwise search_text)
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            &self.search_text
+        } else {
+            &self.name
+        }
+    }
+
+    pub fn matches(&self, filter: &FilterState) -> bool {
+        self.search_text == filter.search_text && self.case_insensitive == filter.case_insensitive
+    }
 }
 
 impl GlobalConfig {

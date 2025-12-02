@@ -25,7 +25,7 @@ pub use filter_bar::{FilterBar, FilterInternalEvent};
 pub use histogram::Histogram;
 pub use log_table::{LogTable, LogTableEvent};
 
-use crate::config::{FavoriteFilter, GlobalConfig};
+use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
 use crate::parser::line::LogLine;
 use crate::ui::log_view::{LogViewState, SavedFilter};
@@ -52,6 +52,7 @@ pub struct FilterView {
     should_focus_search: bool,
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
+    filter_bar: FilterBar,
     highlight_color: Color32,
 }
 
@@ -62,6 +63,7 @@ impl FilterView {
             should_focus_search: false,
             state,
             change_filtername_window: None,
+            filter_bar: FilterBar::new(),
             highlight_color,
         }
     }
@@ -77,18 +79,18 @@ impl FilterView {
         ui: &mut Ui,
         log_view_state: &LogViewState,
         lines: &Arc<Vec<LogLine>>,
-        favorites: &[FavoriteFilter],
+        global_config: &mut GlobalConfig,
         selected_line_index: usize,
         bookmarked_lines: &HashMap<usize, String>,
     ) -> Vec<FilterViewEvent> {
         let mut events = Vec::new();
 
         // Render filter bar
-        let filter_bar_events = FilterBar::render(
+        let filter_bar_events = self.filter_bar.render(
             ui,
             &mut self.state,
             self.uuid,
-            favorites,
+            global_config,
             self.should_focus_search,
         );
         self.should_focus_search = false;
@@ -193,7 +195,7 @@ impl FilterView {
             ui,
             data_state,
             &data_state.lines,
-            global_config.favorite_filters.as_slice(),
+            global_config,
             data_state.selected_line_index,
             &bookmarked_lines,
         );
@@ -228,10 +230,10 @@ impl FilterView {
                         // Add to favorites
                         global_config
                             .favorite_filters
-                            .push(crate::config::FavoriteFilter {
+                            .push(crate::config::FavoriteFilter::new(
                                 search_text,
                                 case_insensitive,
-                            });
+                            ));
                         log::info!("Added favorite: '{}'", self.state.search_text);
                     }
 
