@@ -27,7 +27,7 @@ use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
-use crate::ui::log_view::{LogViewState, SavedFilter};
+use crate::ui::log_view::{FilterHighlight, LogViewState, SavedFilter};
 
 pub trait LogCrabTab {
     fn title(&mut self) -> egui::WidgetText;
@@ -36,10 +36,12 @@ pub trait LogCrabTab {
         ui: &mut egui::Ui,
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
+        all_filter_highlights: &[FilterHighlight],
     );
     fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogViewState)
         -> bool;
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
+    fn get_filter_highlight(&self) -> Option<FilterHighlight>;
 }
 
 /// Pending tab addition request from the add button
@@ -54,6 +56,7 @@ pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogViewState,
     pub global_config: &'a mut GlobalConfig,
     pub pending_tab_add: &'a mut Option<PendingTabAdd>,
+    pub all_filter_highlights: &'a [FilterHighlight],
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -64,7 +67,12 @@ impl TabViewer for LogCrabTabViewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        tab.render(ui, self.log_view, self.global_config);
+        tab.render(
+            ui,
+            self.log_view,
+            self.global_config,
+            self.all_filter_highlights,
+        );
     }
 
     fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {

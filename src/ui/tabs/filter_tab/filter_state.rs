@@ -17,7 +17,6 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::parser::line::LogLine;
-use egui::{text::LayoutJob, Color32, TextFormat};
 use fancy_regex::{Error, Regex};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -299,66 +298,5 @@ impl FilterState {
             }
         }
         closest_idx
-    }
-
-    /// Highlight search matches in text with background color
-    pub fn highlight_matches(
-        &self,
-        text: &str,
-        base_color: Color32,
-        highlight_color: Color32,
-    ) -> LayoutJob {
-        let mut job = LayoutJob::default();
-
-        if let Ok(ref regex) = self.search_regex {
-            let mut last_end = 0;
-
-            for mat in regex.find_iter(text).flatten() {
-                if mat.start() > last_end {
-                    job.append(
-                        &text[last_end..mat.start()],
-                        0.0,
-                        TextFormat {
-                            color: base_color,
-                            ..Default::default()
-                        },
-                    );
-                }
-
-                job.append(
-                    mat.as_str(),
-                    0.0,
-                    TextFormat {
-                        color: Color32::BLACK,
-                        background: highlight_color,
-                        ..Default::default()
-                    },
-                );
-
-                last_end = mat.end();
-            }
-
-            if last_end < text.len() {
-                job.append(
-                    &text[last_end..],
-                    0.0,
-                    TextFormat {
-                        color: base_color,
-                        ..Default::default()
-                    },
-                );
-            }
-        } else {
-            job.append(
-                text,
-                0.0,
-                TextFormat {
-                    color: base_color,
-                    ..Default::default()
-                },
-            );
-        }
-
-        job
     }
 }

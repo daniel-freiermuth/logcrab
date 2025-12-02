@@ -23,15 +23,96 @@ use crate::ui::tabs::{
     navigation, BookmarksView, FilterView, LogCrabTab, LogCrabTabViewer, PendingTabAdd,
 };
 use crate::ui::PaneDirection;
-use egui::Color32;
+use egui::text::LayoutJob;
+use egui::{Color32, TextFormat};
+use fancy_regex::Regex;
 
 use chrono::{DateTime, Local};
 use egui_dock::{DockArea, DockState, Node};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// A filter pattern with its associated color for highlighting
+#[derive(Debug, Clone)]
+pub struct FilterHighlight {
+    pub regex: Regex,
+    pub color: Color32,
+}
+
+impl FilterHighlight {
+    /// Highlight matches from all filters in the text
+    pub fn highlight_text_with_filters(
+        text: &str,
+        base_color: Color32,
+        all_filter_highlights: &[FilterHighlight],
+    ) -> egui::text::LayoutJob {
+        let mut job = LayoutJob::default();
+
+        // Collect all matches from all filters with their colors
+        // Use BTreeMap to keep matches sorted by start position
+        let mut matches: BTreeMap<usize, (usize, Color32)> = BTreeMap::new();
+
+        for highlight in all_filter_highlights {
+            for mat in highlight.regex.find_iter(text).flatten() {
+                // If there's overlap, the first filter wins (first in the tab order)
+                matches
+                    .entry(mat.start())
+                    .or_insert((mat.end(), highlight.color));
+            }
+        }
+
+        // Build the job with highlighted sections
+        let mut last_end = 0;
+        for (&start, &(end, color)) in &matches {
+            // Skip overlapping matches
+            if start < last_end {
+                continue;
+            }
+
+            // Add unhighlighted text before this match
+            if start > last_end {
+                job.append(
+                    &text[last_end..start],
+                    0.0,
+                    TextFormat {
+                        color: base_color,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Add highlighted match
+            job.append(
+                &text[start..end],
+                0.0,
+                TextFormat {
+                    color: Color32::BLACK,
+                    background: color,
+                    ..Default::default()
+                },
+            );
+
+            last_end = end;
+        }
+
+        // Add remaining unhighlighted text
+        if last_end < text.len() {
+            job.append(
+                &text[last_end..],
+                0.0,
+                TextFormat {
+                    color: base_color,
+                    ..Default::default()
+                },
+            );
+        }
+
+        job
+    }
+}
 
 /// Named bookmark with optional description
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +287,13 @@ impl LogView {
     }
 
     pub fn render(&mut self, ui: &mut egui::Ui, global_config: &mut GlobalConfig) {
+        // Collect all filter highlights from all tabs
+        let all_filter_highlights: Vec<FilterHighlight> = self
+            .dock_state
+            .iter_all_tabs()
+            .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
+            .collect();
+
         // Use dock area for VS Code-like draggable/tiling layout
         DockArea::new(&mut self.dock_state)
             .show_add_buttons(true)
@@ -216,6 +304,7 @@ impl LogView {
                     log_view: &mut self.state,
                     global_config,
                     pending_tab_add: &mut self.pending_tab_add,
+                    all_filter_highlights: &all_filter_highlights,
                 },
             );
         if self.state.modified

@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{parser::line::LogLine, ui::log_view::LogViewState};
+use crate::ui::log_view::{FilterHighlight, LogViewState};
 use chrono::DateTime;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -62,12 +62,13 @@ impl BookmarkPanel {
     pub fn render(
         ui: &mut Ui,
         log_view_state: &LogViewState,
-        lines: &[LogLine],
         bookmarks: &[BookmarkData],
-        selected_line_index: usize,
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
+        all_filter_highlights: &[FilterHighlight],
     ) -> Vec<BookmarkPanelEvent> {
+        let lines = &log_view_state.lines;
+        let selected_line_index = log_view_state.selected_line_index;
         let mut events = Vec::new();
 
         if bookmarks.is_empty() {
@@ -269,7 +270,15 @@ impl BookmarkPanel {
                                         Color32::from_rgb(100, 80, 30),
                                     );
                                 }
-                                ui.label(RichText::new(&message).color(color));
+
+                                // Use filter highlighting for the message
+                                let job = FilterHighlight::highlight_text_with_filters(
+                                    &message,
+                                    color,
+                                    all_filter_highlights,
+                                );
+                                ui.label(job);
+
                                 let response = ui.interact(
                                     ui.max_rect(),
                                     ui.id().with(line_idx).with("bm_msg"),

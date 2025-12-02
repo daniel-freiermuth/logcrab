@@ -28,7 +28,7 @@ pub use log_table::{LogTable, LogTableEvent};
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
 use crate::parser::line::LogLine;
-use crate::ui::log_view::{LogViewState, SavedFilter};
+use crate::ui::log_view::{FilterHighlight, LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
@@ -78,11 +78,12 @@ impl FilterView {
         &mut self,
         ui: &mut Ui,
         log_view_state: &LogViewState,
-        lines: &Arc<Vec<LogLine>>,
         global_config: &mut GlobalConfig,
-        selected_line_index: usize,
         bookmarked_lines: &HashMap<usize, String>,
+        all_filter_highlights: &[FilterHighlight],
     ) -> Vec<FilterViewEvent> {
+        let lines = &log_view_state.lines;
+        let selected_line_index = log_view_state.selected_line_index;
         let mut events = Vec::new();
 
         // Render filter bar
@@ -92,6 +93,7 @@ impl FilterView {
             self.uuid,
             global_config,
             self.should_focus_search,
+            &mut self.highlight_color,
         );
         self.should_focus_search = false;
 
@@ -158,7 +160,7 @@ impl FilterView {
             selected_line_index,
             bookmarked_lines,
             scroll_to_row,
-            self.highlight_color,
+            all_filter_highlights,
         );
 
         // Handle table events
@@ -182,6 +184,7 @@ impl FilterView {
         ui: &mut Ui,
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
+        all_filter_highlights: &[FilterHighlight],
     ) {
         // Convert bookmarks HashMap to simple HashMap<usize, String> for the component
         let bookmarked_lines: HashMap<usize, String> = data_state
@@ -194,10 +197,9 @@ impl FilterView {
         let events = self.render(
             ui,
             data_state,
-            &data_state.lines,
             global_config,
-            data_state.selected_line_index,
             &bookmarked_lines,
+            all_filter_highlights,
         );
 
         // Handle events
@@ -339,8 +341,9 @@ impl LogCrabTab for FilterView {
         ui: &mut egui::Ui,
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
+        all_filter_highlights: &[FilterHighlight],
     ) {
-        self.render_filter(ui, data_state, global_config)
+        self.render_filter(ui, data_state, global_config, all_filter_highlights)
     }
 
     fn process_events(
@@ -397,5 +400,17 @@ impl LogCrabTab for FilterView {
 
     fn try_into_stored_filter(&self) -> Option<SavedFilter> {
         Some((&self.state).into())
+    }
+
+    fn get_filter_highlight(&self) -> Option<FilterHighlight> {
+        self.state
+            .search_regex
+            .as_ref()
+            .ok()
+            .filter(|_| !self.state.search_text.is_empty())
+            .map(|regex| FilterHighlight {
+                regex: regex.clone(),
+                color: self.highlight_color,
+            })
     }
 }

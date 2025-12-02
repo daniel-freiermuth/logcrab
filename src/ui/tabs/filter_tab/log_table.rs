@@ -18,7 +18,10 @@
 
 use crate::{
     parser::line::LogLine,
-    ui::{log_view::LogViewState, tabs::filter_tab::filter_state::FilterState},
+    ui::{
+        log_view::{FilterHighlight, LogViewState},
+        tabs::filter_tab::filter_state::FilterState,
+    },
 };
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -81,7 +84,7 @@ impl LogTable {
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         scroll_to_row: Option<usize>,
-        highlight_color: Color32,
+        all_filter_highlights: &[FilterHighlight],
     ) -> Vec<LogTableEvent> {
         let mut events = Vec::new();
         let visible_lines = filter.filtered_indices.len();
@@ -167,11 +170,10 @@ impl LogTable {
                                 line,
                                 line_idx,
                                 ui_salt,
-                                filter,
                                 is_selected,
                                 is_bookmarked,
                                 color,
-                                highlight_color,
+                                all_filter_highlights,
                                 &mut row_clicked,
                                 &mut row_right_clicked,
                             );
@@ -182,11 +184,10 @@ impl LogTable {
                                 line,
                                 line_idx,
                                 ui_salt,
-                                filter,
                                 is_selected,
                                 is_bookmarked,
                                 color,
-                                highlight_color,
+                                all_filter_highlights,
                                 &mut row_clicked,
                                 &mut row_right_clicked,
                             );
@@ -297,11 +298,10 @@ impl LogTable {
         line: &LogLine,
         line_idx: usize,
         ui_salt: usize,
-        filter: &FilterState,
         is_selected: bool,
         is_bookmarked: bool,
         bg_color: Color32,
-        highlight_color: Color32,
+        all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
     ) {
@@ -328,7 +328,11 @@ impl LogTable {
 
             let timestamp_str = line.timestamp.format("%H:%M:%S%.3f").to_string();
 
-            let job = filter.highlight_matches(&timestamp_str, bg_color, highlight_color);
+            let job = FilterHighlight::highlight_text_with_filters(
+                &timestamp_str,
+                bg_color,
+                all_filter_highlights,
+            );
             ui.label(job);
 
             let response = ui.interact(
@@ -351,11 +355,10 @@ impl LogTable {
         line: &LogLine,
         line_idx: usize,
         ui_salt: usize,
-        filter: &FilterState,
         is_selected: bool,
         is_bookmarked: bool,
         bg_color: Color32,
-        highlight_color: Color32,
+        all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
     ) {
@@ -380,7 +383,11 @@ impl LogTable {
                 );
             }
 
-            let job = filter.highlight_matches(&line.message, bg_color, highlight_color);
+            let job = FilterHighlight::highlight_text_with_filters(
+                &line.message,
+                bg_color,
+                all_filter_highlights,
+            );
             ui.label(job);
 
             let response = ui.interact(

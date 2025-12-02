@@ -70,6 +70,7 @@ impl FilterBar {
         filter_uuid: usize,
         global_config: &mut GlobalConfig,
         should_focus_search: bool,
+        highlight_color: &mut Color32,
     ) -> Vec<FilterInternalEvent> {
         let mut events = Vec::new();
 
@@ -82,6 +83,9 @@ impl FilterBar {
                 events.push(FilterInternalEvent::FilterNameEditRequested);
             }
 
+            ui.color_edit_button_srgba(highlight_color)
+                .on_hover_text("Choose highlight color for this filter");
+
             let current_favorite = global_config
                 .favorite_filters
                 .iter()
@@ -93,8 +97,6 @@ impl FilterBar {
             {
                 events.push(FilterInternalEvent::FavoriteToggled);
             }
-
-            ui.label("🔍 Search (regex):");
 
             // Dropdown menu for favorites OR inline textbox for editing favorite name
             if !global_config.favorite_filters.is_empty() {
@@ -190,7 +192,7 @@ impl FilterBar {
             }
 
             // Checkbox
-            let checkbox_response = ui.checkbox(&mut filter.case_insensitive, "Case insensitive");
+            let checkbox_response = ui.checkbox(&mut filter.case_insensitive, "Aa");
 
             if checkbox_response.changed() {
                 events.push(FilterInternalEvent::CaseInsensitiveToggled);
@@ -198,7 +200,7 @@ impl FilterBar {
 
             // Display regex validation status
             match &filter.search_regex {
-                Ok(_) => ui.colored_label(Color32::GREEN, "✓ Valid regex"),
+                Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
                 Err(err) => ui.colored_label(Color32::RED, format!("❌ {}", err)),
             }
         });

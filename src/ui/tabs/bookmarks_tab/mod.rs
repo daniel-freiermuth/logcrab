@@ -22,8 +22,10 @@ pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
 use crate::{
     input::ShortcutAction,
-    parser::line::LogLine,
-    ui::{log_view::LogViewState, tabs::LogCrabTab},
+    ui::{
+        log_view::{FilterHighlight, LogViewState},
+        tabs::LogCrabTab,
+    },
 };
 use egui::Ui;
 
@@ -51,21 +53,19 @@ impl BookmarksView {
     /// Returns events that occurred during rendering
     pub fn render(
         ui: &mut Ui,
-        lines: &[LogLine],
         log_view_state: &LogViewState,
         bookmarks: Vec<BookmarkData>,
-        selected_line_index: usize,
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
+        all_filter_highlights: &[FilterHighlight],
     ) -> Vec<BookmarksViewEvent> {
         let panel_events = BookmarkPanel::render(
             ui,
             log_view_state,
-            lines,
             &bookmarks,
-            selected_line_index,
             editing_bookmark,
             bookmark_name_input,
+            all_filter_highlights,
         );
 
         // Transform panel events to view events
@@ -100,7 +100,12 @@ impl BookmarksView {
         }
     }
 
-    pub fn render_bookmarks(&mut self, ui: &mut Ui, data_state: &mut LogViewState) {
+    pub fn render_bookmarks(
+        &mut self,
+        ui: &mut Ui,
+        data_state: &mut LogViewState,
+        all_filter_highlights: &[FilterHighlight],
+    ) {
         // Check if Enter was pressed this frame (when not editing)
         if self.edited_line_index.is_none() {
             self.enter_pressed_this_frame = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -123,12 +128,11 @@ impl BookmarksView {
         // Render using BookmarksView
         let events = BookmarksView::render(
             ui,
-            &data_state.lines,
             data_state,
             bookmarks,
-            data_state.selected_line_index,
             self.edited_line_index,
             &mut self.bookmark_name_input,
+            all_filter_highlights,
         );
 
         // Handle events
@@ -238,8 +242,9 @@ impl LogCrabTab for BookmarksView {
         ui: &mut egui::Ui,
         data_state: &mut LogViewState,
         _global_config: &mut crate::config::GlobalConfig,
+        all_filter_highlights: &[crate::ui::log_view::FilterHighlight],
     ) {
-        self.render_bookmarks(ui, data_state)
+        self.render_bookmarks(ui, data_state, all_filter_highlights)
     }
 
     fn process_events(
@@ -289,6 +294,10 @@ impl LogCrabTab for BookmarksView {
     }
 
     fn try_into_stored_filter(&self) -> Option<crate::ui::log_view::SavedFilter> {
+        None
+    }
+
+    fn get_filter_highlight(&self) -> Option<crate::ui::log_view::FilterHighlight> {
         None
     }
 }
