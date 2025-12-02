@@ -204,6 +204,12 @@ struct CrabFile {
     filters: Vec<SavedFilter>,
 }
 
+/// .crab-filters file format - stores only filters for import/export
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CrabFilters {
+    filters: Vec<SavedFilter>,
+}
+
 /// Main log analyse view
 ///   Exists per opened file
 /// Responsibilities:
@@ -334,6 +340,47 @@ impl LogView {
                 Err(e) => log::error!("Failed to save .crab file: {}", e),
             }
         }
+    }
+
+    pub fn export_filters(&self, path: PathBuf) -> Result<(), String> {
+        log::debug!("Exporting filters to: {:?}", path);
+        let filters = self
+            .dock_state
+            .iter_all_tabs()
+            .filter_map(|((_surface, _node), tab)| tab.try_into_stored_filter())
+            .collect::<Vec<SavedFilter>>();
+
+        let filters_data = CrabFilters { filters };
+
+        let json = serde_json::to_string_pretty(&filters_data)
+            .map_err(|e| format!("Failed to serialize filters: {}", e))?;
+
+        fs::write(&path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+
+        log::info!(
+            "Successfully exported {} filters to {:?}",
+            filters_data.filters.len(),
+            path
+        );
+        Ok(())
+    }
+
+    pub fn import_filters(&mut self, path: PathBuf) -> Result<usize, String> {
+        log::debug!("Importing filters from: {:?}", path);
+        let file_content =
+            fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let filters_data: CrabFilters = serde_json::from_str(&file_content)
+            .map_err(|e| format!("Failed to parse filters file: {}", e))?;
+
+        let count = filters_data.filters.len();
+        for saved_filter in filters_data.filters {
+            let state: FilterState = (&saved_filter).into();
+            self.add_filter_view(false, Some(state));
+        }
+
+        log::info!("Successfully imported {} filters from {:?}", count, path);
+        Ok(count)
     }
 
     pub fn render(&mut self, ui: &mut egui::Ui, global_config: &mut GlobalConfig) {

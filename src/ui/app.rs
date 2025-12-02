@@ -187,6 +187,41 @@ impl LogCrabApp {
                 ui.close();
             }
 
+            ui.separator();
+
+            if let Some(ref mut log_view) = &mut self.log_view {
+                if ui.button("Export Filters...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Crab Filters", &["crab-filters"])
+                        .add_filter("All Files", &["*"])
+                        .set_file_name("filters.crab-filters")
+                        .save_file()
+                    {
+                        match log_view.export_filters(path) {
+                            Ok(_) => log::info!("Filters exported successfully"),
+                            Err(e) => log::error!("Failed to export filters: {}", e),
+                        }
+                    }
+                    ui.close();
+                }
+
+                if ui.button("Import Filters...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Crab Filters", &["crab-filters"])
+                        .add_filter("All Files", &["*"])
+                        .pick_file()
+                    {
+                        match log_view.import_filters(path) {
+                            Ok(count) => log::info!("Successfully imported {} filters", count),
+                            Err(e) => log::error!("Failed to import filters: {}", e),
+                        }
+                    }
+                    ui.close();
+                }
+
+                ui.separator();
+            }
+
             if ui.button("Quit").clicked() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
