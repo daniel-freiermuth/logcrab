@@ -330,7 +330,20 @@ impl FilterView {
 
 impl LogCrabTab for FilterView {
     fn title(&mut self) -> egui::WidgetText {
-        self.state.name.clone().into()
+        let mut layout_job = egui::text::LayoutJob::default();
+
+        layout_job.append(
+            "■ ",
+            0.0,
+            egui::TextFormat {
+                color: self.state.color,
+                ..Default::default()
+            },
+        );
+
+        layout_job.append(&self.state.name, 0.0, egui::TextFormat::default());
+
+        layout_job.into()
     }
 
     fn render(
