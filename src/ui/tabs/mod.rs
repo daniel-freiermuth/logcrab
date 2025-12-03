@@ -51,7 +51,7 @@ pub enum PendingTabAdd {
     Bookmarks,
 }
 
-/// TabViewer implementation for dock system
+/// `TabViewer` implementation for dock system
 pub struct LogCrabTabViewer<'a> {
     pub log_view: &'a mut LogViewState,
     pub global_config: &'a mut GlobalConfig,

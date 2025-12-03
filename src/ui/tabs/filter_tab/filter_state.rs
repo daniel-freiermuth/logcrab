@@ -55,7 +55,7 @@ impl GlobalFilterWorker {
 
             // Spawn the single global worker thread
             std::thread::spawn(move || {
-                Self::filter_worker(request_rx, is_filtering_copy);
+                Self::filter_worker(&request_rx, &is_filtering_copy);
             });
 
             GlobalFilterWorker {
@@ -66,7 +66,7 @@ impl GlobalFilterWorker {
     }
 
     /// Single background worker that processes all filter requests
-    fn filter_worker(request_rx: Receiver<FilterRequest>, is_filtering: Arc<AtomicBool>) {
+    fn filter_worker(request_rx: &Receiver<FilterRequest>, is_filtering: &Arc<AtomicBool>) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
@@ -81,7 +81,7 @@ impl GlobalFilterWorker {
             while let Ok(request) = request_rx.try_recv() {
                 let filter_id = request.filter_id;
                 if pending.contains_key(&filter_id) {
-                    log::trace!("Updating pending request for filter {}", filter_id,);
+                    log::trace!("Updating pending request for filter {filter_id}",);
                 }
                 pending.insert(filter_id, request);
             }
@@ -114,7 +114,9 @@ impl GlobalFilterWorker {
                     #[cfg(feature = "cpu-profiling")]
                     puffin::profile_scope!("build_regex");
 
-                    if !request.search_text.is_empty() {
+                    if request.search_text.is_empty() {
+                        None
+                    } else {
                         // Use fancy-regex with (?i) inline flag for case-insensitive matching
                         let pattern = if request.case_insensitive {
                             format!("(?i){}", request.search_text)
@@ -132,8 +134,6 @@ impl GlobalFilterWorker {
                                 None
                             }
                         }
-                    } else {
-                        None
                     }
                 };
 

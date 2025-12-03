@@ -36,7 +36,7 @@ impl EntropyScorer {
         let mut entropy = 0.0;
         for &count in &char_counts {
             if count > 0 {
-                let p = count as f64 / total;
+                let p = f64::from(count) / total;
                 entropy -= p * p.log2();
             }
         }
@@ -59,7 +59,7 @@ impl AnomalyScorer for EntropyScorer {
         let length_deviation = (length - self.avg_length).abs() / self.avg_length.max(1.0);
 
         // Combine deviations (unusually high or low entropy/length is anomalous)
-        let score = (entropy_deviation + length_deviation) / 2.0;
+        let score = f64::midpoint(entropy_deviation, length_deviation);
 
         score.min(1.0)
     }
@@ -69,10 +69,10 @@ impl AnomalyScorer for EntropyScorer {
         let length = line.message.len() as f64;
 
         // Running average
-        self.avg_entropy = (self.avg_entropy * self.sample_count as f64 + entropy)
-            / (self.sample_count + 1) as f64;
-        self.avg_length =
-            (self.avg_length * self.sample_count as f64 + length) / (self.sample_count + 1) as f64;
+        self.avg_entropy = (self.avg_entropy * f64::from(self.sample_count) + entropy)
+            / f64::from(self.sample_count + 1);
+        self.avg_length = (self.avg_length * f64::from(self.sample_count) + length)
+            / f64::from(self.sample_count + 1);
 
         self.sample_count += 1;
     }

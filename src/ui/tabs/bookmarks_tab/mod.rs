@@ -39,7 +39,7 @@ pub enum BookmarksViewEvent {
     CancelRenaming,
 }
 
-/// Orchestrates the bookmarks view UI using the BookmarkPanel component
+/// Orchestrates the bookmarks view UI using the `BookmarkPanel` component
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BookmarksView {
     edited_line_index: Option<usize>,
@@ -54,7 +54,7 @@ impl BookmarksView {
     pub fn render(
         ui: &mut Ui,
         log_view_state: &LogViewState,
-        bookmarks: Vec<BookmarkData>,
+        bookmarks: &[BookmarkData],
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
         all_filter_highlights: &[FilterHighlight],
@@ -129,7 +129,7 @@ impl BookmarksView {
         let events = BookmarksView::render(
             ui,
             data_state,
-            bookmarks,
+            &bookmarks,
             self.edited_line_index,
             &mut self.bookmark_name_input,
             all_filter_highlights,
@@ -166,7 +166,7 @@ impl BookmarksView {
     }
 
     /// Move selection in bookmarks view
-    pub fn move_selection_in_bookmarks(&mut self, delta: i32, data_state: &mut LogViewState) {
+    pub fn move_selection_in_bookmarks(&self, delta: i32, data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -199,7 +199,7 @@ impl BookmarksView {
     }
 
     /// Jump to the first bookmark (Vim-style gg)
-    pub fn jump_to_top_in_bookmarks(&mut self, data_state: &mut LogViewState) {
+    pub fn jump_to_top_in_bookmarks(&self, data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -209,7 +209,7 @@ impl BookmarksView {
     }
 
     /// Jump to the last bookmark (Vim-style G)
-    pub fn jump_to_bottom_in_bookmarks(&mut self, data_state: &mut LogViewState) {
+    pub fn jump_to_bottom_in_bookmarks(&self, data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -220,13 +220,13 @@ impl BookmarksView {
     }
 
     /// Move selection up by one page in bookmarks view
-    pub fn page_up_in_bookmarks(&mut self, data_state: &mut LogViewState) {
+    pub fn page_up_in_bookmarks(&self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_bookmarks(-PAGE_SIZE, data_state);
     }
 
     /// Move selection down by one page in bookmarks view
-    pub fn page_down_in_bookmarks(&mut self, data_state: &mut LogViewState) {
+    pub fn page_down_in_bookmarks(&self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_bookmarks(PAGE_SIZE, data_state);
     }
@@ -244,7 +244,7 @@ impl LogCrabTab for BookmarksView {
         _global_config: &mut crate::config::GlobalConfig,
         all_filter_highlights: &[crate::ui::log_view::FilterHighlight],
     ) {
-        self.render_bookmarks(ui, data_state, all_filter_highlights)
+        self.render_bookmarks(ui, data_state, all_filter_highlights);
     }
 
     fn process_events(

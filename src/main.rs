@@ -1,4 +1,4 @@
-/// LogCrab - An intelligent log anomaly explorer
+/// `LogCrab` - An intelligent log anomaly explorer
 ///
 /// Copyright (C) 2025 Daniel Freiermuth
 ///
@@ -22,6 +22,7 @@ mod parser;
 mod ui;
 
 use clap::Parser;
+use egui::IconData;
 use std::path::PathBuf;
 use ui::app::LogCrabApp;
 
@@ -82,14 +83,14 @@ fn main() -> eframe::Result<()> {
     let args = Args::parse();
 
     if let Some(ref file) = args.file {
-        log::info!("Opening file from command line: {:?}", file);
+        log::info!("Opening file from command line: {}", file.display());
     }
 
     // Load app icon
     let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../logo.png"))
         .unwrap_or_else(|e| {
-            log::warn!("Failed to load app icon: {}", e);
-            Default::default()
+            log::warn!("Failed to load app icon: {e}");
+            IconData::default()
         });
 
     let native_options = eframe::NativeOptions {

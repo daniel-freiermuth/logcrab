@@ -11,7 +11,7 @@ impl ChangeFilternameWindow {
 
     /// Render the change filter name window
     ///
-    /// Returns Ok(Some(new_name)) if the name was changed,
+    /// Returns `Ok(Some(new_name))` if the name was changed,
     /// Ok(None) if the window is still open,
     /// Err(()) if the operation was cancelled.
     pub fn render(&mut self, ui: &mut egui::Ui) -> Result<Option<String>, ()> {

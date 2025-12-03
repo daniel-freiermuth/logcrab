@@ -21,7 +21,7 @@ use keybinds::Keybinds;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Wrapper for egui key event that can be converted to keybinds KeyInput
+/// Wrapper for egui key event that can be converted to keybinds `KeyInput`
 struct EguiKeyEvent<'a> {
     key: &'a egui::Key,
     mods: &'a egui::Modifiers,
@@ -323,13 +323,7 @@ pub struct KeyboardBindings {
 impl KeyboardBindings {
     /// Load shortcuts from global config
     pub fn load(config: &GlobalConfig) -> Self {
-        let bindings = if !config.shortcuts.is_empty() {
-            log::info!(
-                "Loading {} keyboard shortcuts from config",
-                config.shortcuts.len()
-            );
-            config.shortcuts.clone()
-        } else {
+        let bindings = if config.shortcuts.is_empty() {
             log::info!("No custom keyboard shortcuts found, using defaults");
 
             // Use defaults for all actions
@@ -338,6 +332,12 @@ impl KeyboardBindings {
                 bindings.insert(*action, action.default_binding().to_string());
             }
             bindings
+        } else {
+            log::info!(
+                "Loading {} keyboard shortcuts from config",
+                config.shortcuts.len()
+            );
+            config.shortcuts.clone()
         };
 
         let dispatcher = Self::rebuild_dispatcher(&bindings);
@@ -371,7 +371,9 @@ impl KeyboardBindings {
 
     /// Get the shortcut string for a specific action
     pub fn get_shortcut(&self, action: ShortcutAction) -> &str {
-        self.bindings.get(&action).map(|s| s.as_str()).unwrap_or("")
+        self.bindings
+            .get(&action)
+            .map_or("", std::string::String::as_str)
     }
 
     /// Set the shortcut for a specific action
@@ -383,7 +385,7 @@ impl KeyboardBindings {
         // Validate the shortcut string by parsing it as a KeySeq
         shortcut_str
             .parse::<keybinds::KeySeq>()
-            .map_err(|e| format!("Invalid keybind: {}", e))?;
+            .map_err(|e| format!("Invalid keybind: {e}"))?;
 
         // Update the bindings map
         self.bindings.insert(action, shortcut_str.to_string());
@@ -395,7 +397,7 @@ impl KeyboardBindings {
     }
 
     /// Process input from egui and return actions to execute
-    /// Returns (actions to execute, events to consume, shortcuts_changed flag)
+    /// Returns (actions to execute, events to consume, `shortcuts_changed` flag)
     pub fn process_input(
         &mut self,
         raw_input: &egui::RawInput,
@@ -411,7 +413,7 @@ impl KeyboardBindings {
                 // Handle rebinding mode first
                 if let Some(action) = pending_rebind.take() {
                     let key_input: keybinds::KeyInput = key_event.into();
-                    let shortcut_str = format!("{}", key_input);
+                    let shortcut_str = format!("{key_input}");
                     if self.set_shortcut(action, &shortcut_str).is_ok() {
                         shortcuts_changed = true;
                     }

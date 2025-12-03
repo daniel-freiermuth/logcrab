@@ -90,7 +90,7 @@ impl LogTable {
         let visible_lines = filter.filtered_indices.len();
 
         egui::ScrollArea::horizontal()
-            .id_salt(format!("filtered_scroll_{}", ui_salt))
+            .id_salt(format!("filtered_scroll_{ui_salt}"))
             .auto_shrink([false, false]) // Don't shrink, take all available space
             .show(ui, |ui| {
                 #[cfg(feature = "cpu-profiling")]
@@ -159,7 +159,9 @@ impl LogTable {
                                 is_selected,
                                 is_bookmarked,
                                 color,
-                                bookmarked_lines.get(&line_idx).map(|s| s.as_str()),
+                                bookmarked_lines
+                                    .get(&line_idx)
+                                    .map(std::string::String::as_str),
                                 &mut row_clicked,
                                 &mut row_right_clicked,
                             );
@@ -273,7 +275,7 @@ impl LogTable {
             // Show tooltip with bookmark name if bookmarked
             if is_bookmarked {
                 if let Some(name) = bookmark_name {
-                    label_response.on_hover_text(format!("📑 Bookmark: {}", name));
+                    label_response.on_hover_text(format!("📑 Bookmark: {name}"));
                 }
             }
 

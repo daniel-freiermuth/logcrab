@@ -310,7 +310,7 @@ impl LogView {
     }
 
     fn load_crab_file(&mut self) {
-        log::debug!("Loading .crab file: {:?}", self.crab_file);
+        log::debug!("Loading .crab file: {}", self.crab_file.display());
         if let Ok(file_content) = fs::read_to_string(&self.crab_file) {
             if let Ok(crab_data) = serde_json::from_str::<CrabFile>(&file_content) {
                 log::info!(
@@ -329,17 +329,17 @@ impl LogView {
                     log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
                 }
             } else {
-                log::warn!("Failed to parse .crab file: {:?}", self.crab_file);
+                log::warn!("Failed to parse .crab file: {}", self.crab_file.display());
                 self.add_filter_view(false, None);
             }
         } else {
-            log::info!(".crab file does not exist yet: {:?}", self.crab_file);
+            log::info!(".crab file does not exist yet: {}", self.crab_file.display());
             self.add_filter_view(false, None);
         }
     }
 
     pub fn save_crab_file(&self) {
-        log::debug!("Saving .crab file: {:?}", self.crab_file);
+        log::debug!("Saving .crab file: {}", self.crab_file.display());
         let filters = self
             .dock_state
             .iter_all_tabs()
@@ -353,18 +353,18 @@ impl LogView {
 
         if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
             match fs::write(&self.crab_file, json) {
-                Ok(_) => log::debug!(
+                Ok(()) => log::debug!(
                     "Successfully saved .crab file with {} bookmarks, {} filters",
                     self.state.bookmarks.len(),
                     n_filters,
                 ),
-                Err(e) => log::error!("Failed to save .crab file: {}", e),
+                Err(e) => log::error!("Failed to save .crab file: {e}"),
             }
         }
     }
 
-    pub fn export_filters(&self, path: PathBuf) -> Result<(), String> {
-        log::debug!("Exporting filters to: {:?}", path);
+    pub fn export_filters(&self, path: &PathBuf) -> Result<(), String> {
+        log::debug!("Exporting filters to: {}", path.display());
         let filters = self
             .dock_state
             .iter_all_tabs()
@@ -374,9 +374,9 @@ impl LogView {
         let filters_data = CrabFilters { filters };
 
         let json = serde_json::to_string_pretty(&filters_data)
-            .map_err(|e| format!("Failed to serialize filters: {}", e))?;
+            .map_err(|e| format!("Failed to serialize filters: {e}"))?;
 
-        fs::write(&path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+        fs::write(&path, json).map_err(|e| format!("Failed to write file: {e}"))?;
 
         log::info!(
             "Successfully exported {} filters to {:?}",
@@ -386,13 +386,13 @@ impl LogView {
         Ok(())
     }
 
-    pub fn import_filters(&mut self, path: PathBuf) -> Result<usize, String> {
-        log::debug!("Importing filters from: {:?}", path);
+    pub fn import_filters(&mut self, path: &PathBuf) -> Result<usize, String> {
+        log::debug!("Importing filters from: {}", path.display());
         let file_content =
-            fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+            fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {e}"))?;
 
         let filters_data: CrabFilters = serde_json::from_str(&file_content)
-            .map_err(|e| format!("Failed to parse filters file: {}", e))?;
+            .map_err(|e| format!("Failed to parse filters file: {e}"))?;
 
         let count = filters_data.filters.len();
         for saved_filter in filters_data.filters {
@@ -400,7 +400,7 @@ impl LogView {
             self.add_filter_view(false, Some(state));
         }
 
-        log::info!("Successfully imported {} filters from {:?}", count, path);
+        log::info!("Successfully imported {count} filters from {}", path.display());
         Ok(count)
     }
 
@@ -561,14 +561,14 @@ impl LogViewState {
 
             let bookmark_name = format!("Line {}", self.lines[line_index].line_number);
 
-            log::debug!("Adding bookmark: {}", bookmark_name);
+            log::debug!("Adding bookmark: {bookmark_name}");
             e.insert(Bookmark {
                 line_index,
                 name: bookmark_name,
                 timestamp,
             });
         } else {
-            log::debug!("Removing bookmark at line {}", line_index);
+            log::debug!("Removing bookmark at line {line_index}");
             self.bookmarks.remove(&line_index);
         }
     }
@@ -581,7 +581,7 @@ impl LogViewState {
 
 impl Drop for LogView {
     fn drop(&mut self) {
-        log::debug!("Dropping LogView for file: {:?}", self.crab_file);
+        log::debug!("Dropping LogView for file: {}", self.crab_file.display());
         self.save_crab_file();
     }
 }

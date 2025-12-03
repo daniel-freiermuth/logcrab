@@ -14,7 +14,7 @@ use crate::ui::LogView;
 /// Responsibilities:
 /// - Main window
 /// - File loading
-/// - Right now, scoring. Should be moved into LogView
+/// - Right now, scoring. Should be moved into `LogView`
 /// - Keyboard shortcut processing
 pub struct LogCrabApp {
     /// The main log view component
@@ -97,7 +97,7 @@ impl LogCrabApp {
             path = PathBuf::from(path.to_string_lossy().trim_end_matches(".crab"));
 
             if path.exists() {
-                log::info!("Loading log file from .crab session: {:?}", path);
+                log::info!("Loading log file from .crab session: {}", path.display());
             } else {
                 self.status_message = format!("Error: File not found: {}", path.display(),);
                 log::error!("{}", self.status_message);
@@ -158,8 +158,7 @@ impl LogCrabApp {
                 LoadMessage::Complete(lines, path) => {
                     let n_lines = lines.len();
                     self.status_message = format!(
-                        "Loaded {} lines - calculating anomaly scores in background...",
-                        n_lines
+                        "Loaded {n_lines} lines - calculating anomaly scores in background..."
                     );
                     self.is_loading = false;
                     self.load_progress = 0.0;
@@ -184,7 +183,7 @@ impl LogCrabApp {
                         log_view.state.scores = Some(scores);
                     }
                     self.status_message =
-                        format!("Ready. {} lines loaded with anomaly scores", n_lines);
+                        format!("Ready. {n_lines} lines loaded with anomaly scores");
                     self.load_progress = 1.0;
                     should_clear_receiver = true;
                 }
@@ -219,9 +218,9 @@ impl LogCrabApp {
                         .set_file_name("filters.crab-filters")
                         .save_file()
                     {
-                        match log_view.export_filters(path) {
-                            Ok(_) => log::info!("Filters exported successfully"),
-                            Err(e) => log::error!("Failed to export filters: {}", e),
+                        match log_view.export_filters(&path) {
+                            Ok(()) => log::info!("Filters exported successfully"),
+                            Err(e) => log::error!("Failed to export filters: {e}"),
                         }
                     }
                     ui.close();
@@ -233,9 +232,9 @@ impl LogCrabApp {
                         .add_filter("All Files", &["*"])
                         .pick_file()
                     {
-                        match log_view.import_filters(path) {
-                            Ok(count) => log::info!("Successfully imported {} filters", count),
-                            Err(e) => log::error!("Failed to import filters: {}", e),
+                        match log_view.import_filters(&path) {
+                            Ok(count) => log::info!("Successfully imported {count} filters"),
+                            Err(e) => log::error!("Failed to import filters: {e}"),
                         }
                     }
                     ui.close();

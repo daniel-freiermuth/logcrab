@@ -38,7 +38,7 @@ impl AnomalyScorer for RarityScorer {
         // Inverse frequency: rare templates get higher scores
         // Simple inverse: score = 1 - (count / total)
         // But scale it so even moderately rare items get decent scores
-        let frequency = count as f64 / self.total_lines as f64;
+        let frequency = f64::from(count) / f64::from(self.total_lines);
 
         // Use a power function to make scoring more aggressive for rare items
         // score = (1 - frequency)^0.5 gives better distribution

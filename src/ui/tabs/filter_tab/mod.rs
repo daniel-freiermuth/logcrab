@@ -116,10 +116,10 @@ impl FilterView {
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::FilterNameEditRequested => {
-                    events.push(FilterViewEvent::FilterNameEditRequested)
+                    events.push(FilterViewEvent::FilterNameEditRequested);
                 }
                 FilterInternalEvent::FavoriteToggled => {
-                    events.push(FilterViewEvent::FavoriteToggled)
+                    events.push(FilterViewEvent::FavoriteToggled);
                 }
             }
         }
@@ -225,7 +225,7 @@ impl FilterView {
                     }) {
                         // Remove from favorites
                         global_config.favorite_filters.remove(pos);
-                        log::info!("Removed favorite: '{}'", search_text);
+                        log::info!("Removed favorite: '{search_text}'");
                     } else {
                         // Add to favorites
                         global_config
@@ -258,7 +258,7 @@ impl FilterView {
                 Ok(None) => {
                     // Still editing
                 }
-                Err(_) => {
+                Err(()) => {
                     // Cancelled
                     self.change_filtername_window = None;
                 }
@@ -354,7 +354,7 @@ impl LogCrabTab for FilterView {
         global_config: &mut GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
     ) {
-        self.render_filter(ui, data_state, global_config, all_filter_highlights)
+        self.render_filter(ui, data_state, global_config, all_filter_highlights);
     }
 
     fn process_events(

@@ -153,11 +153,11 @@ impl BookmarkPanel {
                                     );
                                 }
                                 let text = if is_selected {
-                                    RichText::new(format!("★ ▶ {}", line_number))
+                                    RichText::new(format!("★ ▶ {line_number}"))
                                         .color(color)
                                         .strong()
                                 } else {
-                                    RichText::new(format!("★ {}", line_number)).color(color)
+                                    RichText::new(format!("★ {line_number}")).color(color)
                                 };
                                 ui.label(text);
                                 let response = ui.interact(

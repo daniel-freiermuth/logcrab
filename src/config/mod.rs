@@ -44,7 +44,7 @@ pub struct FavoriteFilter {
 }
 
 impl FavoriteFilter {
-    /// Create a new favorite with the given parameters, using search_text as the default name
+    /// Create a new favorite with the given parameters, using `search_text` as the default name
     pub fn new(search_text: String, case_insensitive: bool) -> Self {
         let name = search_text.clone();
         Self {
@@ -54,7 +54,7 @@ impl FavoriteFilter {
         }
     }
 
-    /// Get the display name for this favorite (returns name if set, otherwise search_text)
+    /// Get the display name for this favorite (returns name if set, otherwise `search_text`)
     pub fn display_name(&self) -> &str {
         if self.name.is_empty() {
             &self.search_text
@@ -83,7 +83,7 @@ impl GlobalConfig {
     pub fn load() -> Self {
         if let Some(path) = Self::config_path() {
             if path.exists() {
-                log::info!("Loading global config from {:?}", path);
+                log::info!("Loading global config from {path:?}");
                 if let Ok(contents) = std::fs::read_to_string(&path) {
                     if let Ok(config) = serde_json::from_str::<GlobalConfig>(&contents) {
                         log::info!(
@@ -109,17 +109,17 @@ impl GlobalConfig {
         // Create directory if it doesn't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+                .map_err(|e| format!("Failed to create config directory: {e}"))?;
         }
 
         // Serialize to JSON
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+            .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
         // Write to file
-        std::fs::write(&path, json).map_err(|e| format!("Failed to write config file: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write config file: {e}"))?;
 
-        log::info!("Saved global config to {:?}", path);
+        log::info!("Saved global config to {path:?}");
         Ok(())
     }
 }

@@ -64,7 +64,7 @@ impl FilterBar {
             .find(|f| f.matches(filter))
         {
             fav.name = new_name.clone();
-            log::info!("Updated favorite name to: '{}'", new_name);
+            log::info!("Updated favorite name to: '{new_name}'");
         }
         let _ = global_config.save();
     }
@@ -153,7 +153,7 @@ impl FilterBar {
                     };
 
                     let combo_response =
-                        egui::ComboBox::from_id_salt(format!("favorites_{}", filter_uuid))
+                        egui::ComboBox::from_id_salt(format!("favorites_{filter_uuid}"))
                             .selected_text(&selected_text)
                             .width(150.0)
                             .show_ui(ui, |ui| {
@@ -203,12 +203,10 @@ impl FilterBar {
                     let new_index = match self.history_index {
                         None => {
                             self.pre_history_text = filter.search_text.clone();
-                            if filter_history[0] != filter.search_text || filter_history.len() == 1
-                            {
-                                0
-                            } else {
-                                1
-                            }
+                            usize::from(
+                                !(filter_history[0] != filter.search_text
+                                    || filter_history.len() == 1),
+                            )
                         }
                         Some(idx) => (idx + 1).min(filter_history.len() - 1),
                     };
@@ -257,7 +255,7 @@ impl FilterBar {
             // Display regex validation status
             match &filter.search_regex {
                 Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
-                Err(err) => ui.colored_label(Color32::RED, format!("❌ {}", err)),
+                Err(err) => ui.colored_label(Color32::RED, format!("❌ {err}")),
             }
         });
 

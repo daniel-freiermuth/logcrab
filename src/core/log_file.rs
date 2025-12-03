@@ -73,11 +73,8 @@ impl LogFileLoader {
                 lines_arc
             }
             Err(e) => {
-                log::error!("Failed to parse DLT file: {}", e);
-                let _ = tx.send(LoadMessage::Error(format!(
-                    "Failed to parse DLT file: {}",
-                    e
-                )));
+                log::error!("Failed to parse DLT file: {e}");
+                let _ = tx.send(LoadMessage::Error(format!("Failed to parse DLT file: {e}")));
                 Arc::new(Vec::new())
             }
         }
@@ -85,24 +82,23 @@ impl LogFileLoader {
 
     fn process_file_background(path: PathBuf, tx: Sender<LoadMessage>, ctx: egui::Context) {
         let start_time = std::time::Instant::now();
-        log::debug!("Starting background file processing for: {:?}", path);
+        log::debug!("Starting background file processing for: {path:?}");
 
         // Get file size for progress tracking
         let metadata = std::fs::metadata(&path);
         if let Err(e) = metadata {
-            log::error!("Cannot read file metadata: {}", e);
-            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {}", e)));
+            log::error!("Cannot read file metadata: {e}");
+            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {e}")));
             return;
         }
         let file_size = metadata.unwrap().len();
-        log::info!("File size: {} bytes", file_size);
+        log::info!("File size: {file_size} bytes");
 
         // Check if this is a DLT binary file by extension or magic bytes
         let is_dlt_file = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("dlt"))
-            .unwrap_or(false);
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"));
 
         // If it's a DLT file, parse it differently
         let lines_arc = if is_dlt_file {
@@ -113,10 +109,10 @@ impl LogFileLoader {
 
         if !lines_arc.is_empty() {
             Self::score_and_send_lines(
-                lines_arc.clone(),
-                path.clone(),
-                tx.clone(),
-                ctx.clone(),
+                &lines_arc.clone(),
+                &path.clone(),
+                &tx.clone(),
+                &ctx.clone(),
                 start_time,
             );
         }
@@ -131,8 +127,8 @@ impl LogFileLoader {
     ) -> Arc<Vec<LogLine>> {
         let file = File::open(&path);
         if let Err(e) = file {
-            log::error!("Cannot open file: {}", e);
-            let _ = tx.send(LoadMessage::Error(format!("Cannot open file: {}", e)));
+            log::error!("Cannot open file: {e}");
+            let _ = tx.send(LoadMessage::Error(format!("Cannot open file: {e}")));
             return Arc::new(Vec::new());
         }
 
@@ -141,8 +137,8 @@ impl LogFileLoader {
         let mut file = file.unwrap();
         let mut buffer = Vec::new();
         if let Err(e) = file.read_to_end(&mut buffer) {
-            log::error!("Cannot read file content: {}", e);
-            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {}", e)));
+            log::error!("Cannot read file content: {e}");
+            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {e}")));
             return Arc::new(Vec::new());
         }
 
@@ -157,17 +153,16 @@ impl LogFileLoader {
         let utf8_start = std::time::Instant::now();
         let mut content = String::from_utf8_lossy(&buffer).to_string();
         let content_len = content.len();
-        
+
         // Check for and remove null bytes which can cause string processing issues
         let null_count = content.bytes().filter(|&b| b == 0).count();
         if null_count > 0 {
             log::warn!(
-                "File contains {} null bytes which will be removed to prevent parsing issues",
-                null_count
+                "File contains {null_count} null bytes which will be removed to prevent parsing issues"
             );
             content = content.replace('\0', "");
         }
-        
+
         log::info!(
             "UTF-8 conversion took {:?}, original bytes: {}, UTF-8 bytes: {}, null bytes: {}",
             utf8_start.elapsed(),
@@ -187,10 +182,7 @@ impl LogFileLoader {
         let parse_start = std::time::Instant::now();
         let mut file_line_number = 0;
         let total_lines_in_content = content.lines().count();
-        log::info!(
-            "File contains {} lines (by line iterator count)",
-            total_lines_in_content
-        );
+        log::info!("File contains {total_lines_in_content} lines (by line iterator count)");
 
         for line_buffer in content.lines() {
             file_line_number += 1;
@@ -224,7 +216,7 @@ impl LogFileLoader {
             lines.len(),
             path
         );
-        log::info!("Total bytes read: {}", bytes_read);
+        log::info!("Total bytes read: {bytes_read}");
         log::info!(
             "Line processing stats: file_line_number={}, lines_in_content={}, parsed_lines={}, skipped={}",
             file_line_number,
@@ -250,10 +242,10 @@ impl LogFileLoader {
 
     /// Helper to score and send lines (used for both text and DLT files)
     fn score_and_send_lines(
-        lines_arc: Arc<Vec<LogLine>>,
-        path: PathBuf,
-        tx: Sender<LoadMessage>,
-        ctx: egui::Context,
+        lines_arc: &Arc<Vec<LogLine>>,
+        path: &PathBuf,
+        tx: &Sender<LoadMessage>,
+        ctx: &egui::Context,
         start_time: std::time::Instant,
     ) {
         // Now calculate anomaly scores in the background
@@ -274,8 +266,7 @@ impl LogFileLoader {
         for (idx, log_line) in lines_arc.iter().enumerate() {
             if idx % 1000 == 0 {
                 let _ = tx.send(LoadMessage::ScoringProgress(format!(
-                    "Scoring... ({}/{})",
-                    idx, total_lines
+                    "Scoring... ({idx}/{total_lines})"
                 )));
                 ctx.request_repaint();
             }
@@ -319,7 +310,7 @@ impl LogFileLoader {
         }
 
         let score_duration = score_start.elapsed();
-        log::info!("Anomaly scoring took {:?} for {:?}", score_duration, path);
+        log::info!("Anomaly scoring took {score_duration:?} for {}", path.display());
         log::info!("Total processing time: {:?}", start_time.elapsed());
         let _ = tx.send(LoadMessage::ScoringComplete(normalized_scores));
         ctx.request_repaint();

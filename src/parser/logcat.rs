@@ -24,7 +24,7 @@ fn parse_logcat_timestamp(s: &str) -> Option<DateTime<Local>> {
     // Logcat format: MM-DD HH:MM:SS.mmm (no year!)
     // We'll assume current year
     let current_year = Local::now().year();
-    let timestamp_str = format!("{}-{}", current_year, s);
+    let timestamp_str = format!("{current_year}-{s}");
 
     // Try parsing with year
     if let Ok(naive) = NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.3f") {

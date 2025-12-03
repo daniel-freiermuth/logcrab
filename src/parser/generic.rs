@@ -37,7 +37,9 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
         } else if let Ok(dt) = DateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S%.3f") {
             timestamp = Some(dt.with_timezone(&Local));
             remaining = remaining[caps[0].len()..].trim_start();
-        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S") {
+        } else if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S")
+        {
             // Try without milliseconds
             timestamp = Some(DateTime::from_naive_utc_and_offset(
                 naive,
@@ -53,7 +55,8 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
                 *Local::now().offset(),
             ));
             remaining = remaining[caps[0].len()..].trim_start();
-        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S")
+        } else if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S")
         {
             // Try without milliseconds
             timestamp = Some(DateTime::from_naive_utc_and_offset(
