@@ -63,7 +63,7 @@ impl FilterBar {
             .iter_mut()
             .find(|f| f.matches(filter))
         {
-            fav.name = new_name.clone();
+            fav.name.clone_from(&new_name);
             log::info!("Updated favorite name to: '{new_name}'");
         }
         let _ = global_config.save();
@@ -171,7 +171,7 @@ impl FilterBar {
                     if let Some(fav) = current_favorite {
                         if combo_response.response.double_clicked() {
                             self.editing_favorite = true;
-                            self.temp_favorite_name = fav.name.clone();
+                            self.temp_favorite_name.clone_from(&fav.name);
                         }
                     }
                 }
@@ -202,7 +202,7 @@ impl FilterBar {
                     // Navigate backward in history (newer to older)
                     let new_index = match self.history_index {
                         None => {
-                            self.pre_history_text = filter.search_text.clone();
+                            self.pre_history_text.clone_from(&filter.search_text);
                             usize::from(
                                 !(filter_history[0] != filter.search_text
                                     || filter_history.len() == 1),
@@ -211,19 +211,19 @@ impl FilterBar {
                         Some(idx) => (idx + 1).min(filter_history.len() - 1),
                     };
                     self.history_index = Some(new_index);
-                    filter.search_text = filter_history[new_index].clone();
+                    filter.search_text.clone_from(&filter_history[new_index]);
                     events.push(FilterInternalEvent::SearchChanged);
                 } else if down_pressed {
                     // Navigate forward in history (older to newer)
                     if let Some(idx) = self.history_index {
                         if idx == 0 {
                             // Return to pre-history text
-                            filter.search_text = self.pre_history_text.clone();
+                            filter.search_text.clone_from(&self.pre_history_text);
                             self.history_index = None;
                         } else {
                             // Go to newer history entry
                             self.history_index = Some(idx - 1);
-                            filter.search_text = filter_history[idx - 1].clone();
+                            filter.search_text.clone_from(&filter_history[idx - 1]);
                         }
                         events.push(FilterInternalEvent::SearchChanged);
                     }

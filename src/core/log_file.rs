@@ -201,9 +201,8 @@ impl LogFileLoader {
                 continue;
             }
 
-            let log_line = match parse_line(line_buffer.to_string(), file_line_number) {
-                Some(line) => line,
-                None => continue, // Skip lines without timestamp
+            let Some(log_line) = parse_line(line_buffer.to_string(), file_line_number) else {
+                continue; // Skip lines without timestamp
             };
 
             lines.push(log_line);
@@ -310,7 +309,10 @@ impl LogFileLoader {
         }
 
         let score_duration = score_start.elapsed();
-        log::info!("Anomaly scoring took {score_duration:?} for {}", path.display());
+        log::info!(
+            "Anomaly scoring took {score_duration:?} for {}",
+            path.display()
+        );
         log::info!("Total processing time: {:?}", start_time.elapsed());
         let _ = tx.send(LoadMessage::ScoringComplete(normalized_scores));
         ctx.request_repaint();

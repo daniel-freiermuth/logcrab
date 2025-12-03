@@ -179,7 +179,7 @@ pub struct SavedFilter {
 impl From<&SavedFilter> for FilterState {
     fn from(saved_filter: &SavedFilter) -> FilterState {
         let mut filter = FilterState::new(saved_filter.name.clone(), saved_filter.color);
-        filter.search_text = saved_filter.search_text.clone();
+        filter.search_text.clone_from(&saved_filter.search_text);
         filter.case_insensitive = saved_filter.case_insensitive;
         filter.update_search_regex();
         filter
@@ -333,7 +333,10 @@ impl LogView {
                 self.add_filter_view(false, None);
             }
         } else {
-            log::info!(".crab file does not exist yet: {}", self.crab_file.display());
+            log::info!(
+                ".crab file does not exist yet: {}",
+                self.crab_file.display()
+            );
             self.add_filter_view(false, None);
         }
     }
@@ -376,7 +379,7 @@ impl LogView {
         let json = serde_json::to_string_pretty(&filters_data)
             .map_err(|e| format!("Failed to serialize filters: {e}"))?;
 
-        fs::write(&path, json).map_err(|e| format!("Failed to write file: {e}"))?;
+        fs::write(path, json).map_err(|e| format!("Failed to write file: {e}"))?;
 
         log::info!(
             "Successfully exported {} filters to {:?}",
@@ -389,7 +392,7 @@ impl LogView {
     pub fn import_filters(&mut self, path: &PathBuf) -> Result<usize, String> {
         log::debug!("Importing filters from: {}", path.display());
         let file_content =
-            fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {e}"))?;
+            fs::read_to_string(path).map_err(|e| format!("Failed to read file: {e}"))?;
 
         let filters_data: CrabFilters = serde_json::from_str(&file_content)
             .map_err(|e| format!("Failed to parse filters file: {e}"))?;
@@ -400,7 +403,10 @@ impl LogView {
             self.add_filter_view(false, Some(state));
         }
 
-        log::info!("Successfully imported {count} filters from {}", path.display());
+        log::info!(
+            "Successfully imported {count} filters from {}",
+            path.display()
+        );
         Ok(count)
     }
 

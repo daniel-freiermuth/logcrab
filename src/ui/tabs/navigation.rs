@@ -23,9 +23,8 @@ pub fn find_neighbor<T>(
             continue;
         }
 
-        let candidate_rect = match node.rect() {
-            Some(r) => r,
-            None => continue,
+        let Some(candidate_rect) = node.rect() else {
+            continue;
         };
 
         // Check if candidate is in the correct direction and calculate distance and overlap

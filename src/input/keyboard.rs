@@ -239,7 +239,7 @@ impl ShortcutAction {
         ]
     }
 
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             ShortcutAction::MoveUp => "Move Selection Up",
             ShortcutAction::MoveDown => "Move Selection Down",
@@ -263,7 +263,7 @@ impl ShortcutAction {
         }
     }
 
-    pub fn description(&self) -> &'static str {
+    pub fn description(self) -> &'static str {
         match self {
             ShortcutAction::MoveUp => "Move to the previous log line in the active view",
             ShortcutAction::MoveDown => "Move to the next log line in the active view",
@@ -287,7 +287,7 @@ impl ShortcutAction {
         }
     }
 
-    pub fn default_binding(&self) -> &'static str {
+    pub fn default_binding(self) -> &'static str {
         match self {
             ShortcutAction::MoveUp => "k",
             ShortcutAction::MoveDown => "j",
@@ -365,7 +365,7 @@ impl KeyboardBindings {
 
     /// Save shortcuts to global config
     pub fn save_to_config(&self, config: &mut GlobalConfig) {
-        config.shortcuts = self.bindings.clone();
+        config.shortcuts.clone_from(&self.bindings);
         log::info!("Saved {} keyboard shortcuts to config", self.bindings.len());
     }
 

@@ -98,11 +98,8 @@ impl FilterView {
         // Handle filter bar events
         for event in filter_bar_events {
             match event {
-                FilterInternalEvent::SearchChanged => {
-                    self.state.request_filter_update(Arc::clone(lines));
-                    events.push(FilterViewEvent::FilterModified);
-                }
-                FilterInternalEvent::CaseInsensitiveToggled => {
+                FilterInternalEvent::SearchChanged
+                | FilterInternalEvent::CaseInsensitiveToggled => {
                     self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }

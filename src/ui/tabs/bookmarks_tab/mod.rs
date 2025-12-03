@@ -62,7 +62,7 @@ impl BookmarksView {
         let panel_events = BookmarkPanel::render(
             ui,
             log_view_state,
-            &bookmarks,
+            bookmarks,
             editing_bookmark,
             bookmark_name_input,
             all_filter_highlights,
@@ -96,7 +96,7 @@ impl BookmarksView {
     fn start_renaming_bookmark(&mut self, line_index: usize, data_state: &LogViewState) {
         if let Some(bookmark) = data_state.bookmarks.get(&line_index) {
             self.edited_line_index = Some(line_index);
-            self.bookmark_name_input = bookmark.name.clone();
+            self.bookmark_name_input.clone_from(&bookmark.name);
         }
     }
 
@@ -166,7 +166,7 @@ impl BookmarksView {
     }
 
     /// Move selection in bookmarks view
-    pub fn move_selection_in_bookmarks(&self, delta: i32, data_state: &mut LogViewState) {
+    pub fn move_selection_in_bookmarks(delta: i32, data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -199,7 +199,7 @@ impl BookmarksView {
     }
 
     /// Jump to the first bookmark (Vim-style gg)
-    pub fn jump_to_top_in_bookmarks(&self, data_state: &mut LogViewState) {
+    pub fn jump_to_top_in_bookmarks(data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -209,7 +209,7 @@ impl BookmarksView {
     }
 
     /// Jump to the last bookmark (Vim-style G)
-    pub fn jump_to_bottom_in_bookmarks(&self, data_state: &mut LogViewState) {
+    pub fn jump_to_bottom_in_bookmarks(data_state: &mut LogViewState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -222,13 +222,13 @@ impl BookmarksView {
     /// Move selection up by one page in bookmarks view
     pub fn page_up_in_bookmarks(&self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
-        self.move_selection_in_bookmarks(-PAGE_SIZE, data_state);
+        Self::move_selection_in_bookmarks(-PAGE_SIZE, data_state);
     }
 
     /// Move selection down by one page in bookmarks view
     pub fn page_down_in_bookmarks(&self, data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
-        self.move_selection_in_bookmarks(PAGE_SIZE, data_state);
+        Self::move_selection_in_bookmarks(PAGE_SIZE, data_state);
     }
 }
 
@@ -261,14 +261,14 @@ impl LogCrabTab for BookmarksView {
 
         for action in actions {
             match action {
-                ShortcutAction::MoveDown => self.move_selection_in_bookmarks(1, data_state),
-                ShortcutAction::MoveUp => self.move_selection_in_bookmarks(-1, data_state),
+                ShortcutAction::MoveDown => Self::move_selection_in_bookmarks(1, data_state),
+                ShortcutAction::MoveUp => Self::move_selection_in_bookmarks(-1, data_state),
                 ShortcutAction::ToggleBookmark => {}
                 ShortcutAction::JumpToTop => {
-                    self.jump_to_top_in_bookmarks(data_state);
+                    Self::jump_to_top_in_bookmarks(data_state);
                 }
                 ShortcutAction::JumpToBottom => {
-                    self.jump_to_bottom_in_bookmarks(data_state);
+                    Self::jump_to_bottom_in_bookmarks(data_state);
                 }
                 ShortcutAction::PageUp => {
                     self.page_up_in_bookmarks(data_state);
