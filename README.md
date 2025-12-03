@@ -20,6 +20,24 @@ $ cd logcrab
 $ cargo run --release
 ```
 
+### Desktop Integration
+
+To add LogCrab to your application menu:
+
+```bash
+# Build the release binary
+cargo build --release
+
+# Update the .desktop file with the correct path to the binary
+sed "s|Exec=logcrab|Exec=$(pwd)/target/release/logcrab|g" logcrab.desktop > ~/.local/share/applications/logcrab.desktop
+
+# Install the icon
+mkdir -p ~/.local/share/icons/hicolor/256x256/apps
+cp logo.png ~/.local/share/icons/hicolor/256x256/apps/logcrab.png
+```
+
+After installation, LogCrab will appear in your application launcher and can open log files directly.
+
 ## Anomaly Scoring Components
 
 1. **Rarity Scorer**
