@@ -75,12 +75,11 @@ impl FilterView {
     pub fn render(
         &mut self,
         ui: &mut Ui,
-        log_view_state: &LogViewState,
+        log_view_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
         bookmarked_lines: &HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<FilterViewEvent> {
-        let lines = &log_view_state.lines;
         let selected_line_index = log_view_state.selected_line_index;
         let mut events = Vec::new();
 
@@ -91,9 +90,11 @@ impl FilterView {
             self.uuid,
             global_config,
             self.should_focus_search,
+            log_view_state,
         );
         self.should_focus_search = false;
 
+        let lines = &log_view_state.lines;
         // Handle filter bar events
         for event in filter_bar_events {
             match event {

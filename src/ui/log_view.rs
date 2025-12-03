@@ -239,6 +239,26 @@ pub struct LogViewState {
     pub bookmarks: HashMap<usize, Bookmark>,
     pub modified: bool,
     last_saved: Option<DateTime<Local>>,
+
+    /// Global filter history (shared across all filter tabs)
+    pub filter_history: Vec<String>,
+}
+
+impl LogViewState {
+    /// Add a filter pattern to the global history (called when filter is committed)
+    pub fn add_to_filter_history(&mut self, pattern: String) {
+        if pattern.is_empty() {
+            return;
+        }
+        // Remove if already exists to avoid duplicates
+        self.filter_history.retain(|p| p != &pattern);
+        // Add to front (most recent first)
+        self.filter_history.insert(0, pattern);
+        // Keep only last 50 entries
+        if self.filter_history.len() > 50 {
+            self.filter_history.truncate(50);
+        }
+    }
 }
 
 impl LogView {
@@ -250,6 +270,7 @@ impl LogView {
             monotonic_filter_counter: 0,
             pending_tab_add: None,
             state: LogViewState {
+                filter_history: Vec::new(),
                 lines,
                 scores: None,
                 selected_line_index: 0,

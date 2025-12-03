@@ -18,7 +18,10 @@
 
 use egui::{Color32, Ui};
 
-use crate::{config::GlobalConfig, ui::tabs::filter_tab::filter_state::FilterState};
+use crate::{
+    config::GlobalConfig,
+    ui::{log_view::LogViewState, tabs::filter_tab::filter_state::FilterState},
+};
 
 /// Events emitted by the filter bar
 #[derive(Debug, Clone)]
@@ -37,6 +40,10 @@ pub enum FilterInternalEvent {
 pub struct FilterBar {
     editing_favorite: bool,
     temp_favorite_name: String,
+    /// Current position in history (None = not browsing, Some(0) = most recent, etc.)
+    history_index: Option<usize>,
+    /// Temporary storage for the text being edited before entering history mode
+    pre_history_text: String,
 }
 
 impl FilterBar {
@@ -44,6 +51,8 @@ impl FilterBar {
         Self {
             editing_favorite: false,
             temp_favorite_name: String::new(),
+            history_index: None,
+            pre_history_text: String::new(),
         }
     }
 
@@ -70,6 +79,7 @@ impl FilterBar {
         filter_uuid: usize,
         global_config: &mut GlobalConfig,
         should_focus_search: bool,
+        log_view_state: &mut LogViewState,
     ) -> Vec<FilterInternalEvent> {
         let mut events = Vec::new();
 
@@ -181,12 +191,59 @@ impl FilterBar {
                 search_response.request_focus();
             }
 
-            // If Enter is pressed in the search input, surrender focus
-            if search_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                ui.memory_mut(|mem| mem.surrender_focus(search_id));
+            let filter_history = &log_view_state.filter_history;
+
+            // Handle history navigation with arrow keys when search input has focus
+            if search_response.has_focus() {
+                let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
+                let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
+
+                if up_pressed && !filter_history.is_empty() {
+                    // Navigate backward in history (newer to older)
+                    let new_index = match self.history_index {
+                        None => {
+                            self.pre_history_text = filter.search_text.clone();
+                            if filter_history[0] != filter.search_text || filter_history.len() == 1
+                            {
+                                0
+                            } else {
+                                1
+                            }
+                        }
+                        Some(idx) => (idx + 1).min(filter_history.len() - 1),
+                    };
+                    self.history_index = Some(new_index);
+                    filter.search_text = filter_history[new_index].clone();
+                    events.push(FilterInternalEvent::SearchChanged);
+                } else if down_pressed {
+                    // Navigate forward in history (older to newer)
+                    if let Some(idx) = self.history_index {
+                        if idx == 0 {
+                            // Return to pre-history text
+                            filter.search_text = self.pre_history_text.clone();
+                            self.history_index = None;
+                        } else {
+                            // Go to newer history entry
+                            self.history_index = Some(idx - 1);
+                            filter.search_text = filter_history[idx - 1].clone();
+                        }
+                        events.push(FilterInternalEvent::SearchChanged);
+                    }
+                }
+
+                // If Enter is pressed in the search input, surrender focus
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    ui.memory_mut(|mem| mem.surrender_focus(search_id));
+                }
+            }
+
+            if search_response.lost_focus() {
+                self.history_index = None;
+                log_view_state.add_to_filter_history(filter.search_text.clone());
             }
 
             if search_response.changed() {
+                self.history_index = None;
                 events.push(FilterInternalEvent::SearchChanged);
             }
 
