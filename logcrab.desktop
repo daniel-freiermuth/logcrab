@@ -8,6 +8,6 @@ Exec=logcrab %F
 Icon=logcrab
 Terminal=false
 Categories=Development;
-MimeType=text/plain;text/x-log;
+MimeType=text/plain;text/x-log;application/x-crab;
 Keywords=log;analyzer;anomaly;debug;monitoring;
 StartupNotify=true

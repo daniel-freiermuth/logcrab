@@ -34,9 +34,14 @@ sed "s|Exec=logcrab|Exec=$(pwd)/target/release/logcrab|g" logcrab.desktop > ~/.l
 # Install the icon
 mkdir -p ~/.local/share/icons/hicolor/256x256/apps
 cp logo.png ~/.local/share/icons/hicolor/256x256/apps/logcrab.png
+
+# Register .crab file type
+mkdir -p ~/.local/share/mime/packages
+cp logcrab-mime.xml ~/.local/share/mime/packages/
+update-mime-database ~/.local/share/mime
 ```
 
-After installation, LogCrab will appear in your application launcher and can open log files directly.
+After installation, LogCrab will appear in your application launcher and can open log files and `.crab` files directly.
 
 ## Anomaly Scoring Components
 

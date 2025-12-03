@@ -91,7 +91,20 @@ impl LogCrabApp {
         app
     }
 
-    pub fn load_file(&mut self, path: PathBuf, ctx: egui::Context) {
+    pub fn load_file(&mut self, mut path: PathBuf, ctx: egui::Context) {
+        // Check if this is a .crab session file
+        if path.to_string_lossy().ends_with(".crab") {
+            path = PathBuf::from(path.to_string_lossy().trim_end_matches(".crab"));
+
+            if path.exists() {
+                log::info!("Loading log file from .crab session: {:?}", path);
+            } else {
+                self.status_message = format!("Error: File not found: {}", path.display(),);
+                log::error!("{}", self.status_message);
+                return;
+            }
+        }
+
         self.log_view = None;
         self.current_file = Some(path.clone());
         self.update_window_title(&ctx);
@@ -101,6 +114,17 @@ impl LogCrabApp {
 
         let rx = LogFileLoader::load_async(path, ctx);
         self.load_receiver = Some(rx);
+    }
+
+    /// Show file dialog and load selected file
+    fn open_file_dialog(&mut self, ctx: &egui::Context) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Log Files", &["log", "txt", "dlt", "crab"])
+            .add_filter("All Files", &["*"])
+            .pick_file()
+        {
+            self.load_file(path, ctx.clone());
+        }
     }
 
     /// Update window title to show current file
@@ -141,7 +165,11 @@ impl LogCrabApp {
                     self.load_progress = 0.0;
 
                     if n_lines > 0 {
-                        let crab_path = path.with_extension("crab");
+                        let mut crab_path = path.clone();
+                        crab_path.set_file_name(format!(
+                            "{}.crab",
+                            path.file_name().unwrap().to_string_lossy()
+                        ));
                         self.log_view = Some(LogView::new(lines, crab_path));
                     }
                     self.update_window_title(ctx);
@@ -177,13 +205,7 @@ impl LogCrabApp {
     fn render_menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.menu_button("File", |ui| {
             if ui.button("Open Log File...").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Log Files", &["log", "txt", "dlt"])
-                    .add_filter("All Files", &["*"])
-                    .pick_file()
-                {
-                    self.load_file(path, ctx.clone());
-                }
+                self.open_file_dialog(ctx);
                 ui.close();
             }
 
@@ -318,13 +340,7 @@ impl LogCrabApp {
                         .desired_width(400.0);
                     ui.add(progress_bar);
                 } else if ui.button("Open Log File").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Log Files", &["log", "txt", "dlt"])
-                        .add_filter("All Files", &["*"])
-                        .pick_file()
-                    {
-                        self.load_file(path, ctx.clone());
-                    }
+                    self.open_file_dialog(ctx);
                 }
             });
         }
@@ -374,12 +390,7 @@ impl LogCrabApp {
                 ShortcutAction::PageUp => {}
                 ShortcutAction::PageDown => {}
                 ShortcutAction::OpenFile => {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("log", &["log", "txt", "dlt"])
-                        .pick_file()
-                    {
-                        self.load_file(path, ctx.clone());
-                    }
+                    self.open_file_dialog(ctx);
                 }
                 ShortcutAction::RenameFilter => {}
                 ShortcutAction::MoveUp => {}
