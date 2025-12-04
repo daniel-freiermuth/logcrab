@@ -220,13 +220,13 @@ impl BookmarksView {
     }
 
     /// Move selection up by one page in bookmarks view
-    pub fn page_up_in_bookmarks(&self, data_state: &mut LogViewState) {
+    pub fn page_up_in_bookmarks(data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         Self::move_selection_in_bookmarks(-PAGE_SIZE, data_state);
     }
 
     /// Move selection down by one page in bookmarks view
-    pub fn page_down_in_bookmarks(&self, data_state: &mut LogViewState) {
+    pub fn page_down_in_bookmarks(data_state: &mut LogViewState) {
         const PAGE_SIZE: i32 = 25;
         Self::move_selection_in_bookmarks(PAGE_SIZE, data_state);
     }
@@ -271,10 +271,10 @@ impl LogCrabTab for BookmarksView {
                     Self::jump_to_bottom_in_bookmarks(data_state);
                 }
                 ShortcutAction::PageUp => {
-                    self.page_up_in_bookmarks(data_state);
+                    Self::page_up_in_bookmarks(data_state);
                 }
                 ShortcutAction::PageDown => {
-                    self.page_down_in_bookmarks(data_state);
+                    Self::page_down_in_bookmarks(data_state);
                 }
                 ShortcutAction::FocusSearch => {}
                 ShortcutAction::NewFilterTab => {}

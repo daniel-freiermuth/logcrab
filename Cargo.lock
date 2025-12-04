@@ -2249,7 +2249,6 @@ dependencies = [
  "env_logger",
  "fancy-regex",
  "keybinds",
- "lazy_static",
  "log",
  "puffin",
  "puffin_egui",

@@ -383,9 +383,9 @@ impl LogView {
         fs::write(path, json).map_err(|e| format!("Failed to write file: {e}"))?;
 
         log::info!(
-            "Successfully exported {} filters to {:?}",
+            "Successfully exported {} filters to {}",
             filters_data.filters.len(),
-            path
+            path.display()
         );
         Ok(())
     }

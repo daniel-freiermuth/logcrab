@@ -1,14 +1,11 @@
 use super::line::LogLine;
 use chrono::{DateTime, Datelike, Local, NaiveDateTime};
 use fancy_regex::Regex;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
-lazy_static! {
-    // Just extract timestamp - everything after it is the message
-    static ref LOGCAT_TIMESTAMP: Regex = Regex::new(
-        r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(.*)$"
-    ).unwrap();
-}
+// Just extract timestamp - everything after it is the message
+static LOGCAT_TIMESTAMP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(.*)$").unwrap());
 
 pub fn parse_logcat(raw: String, line_number: usize) -> Option<LogLine> {
     // Extract timestamp and treat everything after it as the message

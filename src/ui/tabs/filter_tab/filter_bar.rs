@@ -84,181 +84,267 @@ impl FilterBar {
         let mut events = Vec::new();
 
         ui.horizontal(|ui| {
-            if ui
-                .small_button("✏")
-                .on_hover_text("Edit filter name")
-                .clicked()
-            {
-                events.push(FilterInternalEvent::FilterNameEditRequested);
-            }
-
-            ui.color_edit_button_srgba(&mut filter.color)
-                .on_hover_text("Choose highlight color for this filter");
-
-            let current_favorite = global_config
-                .favorite_filters
-                .iter()
-                .find(|fav| fav.matches(filter));
-            if ui
-                .toggle_value(&mut current_favorite.is_some(), "⭐")
-                .on_hover_text("Toggle favorite filter")
-                .clicked()
-            {
-                events.push(FilterInternalEvent::FavoriteToggled);
-            }
-
-            // Dropdown menu for favorites OR inline textbox for editing favorite name
-            if !global_config.favorite_filters.is_empty() {
-                // Find the matching favorite for the current filter
-
-                if self.editing_favorite && current_favorite.is_some() {
-                    // Show inline textbox for editing favorite name
-                    let text_edit_id = ui.id().with("favorite_name_edit");
-                    let text_response = ui.add(
-                        egui::TextEdit::singleline(&mut self.temp_favorite_name)
-                            .desired_width(150.0)
-                            .id(text_edit_id),
-                    );
-
-                    // Auto-focus when starting to edit
-                    if !text_response.has_focus() {
-                        text_response.request_focus();
-                    }
-
-                    // Finish editing on Enter or Escape
-                    if text_response.has_focus() {
-                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            self.save_favorite_name(filter, global_config);
-                            self.editing_favorite = false;
-                        } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            self.editing_favorite = false;
-                        }
-                    }
-
-                    // Also finish editing if clicking outside
-                    if text_response.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape))
-                    {
-                        if !self.temp_favorite_name.is_empty() {
-                            self.save_favorite_name(filter, global_config);
-                        }
-                        self.editing_favorite = false;
-                    }
-                } else {
-                    // Show dropdown as normal
-                    // Show current favorite name if this filter matches one, otherwise show "⭐ Favorites"
-                    let selected_text = if let Some(fav) = current_favorite {
-                        format!("⭐ {}", fav.display_name())
-                    } else {
-                        "⭐ Favorites".to_string()
-                    };
-
-                    let combo_response =
-                        egui::ComboBox::from_id_salt(format!("favorites_{filter_uuid}"))
-                            .selected_text(&selected_text)
-                            .width(150.0)
-                            .show_ui(ui, |ui| {
-                                for fav in &global_config.favorite_filters {
-                                    if ui.selectable_label(false, fav.display_name()).clicked() {
-                                        events.push(FilterInternalEvent::FavoriteSelected {
-                                            search_text: fav.search_text.clone(),
-                                            case_insensitive: fav.case_insensitive,
-                                        });
-                                    }
-                                }
-                            });
-
-                    // If a favorite is selected and user double-clicks on the dropdown, start editing
-                    if let Some(fav) = current_favorite {
-                        if combo_response.response.double_clicked() {
-                            self.editing_favorite = true;
-                            self.temp_favorite_name.clone_from(&fav.name);
-                        }
-                    }
-                }
-            }
-
-            // Search input with ID for Ctrl+L focusing
-            let search_id = ui.id().with("search_input");
-            let search_response = ui.add(
-                egui::TextEdit::singleline(&mut filter.search_text)
-                    .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
-                    .desired_width(300.0)
-                    .id(search_id),
-            );
-
-            // Focus search input if requested by Ctrl+L
-            if should_focus_search {
-                search_response.request_focus();
-            }
-
-            let filter_history = &log_view_state.filter_history;
-
-            // Handle history navigation with arrow keys when search input has focus
-            if search_response.has_focus() {
-                let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
-                let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
-
-                if up_pressed && !filter_history.is_empty() {
-                    // Navigate backward in history (newer to older)
-                    let new_index = match self.history_index {
-                        None => {
-                            self.pre_history_text.clone_from(&filter.search_text);
-                            usize::from(
-                                !(filter_history[0] != filter.search_text
-                                    || filter_history.len() == 1),
-                            )
-                        }
-                        Some(idx) => (idx + 1).min(filter_history.len() - 1),
-                    };
-                    self.history_index = Some(new_index);
-                    filter.search_text.clone_from(&filter_history[new_index]);
-                    events.push(FilterInternalEvent::SearchChanged);
-                } else if down_pressed {
-                    // Navigate forward in history (older to newer)
-                    if let Some(idx) = self.history_index {
-                        if idx == 0 {
-                            // Return to pre-history text
-                            filter.search_text.clone_from(&self.pre_history_text);
-                            self.history_index = None;
-                        } else {
-                            // Go to newer history entry
-                            self.history_index = Some(idx - 1);
-                            filter.search_text.clone_from(&filter_history[idx - 1]);
-                        }
-                        events.push(FilterInternalEvent::SearchChanged);
-                    }
-                }
-
-                // If Enter is pressed in the search input, surrender focus
-                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    ui.memory_mut(|mem| mem.surrender_focus(search_id));
-                }
-            }
-
-            if search_response.lost_focus() {
-                self.history_index = None;
-                log_view_state.add_to_filter_history(filter.search_text.clone());
-            }
-
-            if search_response.changed() {
-                self.history_index = None;
-                events.push(FilterInternalEvent::SearchChanged);
-            }
-
-            // Checkbox
-            let checkbox_response = ui.checkbox(&mut filter.case_insensitive, "Aa");
-
-            if checkbox_response.changed() {
-                events.push(FilterInternalEvent::CaseInsensitiveToggled);
-            }
-
-            // Display regex validation status
-            match &filter.search_regex {
-                Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
-                Err(err) => ui.colored_label(Color32::RED, format!("❌ {err}")),
-            }
+            self.render_edit_button(ui, &mut events);
+            self.render_color_picker(ui, filter);
+            self.render_favorite_toggle(ui, filter, global_config, &mut events);
+            self.render_favorites_dropdown(ui, filter, filter_uuid, global_config, &mut events);
+            self.render_search_input(ui, filter, should_focus_search, log_view_state, &mut events);
+            self.render_case_checkbox(ui, filter, &mut events);
+            self.render_validation_status(ui, filter);
         });
 
         events
+    }
+
+    fn render_edit_button(&self, ui: &mut Ui, events: &mut Vec<FilterInternalEvent>) {
+        if ui
+            .small_button("✏")
+            .on_hover_text("Edit filter name")
+            .clicked()
+        {
+            events.push(FilterInternalEvent::FilterNameEditRequested);
+        }
+    }
+
+    fn render_color_picker(&self, ui: &mut Ui, filter: &mut FilterState) {
+        ui.color_edit_button_srgba(&mut filter.color)
+            .on_hover_text("Choose highlight color for this filter");
+    }
+
+    fn render_favorite_toggle(
+        &self,
+        ui: &mut Ui,
+        filter: &FilterState,
+        global_config: &GlobalConfig,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        let current_favorite = global_config
+            .favorite_filters
+            .iter()
+            .find(|fav| fav.matches(filter));
+        if ui
+            .toggle_value(&mut current_favorite.is_some(), "⭐")
+            .on_hover_text("Toggle favorite filter")
+            .clicked()
+        {
+            events.push(FilterInternalEvent::FavoriteToggled);
+        }
+    }
+
+    fn render_favorites_dropdown(
+        &mut self,
+        ui: &mut Ui,
+        filter: &mut FilterState,
+        filter_uuid: usize,
+        global_config: &mut GlobalConfig,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        if global_config.favorite_filters.is_empty() {
+            return;
+        }
+
+        let current_favorite = global_config
+            .favorite_filters
+            .iter()
+            .find(|fav| fav.matches(filter));
+
+        if self.editing_favorite && current_favorite.is_some() {
+            self.render_favorite_editor(ui, filter, global_config);
+        } else {
+            self.render_favorite_selector(ui, filter_uuid, global_config, current_favorite, events);
+        }
+    }
+
+    fn render_favorite_editor(
+        &mut self,
+        ui: &mut Ui,
+        filter: &FilterState,
+        global_config: &mut GlobalConfig,
+    ) {
+        let text_edit_id = ui.id().with("favorite_name_edit");
+        let text_response = ui.add(
+            egui::TextEdit::singleline(&mut self.temp_favorite_name)
+                .desired_width(150.0)
+                .id(text_edit_id),
+        );
+
+        if !text_response.has_focus() {
+            text_response.request_focus();
+        }
+
+        if text_response.has_focus() {
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.save_favorite_name(filter, global_config);
+                self.editing_favorite = false;
+            } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.editing_favorite = false;
+            }
+        }
+
+        if text_response.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if !self.temp_favorite_name.is_empty() {
+                self.save_favorite_name(filter, global_config);
+            }
+            self.editing_favorite = false;
+        }
+    }
+
+    fn render_favorite_selector(
+        &mut self,
+        ui: &mut Ui,
+        filter_uuid: usize,
+        global_config: &GlobalConfig,
+        current_favorite: Option<&crate::config::FavoriteFilter>,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        let selected_text = if let Some(fav) = current_favorite {
+            format!("⭐ {}", fav.display_name())
+        } else {
+            "⭐ Favorites".to_string()
+        };
+
+        let combo_response = egui::ComboBox::from_id_salt(format!("favorites_{filter_uuid}"))
+            .selected_text(&selected_text)
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                for fav in &global_config.favorite_filters {
+                    if ui.selectable_label(false, fav.display_name()).clicked() {
+                        events.push(FilterInternalEvent::FavoriteSelected {
+                            search_text: fav.search_text.clone(),
+                            case_insensitive: fav.case_insensitive,
+                        });
+                    }
+                }
+            });
+
+        if let Some(fav) = current_favorite {
+            if combo_response.response.double_clicked() {
+                self.editing_favorite = true;
+                self.temp_favorite_name.clone_from(&fav.name);
+            }
+        }
+    }
+
+    fn render_search_input(
+        &mut self,
+        ui: &mut Ui,
+        filter: &mut FilterState,
+        should_focus_search: bool,
+        log_view_state: &mut LogViewState,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        let search_id = ui.id().with("search_input");
+        let search_response = ui.add(
+            egui::TextEdit::singleline(&mut filter.search_text)
+                .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
+                .desired_width(300.0)
+                .id(search_id),
+        );
+
+        if should_focus_search {
+            search_response.request_focus();
+        }
+
+        self.handle_history_navigation(
+            ui,
+            &search_response,
+            search_id,
+            filter,
+            log_view_state,
+            events,
+        );
+
+        if search_response.lost_focus() {
+            self.history_index = None;
+            log_view_state.add_to_filter_history(filter.search_text.clone());
+        }
+
+        if search_response.changed() {
+            self.history_index = None;
+            events.push(FilterInternalEvent::SearchChanged);
+        }
+    }
+
+    fn handle_history_navigation(
+        &mut self,
+        ui: &mut Ui,
+        search_response: &egui::Response,
+        search_id: egui::Id,
+        filter: &mut FilterState,
+        log_view_state: &LogViewState,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        if !search_response.has_focus() {
+            return;
+        }
+
+        let filter_history = &log_view_state.filter_history;
+        let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
+        let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
+
+        if up_pressed && !filter_history.is_empty() {
+            self.navigate_backward(filter, filter_history, events);
+        } else if down_pressed {
+            self.navigate_forward(filter, filter_history, events);
+        }
+
+        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            ui.memory_mut(|mem| mem.surrender_focus(search_id));
+        }
+    }
+
+    fn navigate_backward(
+        &mut self,
+        filter: &mut FilterState,
+        filter_history: &[String],
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        let new_index = match self.history_index {
+            None => {
+                self.pre_history_text.clone_from(&filter.search_text);
+                usize::from(!(filter_history[0] != filter.search_text || filter_history.len() == 1))
+            }
+            Some(idx) => (idx + 1).min(filter_history.len() - 1),
+        };
+        self.history_index = Some(new_index);
+        filter.search_text.clone_from(&filter_history[new_index]);
+        events.push(FilterInternalEvent::SearchChanged);
+    }
+
+    fn navigate_forward(
+        &mut self,
+        filter: &mut FilterState,
+        filter_history: &[String],
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        if let Some(idx) = self.history_index {
+            if idx == 0 {
+                filter.search_text.clone_from(&self.pre_history_text);
+                self.history_index = None;
+            } else {
+                self.history_index = Some(idx - 1);
+                filter.search_text.clone_from(&filter_history[idx - 1]);
+            }
+            events.push(FilterInternalEvent::SearchChanged);
+        }
+    }
+
+    fn render_case_checkbox(
+        &self,
+        ui: &mut Ui,
+        filter: &mut FilterState,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        let checkbox_response = ui.checkbox(&mut filter.case_insensitive, "Aa");
+        if checkbox_response.changed() {
+            events.push(FilterInternalEvent::CaseInsensitiveToggled);
+        }
+    }
+
+    fn render_validation_status(&self, ui: &mut Ui, filter: &FilterState) {
+        match &filter.search_regex {
+            Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
+            Err(err) => ui.colored_label(Color32::RED, format!("❌ {err}")),
+        };
     }
 }

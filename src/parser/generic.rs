@@ -1,29 +1,26 @@
 use super::line::LogLine;
 use chrono::{DateTime, Datelike, Local};
 use fancy_regex::Regex;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
-lazy_static! {
-    // ISO 8601: 2025-11-20T14:23:45.123Z or 2025-11-20 14:23:45.123
-    static ref ISO_TIMESTAMP: Regex = Regex::new(
-        r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)"
-    ).unwrap();
+// ISO 8601: 2025-11-20T14:23:45.123Z or 2025-11-20 14:23:45.123
+static ISO_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)")
+        .unwrap()
+});
 
-    // Common syslog: Nov 20 14:23:45
-    static ref SYSLOG_TIMESTAMP: Regex = Regex::new(
-        r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})"
-    ).unwrap();
+// Common syslog: Nov 20 14:23:45
+static SYSLOG_TIMESTAMP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})").unwrap());
 
-    // Timestamp with milliseconds: [2025-11-20 14:23:45.123]
-    static ref BRACKETED_TIMESTAMP: Regex = Regex::new(
-        r"^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]"
-    ).unwrap();
+// Timestamp with milliseconds: [2025-11-20 14:23:45.123]
+static BRACKETED_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]").unwrap()
+});
 
-    // Logcat format: MM-DD HH:MM:SS.mmm
-    static ref LOGCAT_TIMESTAMP: Regex = Regex::new(
-        r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})"
-    ).unwrap();
-}
+// Logcat format: MM-DD HH:MM:SS.mmm
+static LOGCAT_TIMESTAMP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})").unwrap());
 
 pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
     let mut timestamp = None;

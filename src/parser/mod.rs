@@ -4,19 +4,19 @@ pub mod line;
 pub mod logcat;
 
 use fancy_regex::Regex;
-use lazy_static::lazy_static;
 use line::LogLine;
+use std::sync::LazyLock;
 
-lazy_static! {
-    // Normalization patterns
-    static ref NUMBER_PATTERN: Regex = Regex::new(r"\b\d+\b").unwrap();
-    static ref HEX_PATTERN: Regex = Regex::new(r"\b0x[0-9a-fA-F]+\b|[0-9a-fA-F]{8,}").unwrap();
-    static ref UUID_PATTERN: Regex = Regex::new(
-        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-    ).unwrap();
-    static ref URL_PATTERN: Regex = Regex::new(r"https?://[^\s]+").unwrap();
-    static ref WHITESPACE_PATTERN: Regex = Regex::new(r"\s+").unwrap();
-}
+// Normalization patterns
+static NUMBER_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\d+\b").unwrap());
+static HEX_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b0x[0-9a-fA-F]+\b|[0-9a-fA-F]{8,}").unwrap());
+static UUID_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+        .unwrap()
+});
+static URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://[^\s]+").unwrap());
+static WHITESPACE_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 
 pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
     logcat::parse_logcat(raw.clone(), line_number)

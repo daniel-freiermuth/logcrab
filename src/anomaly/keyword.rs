@@ -1,26 +1,25 @@
 use crate::anomaly::scorer::AnomalyScorer;
 use crate::parser::line::LogLine;
 use fancy_regex::Regex;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
-lazy_static! {
-    // Keywords that indicate potential issues (case-insensitive)
-    static ref ERROR_KEYWORDS: Regex = Regex::new(
-        r"(?i)\b(error|err|exception|fatal|critical|crash|panic|abort)\b"
-    ).unwrap();
+// Keywords that indicate potential issues (case-insensitive)
+static ERROR_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(error|err|exception|fatal|critical|crash|panic|abort)\b").unwrap()
+});
 
-    static ref WARNING_KEYWORDS: Regex = Regex::new(
-        r"(?i)\b(warn|warning|caution|alert)\b"
-    ).unwrap();
+static WARNING_KEYWORDS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(warn|warning|caution|alert)\b").unwrap());
 
-    static ref FAILURE_KEYWORDS: Regex = Regex::new(
-        r"(?i)\b(fail|failed|failure|unsuccessful|denied|rejected|timeout|timed out)\b"
-    ).unwrap();
+static FAILURE_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(fail|failed|failure|unsuccessful|denied|rejected|timeout|timed out)\b")
+        .unwrap()
+});
 
-    static ref ISSUE_KEYWORDS: Regex = Regex::new(
-        r"(?i)\b(issue|problem|unable|cannot|can't|couldn't|invalid|illegal|unexpected)\b"
-    ).unwrap();
-}
+static ISSUE_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(issue|problem|unable|cannot|can't|couldn't|invalid|illegal|unexpected)\b")
+        .unwrap()
+});
 
 /// Keyword-based scorer - detects important keywords in messages
 /// Scores based on severity of detected keywords

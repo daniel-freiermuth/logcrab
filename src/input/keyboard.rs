@@ -48,145 +48,153 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
 
 impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
     fn from(key_event: EguiKeyEvent<'_>) -> Self {
-        use keybinds::{Key, Mods};
-
-        // Helper to check if a key is a letter
-        let is_letter_key = matches!(
-            key_event.key,
-            egui::Key::A
-                | egui::Key::B
-                | egui::Key::C
-                | egui::Key::D
-                | egui::Key::E
-                | egui::Key::F
-                | egui::Key::G
-                | egui::Key::H
-                | egui::Key::I
-                | egui::Key::J
-                | egui::Key::K
-                | egui::Key::L
-                | egui::Key::M
-                | egui::Key::N
-                | egui::Key::O
-                | egui::Key::P
-                | egui::Key::Q
-                | egui::Key::R
-                | egui::Key::S
-                | egui::Key::T
-                | egui::Key::U
-                | egui::Key::V
-                | egui::Key::W
-                | egui::Key::X
-                | egui::Key::Y
-                | egui::Key::Z
-        );
-
-        // Map egui key to keybinds key
-        // NOTE: egui reports both 'g' and 'G' (Shift+G) as Key::G
-        // We need to check the shift modifier to determine the actual character
-        let kb_key = match key_event.key {
-            // Letters - use shift state to determine case
-            egui::Key::A => Key::Char(if key_event.mods.shift { 'A' } else { 'a' }),
-            egui::Key::B => Key::Char(if key_event.mods.shift { 'B' } else { 'b' }),
-            egui::Key::C => Key::Char(if key_event.mods.shift { 'C' } else { 'c' }),
-            egui::Key::D => Key::Char(if key_event.mods.shift { 'D' } else { 'd' }),
-            egui::Key::E => Key::Char(if key_event.mods.shift { 'E' } else { 'e' }),
-            egui::Key::F => Key::Char(if key_event.mods.shift { 'F' } else { 'f' }),
-            egui::Key::G => Key::Char(if key_event.mods.shift { 'G' } else { 'g' }),
-            egui::Key::H => Key::Char(if key_event.mods.shift { 'H' } else { 'h' }),
-            egui::Key::I => Key::Char(if key_event.mods.shift { 'I' } else { 'i' }),
-            egui::Key::J => Key::Char(if key_event.mods.shift { 'J' } else { 'j' }),
-            egui::Key::K => Key::Char(if key_event.mods.shift { 'K' } else { 'k' }),
-            egui::Key::L => Key::Char(if key_event.mods.shift { 'L' } else { 'l' }),
-            egui::Key::M => Key::Char(if key_event.mods.shift { 'M' } else { 'm' }),
-            egui::Key::N => Key::Char(if key_event.mods.shift { 'N' } else { 'n' }),
-            egui::Key::O => Key::Char(if key_event.mods.shift { 'O' } else { 'o' }),
-            egui::Key::P => Key::Char(if key_event.mods.shift { 'P' } else { 'p' }),
-            egui::Key::Q => Key::Char(if key_event.mods.shift { 'Q' } else { 'q' }),
-            egui::Key::R => Key::Char(if key_event.mods.shift { 'R' } else { 'r' }),
-            egui::Key::S => Key::Char(if key_event.mods.shift { 'S' } else { 's' }),
-            egui::Key::T => Key::Char(if key_event.mods.shift { 'T' } else { 't' }),
-            egui::Key::U => Key::Char(if key_event.mods.shift { 'U' } else { 'u' }),
-            egui::Key::V => Key::Char(if key_event.mods.shift { 'V' } else { 'v' }),
-            egui::Key::W => Key::Char(if key_event.mods.shift { 'W' } else { 'w' }),
-            egui::Key::X => Key::Char(if key_event.mods.shift { 'X' } else { 'x' }),
-            egui::Key::Y => Key::Char(if key_event.mods.shift { 'Y' } else { 'y' }),
-            egui::Key::Z => Key::Char(if key_event.mods.shift { 'Z' } else { 'z' }),
-            // Numbers
-            egui::Key::Num0 => Key::Char('0'),
-            egui::Key::Num1 => Key::Char('1'),
-            egui::Key::Num2 => Key::Char('2'),
-            egui::Key::Num3 => Key::Char('3'),
-            egui::Key::Num4 => Key::Char('4'),
-            egui::Key::Num5 => Key::Char('5'),
-            egui::Key::Num6 => Key::Char('6'),
-            egui::Key::Num7 => Key::Char('7'),
-            egui::Key::Num8 => Key::Char('8'),
-            egui::Key::Num9 => Key::Char('9'),
-            // Special keys
-            egui::Key::Space => Key::Char(' '),
-            egui::Key::Enter => Key::Enter,
-            egui::Key::Tab => Key::Tab,
-            egui::Key::Backspace => Key::Backspace,
-            egui::Key::Delete => Key::Delete,
-            egui::Key::ArrowUp => Key::Up,
-            egui::Key::ArrowDown => Key::Down,
-            egui::Key::ArrowLeft => Key::Left,
-            egui::Key::ArrowRight => Key::Right,
-            egui::Key::Home => Key::Home,
-            egui::Key::End => Key::End,
-            egui::Key::PageUp => Key::PageUp,
-            egui::Key::PageDown => Key::PageDown,
-            egui::Key::Escape => Key::Esc,
-            // Function keys - map to unicode private use area chars
-            egui::Key::F1 => Key::Char('\u{E001}'),
-            egui::Key::F2 => Key::Char('\u{E002}'),
-            egui::Key::F3 => Key::Char('\u{E003}'),
-            egui::Key::F4 => Key::Char('\u{E004}'),
-            egui::Key::F5 => Key::Char('\u{E005}'),
-            egui::Key::F6 => Key::Char('\u{E006}'),
-            egui::Key::F7 => Key::Char('\u{E007}'),
-            egui::Key::F8 => Key::Char('\u{E008}'),
-            egui::Key::F9 => Key::Char('\u{E009}'),
-            egui::Key::F10 => Key::Char('\u{E00A}'),
-            egui::Key::F11 => Key::Char('\u{E00B}'),
-            egui::Key::F12 => Key::Char('\u{E00C}'),
-            // For unsupported keys, return a placeholder
-            _ => Key::Char('\0'),
-        };
-
-        // Map modifiers - but DON'T include shift for letter keys since we've already
-        // handled it by choosing uppercase/lowercase in the character itself
-        let mut kb_mods = Mods::empty();
-
-        // On Mac, Cmd is the primary modifier; on other platforms, Ctrl is
-        #[cfg(target_os = "macos")]
-        {
-            if key_event.mods.mac_cmd || key_event.mods.command {
-                kb_mods |= Mods::CMD;
-            }
-            if key_event.mods.ctrl {
-                kb_mods |= Mods::CTRL;
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            if key_event.mods.ctrl {
-                kb_mods |= Mods::CTRL;
-            }
-        }
-
-        // Don't add shift for letter keys - we've already encoded it in the character case
-        // Only add shift for non-letter keys where it matters
-        if key_event.mods.shift && !is_letter_key {
-            kb_mods |= Mods::SHIFT;
-        }
-        if key_event.mods.alt {
-            kb_mods |= Mods::ALT;
-        }
+        let is_letter_key = is_letter_key(*key_event.key);
+        let kb_key = map_egui_key_to_kb_key(*key_event.key, key_event.mods.shift);
+        let kb_mods = map_modifiers(key_event.mods, is_letter_key);
 
         keybinds::KeyInput::new(kb_key, kb_mods)
     }
+}
+
+fn is_letter_key(key: egui::Key) -> bool {
+    matches!(
+        key,
+        egui::Key::A
+            | egui::Key::B
+            | egui::Key::C
+            | egui::Key::D
+            | egui::Key::E
+            | egui::Key::F
+            | egui::Key::G
+            | egui::Key::H
+            | egui::Key::I
+            | egui::Key::J
+            | egui::Key::K
+            | egui::Key::L
+            | egui::Key::M
+            | egui::Key::N
+            | egui::Key::O
+            | egui::Key::P
+            | egui::Key::Q
+            | egui::Key::R
+            | egui::Key::S
+            | egui::Key::T
+            | egui::Key::U
+            | egui::Key::V
+            | egui::Key::W
+            | egui::Key::X
+            | egui::Key::Y
+            | egui::Key::Z
+    )
+}
+
+fn map_egui_key_to_kb_key(key: egui::Key, shift: bool) -> keybinds::Key {
+    use keybinds::Key;
+
+    match key {
+        // Letters - use shift state to determine case
+        egui::Key::A => Key::Char(if shift { 'A' } else { 'a' }),
+        egui::Key::B => Key::Char(if shift { 'B' } else { 'b' }),
+        egui::Key::C => Key::Char(if shift { 'C' } else { 'c' }),
+        egui::Key::D => Key::Char(if shift { 'D' } else { 'd' }),
+        egui::Key::E => Key::Char(if shift { 'E' } else { 'e' }),
+        egui::Key::F => Key::Char(if shift { 'F' } else { 'f' }),
+        egui::Key::G => Key::Char(if shift { 'G' } else { 'g' }),
+        egui::Key::H => Key::Char(if shift { 'H' } else { 'h' }),
+        egui::Key::I => Key::Char(if shift { 'I' } else { 'i' }),
+        egui::Key::J => Key::Char(if shift { 'J' } else { 'j' }),
+        egui::Key::K => Key::Char(if shift { 'K' } else { 'k' }),
+        egui::Key::L => Key::Char(if shift { 'L' } else { 'l' }),
+        egui::Key::M => Key::Char(if shift { 'M' } else { 'm' }),
+        egui::Key::N => Key::Char(if shift { 'N' } else { 'n' }),
+        egui::Key::O => Key::Char(if shift { 'O' } else { 'o' }),
+        egui::Key::P => Key::Char(if shift { 'P' } else { 'p' }),
+        egui::Key::Q => Key::Char(if shift { 'Q' } else { 'q' }),
+        egui::Key::R => Key::Char(if shift { 'R' } else { 'r' }),
+        egui::Key::S => Key::Char(if shift { 'S' } else { 's' }),
+        egui::Key::T => Key::Char(if shift { 'T' } else { 't' }),
+        egui::Key::U => Key::Char(if shift { 'U' } else { 'u' }),
+        egui::Key::V => Key::Char(if shift { 'V' } else { 'v' }),
+        egui::Key::W => Key::Char(if shift { 'W' } else { 'w' }),
+        egui::Key::X => Key::Char(if shift { 'X' } else { 'x' }),
+        egui::Key::Y => Key::Char(if shift { 'Y' } else { 'y' }),
+        egui::Key::Z => Key::Char(if shift { 'Z' } else { 'z' }),
+        // Numbers
+        egui::Key::Num0 => Key::Char('0'),
+        egui::Key::Num1 => Key::Char('1'),
+        egui::Key::Num2 => Key::Char('2'),
+        egui::Key::Num3 => Key::Char('3'),
+        egui::Key::Num4 => Key::Char('4'),
+        egui::Key::Num5 => Key::Char('5'),
+        egui::Key::Num6 => Key::Char('6'),
+        egui::Key::Num7 => Key::Char('7'),
+        egui::Key::Num8 => Key::Char('8'),
+        egui::Key::Num9 => Key::Char('9'),
+        // Special keys
+        egui::Key::Space => Key::Char(' '),
+        egui::Key::Enter => Key::Enter,
+        egui::Key::Tab => Key::Tab,
+        egui::Key::Backspace => Key::Backspace,
+        egui::Key::Delete => Key::Delete,
+        egui::Key::ArrowUp => Key::Up,
+        egui::Key::ArrowDown => Key::Down,
+        egui::Key::ArrowLeft => Key::Left,
+        egui::Key::ArrowRight => Key::Right,
+        egui::Key::Home => Key::Home,
+        egui::Key::End => Key::End,
+        egui::Key::PageUp => Key::PageUp,
+        egui::Key::PageDown => Key::PageDown,
+        egui::Key::Escape => Key::Esc,
+        // Function keys - map to unicode private use area chars
+        egui::Key::F1 => Key::Char('\u{E001}'),
+        egui::Key::F2 => Key::Char('\u{E002}'),
+        egui::Key::F3 => Key::Char('\u{E003}'),
+        egui::Key::F4 => Key::Char('\u{E004}'),
+        egui::Key::F5 => Key::Char('\u{E005}'),
+        egui::Key::F6 => Key::Char('\u{E006}'),
+        egui::Key::F7 => Key::Char('\u{E007}'),
+        egui::Key::F8 => Key::Char('\u{E008}'),
+        egui::Key::F9 => Key::Char('\u{E009}'),
+        egui::Key::F10 => Key::Char('\u{E00A}'),
+        egui::Key::F11 => Key::Char('\u{E00B}'),
+        egui::Key::F12 => Key::Char('\u{E00C}'),
+        // For unsupported keys, return a placeholder
+        _ => Key::Char('\0'),
+    }
+}
+
+fn map_modifiers(mods: &egui::Modifiers, is_letter_key: bool) -> keybinds::Mods {
+    use keybinds::Mods;
+
+    let mut kb_mods = Mods::empty();
+
+    // On Mac, Cmd is the primary modifier; on other platforms, Ctrl is
+    #[cfg(target_os = "macos")]
+    {
+        if mods.mac_cmd || mods.command {
+            kb_mods |= Mods::CMD;
+        }
+        if mods.ctrl {
+            kb_mods |= Mods::CTRL;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if mods.ctrl {
+            kb_mods |= Mods::CTRL;
+        }
+    }
+
+    // Don't add shift for letter keys - we've already encoded it in the character case
+    // Only add shift for non-letter keys where it matters
+    if mods.shift && !is_letter_key {
+        kb_mods |= Mods::SHIFT;
+    }
+    if mods.alt {
+        kb_mods |= Mods::ALT;
+    }
+
+    kb_mods
 }
 
 /// Keyboard shortcut actions that can be rebound

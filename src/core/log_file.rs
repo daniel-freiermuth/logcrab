@@ -20,7 +20,7 @@ use crate::anomaly::{create_default_scorer, normalize_scores};
 use crate::parser::{dlt, line::LogLine, parse_line};
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -82,7 +82,10 @@ impl LogFileLoader {
 
     fn process_file_background(path: PathBuf, tx: Sender<LoadMessage>, ctx: egui::Context) {
         let start_time = std::time::Instant::now();
-        log::debug!("Starting background file processing for: {path:?}");
+        log::debug!(
+            "Starting background file processing for: {}",
+            path.display()
+        );
 
         // Get file size for progress tracking
         let metadata = std::fs::metadata(&path);
@@ -210,10 +213,10 @@ impl LogFileLoader {
 
         let parse_duration = parse_start.elapsed();
         log::info!(
-            "Parsing took {:?} to process {} lines from {:?}",
+            "Parsing took {:?} to process {} lines from {}",
             parse_duration,
             lines.len(),
-            path
+            path.display()
         );
         log::info!("Total bytes read: {bytes_read}");
         log::info!(
@@ -242,7 +245,7 @@ impl LogFileLoader {
     /// Helper to score and send lines (used for both text and DLT files)
     fn score_and_send_lines(
         lines_arc: &Arc<Vec<LogLine>>,
-        path: &PathBuf,
+        path: &Path,
         tx: &Sender<LoadMessage>,
         ctx: &egui::Context,
         start_time: std::time::Instant,

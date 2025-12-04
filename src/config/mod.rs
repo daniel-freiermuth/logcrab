@@ -83,7 +83,7 @@ impl GlobalConfig {
     pub fn load() -> Self {
         if let Some(path) = Self::config_path() {
             if path.exists() {
-                log::info!("Loading global config from {path:?}");
+                log::info!("Loading global config from {}", path.display());
                 if let Ok(contents) = std::fs::read_to_string(&path) {
                     if let Ok(config) = serde_json::from_str::<GlobalConfig>(&contents) {
                         log::info!(
@@ -119,7 +119,7 @@ impl GlobalConfig {
         // Write to file
         std::fs::write(&path, json).map_err(|e| format!("Failed to write config file: {e}"))?;
 
-        log::info!("Saved global config to {path:?}");
+        log::info!("Saved global config to {}", path.display());
         Ok(())
     }
 }

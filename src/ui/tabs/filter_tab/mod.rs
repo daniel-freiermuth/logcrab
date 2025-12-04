@@ -354,7 +354,7 @@ impl LogCrabTab for FilterView {
         // Create a new highlights list with this tab's filter at the front (for priority)
         // This ensures the current tab's filter is always visible and takes precedence
         let mut highlights_with_current = Vec::with_capacity(all_filter_highlights.len() + 1);
-        
+
         // Add this tab's own filter first (if it has a valid regex)
         if let Ok(regex) = &self.state.search_regex {
             if !self.state.search_text.is_empty() {
@@ -364,7 +364,7 @@ impl LogCrabTab for FilterView {
                 });
             }
         }
-        
+
         // Add all other global filters (excluding this one to avoid duplicates)
         for highlight in all_filter_highlights {
             // Skip if this is the same filter (compare by checking if regex patterns match)
@@ -376,7 +376,7 @@ impl LogCrabTab for FilterView {
                 highlights_with_current.push(highlight.clone());
             }
         }
-        
+
         self.render_filter(ui, data_state, global_config, &highlights_with_current);
     }
 
@@ -459,8 +459,8 @@ impl LogCrabTab for FilterView {
         } else {
             "Show in other tabs"
         };
-        
-        if ui.button(format!("{} {}", icon, text)).clicked() {
+
+        if ui.button(format!("{icon} {text}")).clicked() {
             self.state.globally_visible = !self.state.globally_visible;
             ui.close();
         }

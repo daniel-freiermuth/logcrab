@@ -10,6 +10,8 @@ use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
 use crate::ui::tabs::BookmarksView;
 use crate::ui::LogView;
 use egui::text::LayoutJob;
+use egui::{Color32, Id, LayerId, Order, TextStyle};
+use std::fmt::Write;
 
 /// Main application
 /// Responsibilities:
@@ -324,8 +326,8 @@ impl LogCrabApp {
 
         // Collect dropped files (store for later processing)
         self.pending_drop_file = ctx.input(|i| {
-            if !i.raw.dropped_files.is_empty() {
-                i.raw.dropped_files.first().and_then(|f| f.path.clone())
+            if let Some(f) = i.raw.dropped_files.first() {
+                f.path.clone()
             } else {
                 None
             }
@@ -364,14 +366,12 @@ impl LogCrabApp {
 
     /// Preview hovering files - shows overlay when dragging files over window
     fn preview_files_being_dropped(ctx: &egui::Context) {
-        use egui::*;
-
         if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
             let text = ctx.input(|i| {
                 let mut text = "Drop to open:\n".to_owned();
                 for file in &i.raw.hovered_files {
                     if let Some(path) = &file.path {
-                        text += &format!("\n{}", path.display());
+                        let _ = write!(text, "\n{}", path.display());
                     }
                 }
                 text

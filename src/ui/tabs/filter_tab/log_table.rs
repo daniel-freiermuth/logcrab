@@ -87,141 +87,256 @@ impl LogTable {
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<LogTableEvent> {
         let mut events = Vec::new();
-        let visible_lines = filter.filtered_indices.len();
 
         egui::ScrollArea::horizontal()
             .id_salt(format!("filtered_scroll_{ui_salt}"))
-            .auto_shrink([false, false]) // Don't shrink, take all available space
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 #[cfg(feature = "cpu-profiling")]
                 puffin::profile_scope!("filtered_table");
 
-                // Calculate available height to make table fill the pane
-                let available_height = ui.available_height();
-                let header_height = ui.text_style_height(&egui::TextStyle::Heading);
-                let body_height = available_height - header_height - 1.0;
+                let table = Self::create_table(ui, scroll_to_row);
 
-                let mut table = TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(false)
-                    .sense(egui::Sense::click())
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .vscroll(true)
-                    .min_scrolled_height(body_height) // Force table to fill available space minus header
-                    .max_scroll_height(body_height) // Don't exceed available space
-                    .column(Column::initial(60.0).resizable(true).clip(true))
-                    .column(Column::initial(110.0).resizable(true).clip(true))
-                    .column(Column::remainder().resizable(true).clip(true))
-                    .column(Column::initial(70.0).resizable(true).clip(true));
-
-                if let Some(row_idx) = scroll_to_row {
-                    table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
-                }
-
-                table
-                    .header(header_height, |mut header| {
-                        header.col(|ui| {
-                            ui.strong("Line");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Timestamp");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Message");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Score");
-                        });
-                    })
-                    .body(|body| {
-                        body.rows(18.0, visible_lines, |mut row| {
-                            let row_index = row.index();
-                            let line_idx = filter.filtered_indices[row_index];
-                            let line = &lines[line_idx];
-
-                            let is_selected = selected_line_index == line_idx;
-                            let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
-                            let color = if let Some(score) = &log_view_state.scores {
-                                score_to_color(score[line_idx])
-                            } else {
-                                Color32::WHITE
-                            };
-
-                            let mut row_clicked = false;
-                            let mut row_right_clicked = false;
-
-                            // Line number column
-                            Self::render_line_column(
-                                &mut row,
-                                line,
-                                line_idx,
-                                ui_salt,
-                                is_selected,
-                                is_bookmarked,
-                                color,
-                                bookmarked_lines
-                                    .get(&line_idx)
-                                    .map(std::string::String::as_str),
-                                &mut row_clicked,
-                                &mut row_right_clicked,
-                            );
-
-                            // Timestamp column
-                            Self::render_timestamp_column(
-                                &mut row,
-                                line,
-                                line_idx,
-                                ui_salt,
-                                is_selected,
-                                is_bookmarked,
-                                color,
-                                all_filter_highlights,
-                                &mut row_clicked,
-                                &mut row_right_clicked,
-                            );
-
-                            // Message column
-                            Self::render_message_column(
-                                &mut row,
-                                line,
-                                line_idx,
-                                ui_salt,
-                                is_selected,
-                                is_bookmarked,
-                                color,
-                                all_filter_highlights,
-                                &mut row_clicked,
-                                &mut row_right_clicked,
-                            );
-
-                            // Score column
-                            Self::render_score_column(
-                                &mut row,
-                                log_view_state,
-                                line_idx,
-                                ui_salt,
-                                is_selected,
-                                is_bookmarked,
-                                color,
-                                &mut row_clicked,
-                                &mut row_right_clicked,
-                            );
-
-                            // Handle interaction
-                            if row_right_clicked {
-                                events.push(LogTableEvent::BookmarkToggled {
-                                    line_index: line_idx,
-                                });
-                            } else if row_clicked {
-                                events.push(LogTableEvent::LineClicked {
-                                    line_index: line_idx,
-                                });
-                            }
-                        });
-                    });
+                Self::render_table_with_header(
+                    table,
+                    log_view_state,
+                    lines,
+                    filter,
+                    ui_salt,
+                    selected_line_index,
+                    bookmarked_lines,
+                    all_filter_highlights,
+                    &mut events,
+                );
             });
 
         events
+    }
+
+    fn create_table<'a>(ui: &'a mut Ui, scroll_to_row: Option<usize>) -> TableBuilder<'a> {
+        let available_height = ui.available_height();
+        let header_height = ui.text_style_height(&egui::TextStyle::Heading);
+        let body_height = available_height - header_height - 1.0;
+
+        let mut table = TableBuilder::new(ui)
+            .striped(true)
+            .resizable(false)
+            .sense(egui::Sense::click())
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .vscroll(true)
+            .min_scrolled_height(body_height)
+            .max_scroll_height(body_height)
+            .column(Column::initial(60.0).resizable(true).clip(true))
+            .column(Column::initial(110.0).resizable(true).clip(true))
+            .column(Column::remainder().resizable(true).clip(true))
+            .column(Column::initial(70.0).resizable(true).clip(true));
+
+        if let Some(row_idx) = scroll_to_row {
+            table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
+        }
+
+        table
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_table_with_header(
+        table: TableBuilder,
+        log_view_state: &LogViewState,
+        lines: &[LogLine],
+        filter: &FilterState,
+        ui_salt: usize,
+        selected_line_index: usize,
+        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        all_filter_highlights: &[FilterHighlight],
+        events: &mut Vec<LogTableEvent>,
+    ) {
+        table
+            .header(20.0, |mut header| {
+                Self::render_header(&mut header);
+            })
+            .body(|body| {
+                Self::render_table_body(
+                    body,
+                    log_view_state,
+                    lines,
+                    filter,
+                    ui_salt,
+                    selected_line_index,
+                    bookmarked_lines,
+                    all_filter_highlights,
+                    events,
+                );
+            });
+    }
+
+    fn render_header(header: &mut egui_extras::TableRow) {
+        header.col(|ui| {
+            ui.strong("Line");
+        });
+        header.col(|ui| {
+            ui.strong("Timestamp");
+        });
+        header.col(|ui| {
+            ui.strong("Message");
+        });
+        header.col(|ui| {
+            ui.strong("Score");
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_table_body(
+        body: egui_extras::TableBody,
+        log_view_state: &LogViewState,
+        lines: &[LogLine],
+        filter: &FilterState,
+        ui_salt: usize,
+        selected_line_index: usize,
+        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        all_filter_highlights: &[FilterHighlight],
+        events: &mut Vec<LogTableEvent>,
+    ) {
+        let visible_lines = filter.filtered_indices.len();
+
+        body.rows(18.0, visible_lines, |mut row| {
+            let event = Self::render_table_row(
+                &mut row,
+                log_view_state,
+                lines,
+                filter,
+                ui_salt,
+                selected_line_index,
+                bookmarked_lines,
+                all_filter_highlights,
+            );
+
+            if let Some(evt) = event {
+                events.push(evt);
+            }
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_table_row(
+        row: &mut egui_extras::TableRow,
+        log_view_state: &LogViewState,
+        lines: &[LogLine],
+        filter: &FilterState,
+        ui_salt: usize,
+        selected_line_index: usize,
+        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        all_filter_highlights: &[FilterHighlight],
+    ) -> Option<LogTableEvent> {
+        let row_index = row.index();
+        let line_idx = filter.filtered_indices[row_index];
+        let line = &lines[line_idx];
+
+        let is_selected = selected_line_index == line_idx;
+        let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
+        let color = if let Some(score) = &log_view_state.scores {
+            score_to_color(score[line_idx])
+        } else {
+            Color32::WHITE
+        };
+
+        let mut row_clicked = false;
+        let mut row_right_clicked = false;
+
+        Self::render_all_columns(
+            row,
+            line,
+            line_idx,
+            ui_salt,
+            is_selected,
+            is_bookmarked,
+            color,
+            bookmarked_lines,
+            all_filter_highlights,
+            log_view_state,
+            &mut row_clicked,
+            &mut row_right_clicked,
+        );
+
+        if row_right_clicked {
+            Some(LogTableEvent::BookmarkToggled {
+                line_index: line_idx,
+            })
+        } else if row_clicked {
+            Some(LogTableEvent::LineClicked {
+                line_index: line_idx,
+            })
+        } else {
+            None
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_all_columns(
+        row: &mut egui_extras::TableRow,
+        line: &LogLine,
+        line_idx: usize,
+        ui_salt: usize,
+        is_selected: bool,
+        is_bookmarked: bool,
+        color: Color32,
+        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        all_filter_highlights: &[FilterHighlight],
+        log_view_state: &LogViewState,
+        row_clicked: &mut bool,
+        row_right_clicked: &mut bool,
+    ) {
+        Self::render_line_column(
+            row,
+            line,
+            line_idx,
+            ui_salt,
+            is_selected,
+            is_bookmarked,
+            color,
+            bookmarked_lines
+                .get(&line_idx)
+                .map(std::string::String::as_str),
+            row_clicked,
+            row_right_clicked,
+        );
+
+        Self::render_timestamp_column(
+            row,
+            line,
+            line_idx,
+            ui_salt,
+            is_selected,
+            is_bookmarked,
+            color,
+            all_filter_highlights,
+            row_clicked,
+            row_right_clicked,
+        );
+
+        Self::render_message_column(
+            row,
+            line,
+            line_idx,
+            ui_salt,
+            is_selected,
+            is_bookmarked,
+            color,
+            all_filter_highlights,
+            row_clicked,
+            row_right_clicked,
+        );
+
+        Self::render_score_column(
+            row,
+            log_view_state,
+            line_idx,
+            ui_salt,
+            is_selected,
+            is_bookmarked,
+            color,
+            row_clicked,
+            row_right_clicked,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
