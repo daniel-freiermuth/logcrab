@@ -181,6 +181,7 @@ impl From<&SavedFilter> for FilterState {
         let mut filter = FilterState::new(saved_filter.name.clone(), saved_filter.color);
         filter.search_text.clone_from(&saved_filter.search_text);
         filter.case_insensitive = saved_filter.case_insensitive;
+        filter.globally_visible = true;
         filter.update_search_regex();
         filter
     }

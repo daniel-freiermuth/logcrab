@@ -200,6 +200,7 @@ pub struct FilterState {
     pub last_rendered_selection: usize,
     pub name: String,
     pub color: Color32,
+    pub globally_visible: bool, // Whether this filter's highlights should be shown in all tabs
 
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
@@ -226,6 +227,7 @@ impl FilterState {
             last_rendered_selection: 0,
             name,
             color,
+            globally_visible: true,
             filter_result_rx,
             filter_result_tx: result_tx,
         }
