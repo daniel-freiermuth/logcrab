@@ -42,6 +42,9 @@ pub trait LogCrabTab {
         -> bool;
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
     fn get_filter_highlight(&self) -> Option<FilterHighlight>;
+    fn context_menu(&mut self, _ui: &mut egui::Ui) {
+        // Default implementation does nothing
+    }
 }
 
 /// Pending tab addition request from the add button
@@ -73,6 +76,16 @@ impl TabViewer for LogCrabTabViewer<'_> {
             self.global_config,
             self.all_filter_highlights,
         );
+    }
+
+    fn context_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        tab: &mut Self::Tab,
+        _surface: egui_dock::SurfaceIndex,
+        _node: egui_dock::NodeIndex,
+    ) {
+        tab.context_menu(ui);
     }
 
     fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
