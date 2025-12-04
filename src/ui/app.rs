@@ -9,6 +9,7 @@ use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
 use crate::ui::tabs::BookmarksView;
 use crate::ui::LogView;
+use egui::text::LayoutJob;
 
 /// Main application
 /// Responsibilities:
@@ -50,6 +51,9 @@ pub struct LogCrabApp {
     /// Pending key rebind action
     pending_rebind: Option<ShortcutAction>,
 
+    /// Pending dropped file to load
+    pending_drop_file: Option<PathBuf>,
+
     /// Whether to show the CPU profiler window
     #[cfg(feature = "cpu-profiling")]
     show_profiler: bool,
@@ -76,6 +80,7 @@ impl LogCrabApp {
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
+            pending_drop_file: None,
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         };
@@ -314,6 +319,18 @@ impl LogCrabApp {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("central_panel");
 
+        // Preview hovering files
+        Self::preview_files_being_dropped(ctx);
+
+        // Collect dropped files (store for later processing)
+        self.pending_drop_file = ctx.input(|i| {
+            if !i.raw.dropped_files.is_empty() {
+                i.raw.dropped_files.first().and_then(|f| f.path.clone())
+            } else {
+                None
+            }
+        });
+
         if let Some(ref mut log_view) = self.log_view {
             log_view.render(ui, &mut self.global_config);
         } else {
@@ -342,6 +359,41 @@ impl LogCrabApp {
                     self.open_file_dialog(ctx);
                 }
             });
+        }
+    }
+
+    /// Preview hovering files - shows overlay when dragging files over window
+    fn preview_files_being_dropped(ctx: &egui::Context) {
+        use egui::*;
+
+        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
+            let text = ctx.input(|i| {
+                let mut text = "Drop to open:\n".to_owned();
+                for file in &i.raw.hovered_files {
+                    if let Some(path) = &file.path {
+                        text += &format!("\n{}", path.display());
+                    }
+                }
+                text
+            });
+
+            let painter =
+                ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
+            let screen_rect = ctx.content_rect();
+            painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
+
+            let font = TextStyle::Heading.resolve(&ctx.style());
+            let mut layout_job = LayoutJob::simple(
+                text,
+                font.clone(),
+                Color32::WHITE,
+                screen_rect.width() - 40.0,
+            );
+            layout_job.wrap.max_width = screen_rect.width() - 40.0;
+
+            let galley = painter.layout_job(layout_job);
+            let text_pos = screen_rect.center() - galley.rect.size() / 2.0;
+            painter.galley(text_pos, galley, Color32::WHITE);
         }
     }
 
@@ -416,6 +468,12 @@ impl eframe::App for LogCrabApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
+
+        // Process pending dropped file
+        if let Some(path) = self.pending_drop_file.take() {
+            log::info!("Loading dropped file: {}", path.display());
+            self.load_file(path, ctx.clone());
+        }
 
         // Check for messages from background thread
         self.process_file_loading(ctx);

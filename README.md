@@ -14,10 +14,10 @@ An intelligent log anomaly explorer built with Rust and egui. LogCrab helps deve
 ## Getting started
 
 ```bash
-// Install rustup
-$ rustup toolchain install stable
+// Install rustup with your system package manager
+$ rustup toolchain install stable // Install cargo
 $ cd logcrab
-$ cargo run --release
+$ env -u WAYLAND_DISPLAY cargo run --release // as of now, it is recommended to run via Xwayland due to known limitations
 ```
 
 ### Desktop Integration
@@ -29,7 +29,7 @@ To add LogCrab to your application menu:
 cargo build --release
 
 # Update the .desktop file with the correct path to the binary
-sed "s|Exec=logcrab|Exec=$(pwd)/target/release/logcrab|g" logcrab.desktop > ~/.local/share/applications/logcrab.desktop
+sed "s|<logcrab-binary>|$(pwd)/target/release/logcrab|g" logcrab.desktop > ~/.local/share/applications/logcrab.desktop
 
 # Install the icon
 mkdir -p ~/.local/share/icons/hicolor/256x256/apps
@@ -125,6 +125,10 @@ Contributions are welcome! Areas for improvement:
 - UI enhancements (keyboard shortcuts, themes, etc.)
 
 ## Known bugs
+
+### Drag and Drop only works when using Xwayland
+Due to this not yet being implemented.
+https://github.com/rust-windowing/winit/issues/1881
 
 ### Wayland protocol error
 When using the Wayland compositor, you might find the program exited after leaving the computer alone for a while.
