@@ -433,9 +433,14 @@ impl LogView {
                     self.state.bookmarks.insert(bookmark.line_index, bookmark);
                 }
 
-                for (i, saved_filter) in crab_data.filters.iter().enumerate() {
-                    self.add_filter_view(false, Some(saved_filter.into()));
-                    log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
+                if !crab_data.filters.is_empty() {
+                    for (i, saved_filter) in crab_data.filters.iter().enumerate() {
+                        self.add_filter_view(false, Some(saved_filter.into()));
+                        log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
+                    }
+                } else {
+                    // No saved filters - just create one default filter
+                    self.add_filter_view(false, None);
                 }
             } else {
                 log::warn!("Failed to parse .crab file: {}", self.crab_file.display());
@@ -448,6 +453,16 @@ impl LogView {
             );
             self.add_filter_view(false, None);
         }
+
+        // Split horizontally: 70% top for filters, 30% bottom for bookmarks
+        let [top, _bottom] = self.dock_state.main_surface_mut().split_below(
+            egui_dock::NodeIndex::root(),
+            0.7,
+            vec![Box::new(BookmarksView::default())],
+        );
+
+        // Focus top pane for adding remaining filters
+        self.dock_state.main_surface_mut().set_focused_node(top);
     }
 
     pub fn save_crab_file(&self) {
