@@ -390,14 +390,28 @@ impl LogTable {
                 bg_color,
                 all_filter_highlights,
             );
-            ui.label(job);
+
+            // Layout the text and check if it would be clipped
+            let available_width = ui.available_width();
+            let galley = ui.painter().layout_job(job);
+            let text_width = galley.size().x;
+            let is_clipped = text_width > available_width;
+
+            ui.label(galley);
 
             let response = ui.interact(
                 ui.max_rect(),
                 ui.id().with(line_idx).with(ui_salt).with("msg"),
                 egui::Sense::click(),
             );
-            let response = response.on_hover_text(&line.raw);
+
+            // Only show hover tooltip if text was clipped
+            let response = if is_clipped {
+                response.on_hover_text(&line.raw)
+            } else {
+                response
+            };
+
             if response.clicked() {
                 *row_clicked = true;
             }
