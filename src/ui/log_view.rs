@@ -30,7 +30,7 @@ use fancy_regex::Regex;
 use chrono::{DateTime, Local};
 use egui_dock::{DockArea, DockState, Node};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ pub struct FilterHighlight {
 }
 
 impl FilterHighlight {
-    /// Highlight matches from all filters in the text
+    /// Highlight matches from all filters in the text with alpha blending for overlaps
     pub fn highlight_text_with_filters(
         text: &str,
         base_color: Color32,
@@ -51,66 +51,149 @@ impl FilterHighlight {
     ) -> egui::text::LayoutJob {
         let mut job = LayoutJob::default();
 
-        // Collect all matches from all filters with their colors
-        // Use BTreeMap to keep matches sorted by start position
-        let mut matches: BTreeMap<usize, (usize, Color32)> = BTreeMap::new();
+        if text.is_empty() {
+            return job;
+        }
 
-        for highlight in all_filter_highlights {
+        // Collect all matches from all filters
+        let mut matches: Vec<(usize, usize, Color32)> = Vec::new();
+        
+        for highlight in all_filter_highlights.iter().rev() {
             for mat in highlight.regex.find_iter(text).flatten() {
-                // If there's overlap, the first filter wins (first in the tab order)
-                matches
-                    .entry(mat.start())
-                    .or_insert((mat.end(), highlight.color));
+                matches.push((mat.start(), mat.end(), highlight.color));
             }
         }
 
-        // Build the job with highlighted sections
-        let mut last_end = 0;
-        for (&start, &(end, color)) in &matches {
-            // Skip overlapping matches
-            if start < last_end {
-                continue;
-            }
-
-            // Add unhighlighted text before this match
-            if start > last_end {
-                job.append(
-                    &text[last_end..start],
-                    0.0,
-                    TextFormat {
-                        color: base_color,
-                        ..Default::default()
-                    },
-                );
-            }
-
-            // Add highlighted match
+        if matches.is_empty() {
+            // No matches, return plain text
             job.append(
-                &text[start..end],
-                0.0,
-                TextFormat {
-                    color: Color32::BLACK,
-                    background: color,
-                    ..Default::default()
-                },
-            );
-
-            last_end = end;
-        }
-
-        // Add remaining unhighlighted text
-        if last_end < text.len() {
-            job.append(
-                &text[last_end..],
+                text,
                 0.0,
                 TextFormat {
                     color: base_color,
                     ..Default::default()
                 },
             );
+            return job;
+        }
+
+        // Create a character-level color map for blending overlapping highlights
+        let mut char_colors: Vec<Option<Color32>> = vec![None; text.len()];
+        
+        for (start, end, color) in matches {
+            let range_end = end.min(text.len());
+            for char_color in &mut char_colors[start..range_end] {
+                *char_color = Some(match *char_color {
+                    None => color,
+                    Some(existing) => Self::blend_colors(existing, color),
+                });
+            }
+        }
+
+        // Build the job by merging adjacent characters with the same color
+        let mut current_start = 0;
+        let mut current_color = char_colors[0];
+        
+        for i in 1..=text.len() {
+            let next_color = if i < text.len() { char_colors[i] } else { None };
+            
+            if next_color != current_color {
+                // Color changed, append the current segment
+                if let Some(bg_color) = current_color {
+                    let text_color = Self::choose_text_color(bg_color);
+                    job.append(
+                        &text[current_start..i],
+                        0.0,
+                        TextFormat {
+                            color: text_color,
+                            background: bg_color,
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    job.append(
+                        &text[current_start..i],
+                        0.0,
+                        TextFormat {
+                            color: base_color,
+                            ..Default::default()
+                        },
+                    );
+                }
+                
+                current_start = i;
+                current_color = next_color;
+            }
         }
 
         job
+    }
+
+    /// Choose black or white text color based on background brightness
+    /// Uses relative luminance calculation from WCAG guidelines
+    fn choose_text_color(background: Color32) -> Color32 {
+        // For semi-transparent backgrounds, blend with dark background to get effective color
+        // This assumes the application has a dark theme
+        let alpha = f32::from(background.a()) / 255.0;
+        
+        // Blend with dark background (black) to get effective RGB
+        let effective_r = (f32::from(background.r()) / 255.0) * alpha;
+        let effective_g = (f32::from(background.g()) / 255.0) * alpha;
+        let effective_b = (f32::from(background.b()) / 255.0) * alpha;
+        
+        // Linearize (gamma correction) for proper luminance calculation
+        let linearize = |c_norm: f32| -> f32 {
+            if c_norm <= 0.03928 {
+                c_norm / 12.92
+            } else {
+                ((c_norm + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        
+        let r_linear = linearize(effective_r);
+        let g_linear = linearize(effective_g);
+        let b_linear = linearize(effective_b);
+        
+        // Calculate relative luminance: L = 0.2126 * R + 0.7152 * G + 0.0722 * B
+        let luminance = 0.2126 * r_linear + 0.7152 * g_linear + 0.0722 * b_linear;
+        
+        // Use black text on bright backgrounds, white text on dark backgrounds
+        // Threshold of 0.5 works well in practice
+        if luminance > 0.5 {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        }
+    }
+
+    /// Blend two colors with alpha compositing (Porter-Duff "over" operator)
+    fn blend_colors(bottom: Color32, top: Color32) -> Color32 {
+        // Convert to float for blending
+        let bottom_a = f32::from(bottom.a()) / 255.0;
+        let top_a = f32::from(top.a()) / 255.0;
+        
+        // Alpha compositing: out_a = top_a + bottom_a * (1 - top_a)
+        let out_a = top_a + bottom_a * (1.0 - top_a);
+        
+        if out_a == 0.0 {
+            return Color32::TRANSPARENT;
+        }
+        
+        // For each color channel: out_c = (top_c * top_a + bottom_c * bottom_a * (1 - top_a)) / out_a
+        let blend_channel = |top_c: u8, bottom_c: u8| -> u8 {
+            let top_cf = f32::from(top_c) / 255.0;
+            let bottom_cf = f32::from(bottom_c) / 255.0;
+            
+            let out_cf = (top_cf * top_a + bottom_cf * bottom_a * (1.0 - top_a)) / out_a;
+            (out_cf * 255.0).round() as u8
+        };
+        
+        Color32::from_rgba_premultiplied(
+            blend_channel(top.r(), bottom.r()),
+            blend_channel(top.g(), bottom.g()),
+            blend_channel(top.b(), bottom.b()),
+            (out_a * 255.0).round() as u8,
+        )
     }
 }
 
