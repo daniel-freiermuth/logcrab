@@ -250,6 +250,7 @@ impl LogFileLoader {
         ctx: &egui::Context,
         start_time: std::time::Instant,
     ) {
+        static N_SKIP_INITIAL: usize = 10;
         // Now calculate anomaly scores in the background
         let score_start = std::time::Instant::now();
         log::debug!(
@@ -273,12 +274,9 @@ impl LogFileLoader {
                 ctx.request_repaint();
             }
 
-            let score = if idx < 10 {
-                0.0
-            } else {
-                scorer.score(log_line)
+            if idx > N_SKIP_INITIAL - 1 {
+                raw_scores.push(scorer.score(log_line));
             };
-            raw_scores.push(score);
             scorer.update(log_line);
         }
 
@@ -290,7 +288,10 @@ impl LogFileLoader {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("normalize_scores");
 
-        let normalized_scores = normalize_scores(&raw_scores);
+        let normalized_scores = vec![0.0; N_SKIP_INITIAL]
+            .into_iter()
+            .chain(normalize_scores(&raw_scores))
+            .collect::<Vec<f64>>();
 
         let _ = tx.send(LoadMessage::ScoringProgress(
             "Finalizing scores...".to_string(),
