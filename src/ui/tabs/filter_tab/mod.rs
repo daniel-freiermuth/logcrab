@@ -135,9 +135,13 @@ impl FilterView {
         };
 
         // Render histogram
-        if let Some(hist_event) =
-            Histogram::render(ui, lines, &self.state.filtered_indices, selected_line_index)
-        {
+        if let Some(hist_event) = Histogram::render(
+            ui,
+            lines,
+            &self.state.filtered_indices,
+            selected_line_index,
+            log_view_state.scores.as_deref(),
+        ) {
             events.push(FilterViewEvent::LineSelected {
                 line_index: hist_event.line_index,
             });

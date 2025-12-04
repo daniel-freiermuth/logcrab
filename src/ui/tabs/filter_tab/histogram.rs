@@ -17,7 +17,17 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::parser::line::LogLine;
+use crate::ui::tabs::filter_tab::log_table;
 use egui::{Color32, Ui};
+
+/// Number of vertical buckets for anomaly score distribution
+const SCORE_BUCKETS: usize = 20;
+
+/// Distribution of anomaly scores within a histogram bucket
+#[derive(Debug, Clone, Copy, Default)]
+struct AnomalyDistribution {
+    buckets: [usize; SCORE_BUCKETS],
+}
 
 /// Event emitted when histogram is clicked
 #[derive(Debug, Clone)]
@@ -37,6 +47,7 @@ impl Histogram {
         lines: &[LogLine],
         filtered_indices: &[usize],
         selected_line_index: usize,
+        anomaly_scores: Option<&[f64]>,
     ) -> Option<HistogramClickEvent> {
         if lines.is_empty() || filtered_indices.is_empty() {
             if lines.is_empty() {
@@ -74,10 +85,22 @@ impl Histogram {
             }
 
             // Continue with valid indices
-            return Self::render_internal(ui, lines, &valid_filtered_indices, selected_line_index);
+            return Self::render_internal(
+                ui,
+                lines,
+                &valid_filtered_indices,
+                selected_line_index,
+                anomaly_scores,
+            );
         }
 
-        Self::render_internal(ui, lines, filtered_indices, selected_line_index)
+        Self::render_internal(
+            ui,
+            lines,
+            filtered_indices,
+            selected_line_index,
+            anomaly_scores,
+        )
     }
 
     fn render_internal(
@@ -85,6 +108,7 @@ impl Histogram {
         lines: &[LogLine],
         filtered_indices: &[usize],
         selected_line_index: usize,
+        anomaly_scores: Option<&[f64]>,
     ) -> Option<HistogramClickEvent> {
         let (start_time, end_time) = match Self::calculate_time_range(lines, filtered_indices) {
             Some(range) => range,
@@ -98,7 +122,13 @@ impl Histogram {
         const NUM_BUCKETS: usize = 100;
         let bucket_size = time_range as f64 / NUM_BUCKETS as f64;
 
-        let buckets = Self::create_buckets(lines, filtered_indices, start_time, bucket_size);
+        let (buckets, anomaly_buckets) = Self::create_buckets(
+            lines,
+            filtered_indices,
+            start_time,
+            bucket_size,
+            anomaly_scores,
+        );
         let max_count = *buckets.iter().max().unwrap_or(&1);
 
         let selected_bucket = Self::calculate_selected_bucket(
@@ -112,6 +142,7 @@ impl Histogram {
         let click_event = Self::render_histogram_bars(
             ui,
             &buckets,
+            &anomaly_buckets,
             max_count,
             selected_bucket,
             lines,
@@ -153,18 +184,30 @@ impl Histogram {
         filtered_indices: &[usize],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
-    ) -> Vec<usize> {
+        anomaly_scores: Option<&[f64]>,
+    ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
         const NUM_BUCKETS: usize = 100;
         let mut buckets = vec![0usize; NUM_BUCKETS];
+        let mut anomaly_distributions = vec![AnomalyDistribution::default(); NUM_BUCKETS];
 
         for &line_idx in filtered_indices {
             let ts = lines[line_idx].timestamp;
             let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
             let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
             buckets[bucket_idx] += 1;
+
+            if let Some(scores) = anomaly_scores {
+                if line_idx < scores.len() {
+                    let score = scores[line_idx] / 100.0;
+                    // Determine which score bucket this falls into
+                    let score_bucket =
+                        ((score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);
+                    anomaly_distributions[bucket_idx].buckets[score_bucket] += 1;
+                }
+            }
         }
 
-        buckets
+        (buckets, anomaly_distributions)
     }
 
     fn calculate_selected_bucket(
@@ -187,6 +230,7 @@ impl Histogram {
     fn render_histogram_bars(
         ui: &mut Ui,
         buckets: &[usize],
+        anomaly_buckets: &[AnomalyDistribution],
         max_count: usize,
         selected_bucket: Option<usize>,
         lines: &[LogLine],
@@ -207,8 +251,8 @@ impl Histogram {
             &painter,
             rect,
             buckets,
+            anomaly_buckets,
             max_count,
-            selected_bucket,
             bar_width,
         );
         Self::draw_selected_indicator(&painter, rect, selected_bucket, bar_width);
@@ -228,29 +272,77 @@ impl Histogram {
         painter: &egui::Painter,
         rect: egui::Rect,
         buckets: &[usize],
+        anomaly_buckets: &[AnomalyDistribution],
         max_count: usize,
-        selected_bucket: Option<usize>,
         bar_width: f32,
     ) {
         for (i, &count) in buckets.iter().enumerate() {
             if count > 0 {
                 let x = rect.min.x + i as f32 * bar_width;
-                let height = (count as f32 / max_count as f32) * rect.height();
-                let y = rect.max.y - height;
+                let total_height = (count as f32 / max_count as f32) * rect.height();
 
-                let bar_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, y),
-                    egui::vec2(bar_width.max(1.0), height),
-                );
+                // Draw gradient based on anomaly distribution
+                let dist = &anomaly_buckets[i];
+                let total: usize = dist.buckets.iter().sum();
 
-                let color = if Some(i) == selected_bucket {
-                    Color32::from_rgb(255, 200, 100)
+                if total > 0 {
+                    // Use gradient to visualize the anomaly intensity
+                    Self::draw_gradient_bar(
+                        painter,
+                        x,
+                        rect.max.y,
+                        bar_width,
+                        total_height,
+                        dist,
+                        total as f32,
+                    );
                 } else {
-                    Color32::from_rgb(100, 150, 255)
-                };
-
-                painter.rect_filled(bar_rect, 0.0, color);
+                    // No anomaly data, use default blue
+                    let y = rect.max.y - total_height;
+                    let bar_rect = egui::Rect::from_min_size(
+                        egui::pos2(x, y),
+                        egui::vec2(bar_width.max(1.0), total_height),
+                    );
+                    painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(100, 150, 255));
+                }
             }
+        }
+    }
+
+    /// Draw a bar with a vertical gradient based on anomaly distribution
+    /// Each score bucket gets a segment with height proportional to its count
+    fn draw_gradient_bar(
+        painter: &egui::Painter,
+        x: f32,
+        bottom_y: f32,
+        bar_width: f32,
+        total_height: f32,
+        dist: &AnomalyDistribution,
+        total: f32,
+    ) {
+        let mut current_y = bottom_y;
+
+        // Draw each score bucket from bottom (low scores) to top (high scores)
+        for bucket_idx in 0..SCORE_BUCKETS {
+            let count = dist.buckets[bucket_idx];
+            if count == 0 {
+                continue;
+            }
+
+            let segment_height = (count as f32 / total) * total_height;
+
+            let score = ((bucket_idx as f32 + 1.0) / SCORE_BUCKETS as f32) * 100.0;
+
+            let color = log_table::score_to_color(score as f64);
+
+            let y = current_y - segment_height;
+            let segment_rect = egui::Rect::from_min_size(
+                egui::pos2(x, y),
+                egui::vec2(bar_width.max(1.0), segment_height.max(5.0)),
+            );
+            painter.rect_filled(segment_rect, 0.0, color);
+
+            current_y = y;
         }
     }
 
