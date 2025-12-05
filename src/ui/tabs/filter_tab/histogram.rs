@@ -18,6 +18,7 @@
 
 use crate::parser::line::LogLine;
 use crate::ui::tabs::filter_tab::log_table;
+use chrono::Datelike;
 use egui::{Color32, Ui};
 
 /// Number of vertical buckets for anomaly score distribution
@@ -48,6 +49,7 @@ impl Histogram {
         filtered_indices: &[usize],
         selected_line_index: usize,
         anomaly_scores: Option<&[f64]>,
+        hide_epoch: bool,
     ) -> Option<HistogramClickEvent> {
         if lines.is_empty() || filtered_indices.is_empty() {
             if lines.is_empty() {
@@ -57,47 +59,32 @@ impl Histogram {
             return None;
         }
 
-        // Validate filtered_indices to prevent index out of bounds
-        let max_valid_index = lines.len().saturating_sub(1);
-        let invalid_indices: Vec<_> = filtered_indices
-            .iter()
-            .filter(|&&idx| idx >= lines.len())
-            .collect();
-
-        if !invalid_indices.is_empty() {
-            log::warn!(
-                "Found {} invalid indices in filtered_indices (max valid: {}, total lines: {}). First few invalid indices: {:?}",
-                invalid_indices.len(),
-                max_valid_index,
-                lines.len(),
-                invalid_indices.iter().take(5).collect::<Vec<_>>()
-            );
-            // Filter out invalid indices for safety
-            let valid_filtered_indices: Vec<_> = filtered_indices
+        // Filter out January 1st timestamps if requested
+        let filtered_indices_vec: Vec<usize>;
+        let effective_filtered_indices = if hide_epoch {
+            filtered_indices_vec = filtered_indices
                 .iter()
-                .filter(|&&idx| idx < lines.len())
+                .filter(|&&idx| {
+                    let ts = lines[idx].timestamp;
+                    // Exclude all timestamps that are January 1st (any year)
+                    !(ts.month0() == 0 && ts.day0() == 0)
+                })
                 .copied()
                 .collect();
+            &filtered_indices_vec[..]
+        } else {
+            filtered_indices
+        };
 
-            if valid_filtered_indices.is_empty() {
-                ui.label("No valid filtered indices available");
-                return None;
-            }
-
-            // Continue with valid indices
-            return Self::render_internal(
-                ui,
-                lines,
-                &valid_filtered_indices,
-                selected_line_index,
-                anomaly_scores,
-            );
+        if effective_filtered_indices.is_empty() {
+            ui.label("No logs match the current filter (all timestamps are January 1st)");
+            return None;
         }
 
         Self::render_internal(
             ui,
             lines,
-            filtered_indices,
+            effective_filtered_indices,
             selected_line_index,
             anomaly_scores,
         )

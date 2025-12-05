@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Global user configuration stored in config directory
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     /// Keyboard shortcuts
     #[serde(default)]
@@ -32,6 +32,24 @@ pub struct GlobalConfig {
     /// Favorite filters that appear in all sessions
     #[serde(default)]
     pub favorite_filters: Vec<FavoriteFilter>,
+
+    /// Hide January 1st timestamps from histogram (default: true)
+    #[serde(default = "default_hide_epoch")]
+    pub hide_epoch_in_histogram: bool,
+}
+
+fn default_hide_epoch() -> bool {
+    true
+}
+
+impl Default for GlobalConfig {
+    fn default() -> Self {
+        Self {
+            shortcuts: HashMap::new(),
+            favorite_filters: Vec::new(),
+            hide_epoch_in_histogram: true,
+        }
+    }
 }
 
 /// A favorite filter that can be quickly added to any log

@@ -141,6 +141,7 @@ impl FilterView {
             &self.state.filtered_indices,
             selected_line_index,
             log_view_state.scores.as_deref(),
+            global_config.hide_epoch_in_histogram,
         ) {
             events.push(FilterViewEvent::LineSelected {
                 line_index: hist_event.line_index,

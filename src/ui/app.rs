@@ -268,6 +268,21 @@ impl LogCrabApp {
                         .push_to_focused_leaf(Box::new(BookmarksView::default()));
                     ui.close();
                 }
+
+                ui.separator();
+            }
+
+            if ui
+                .checkbox(
+                    &mut self.global_config.hide_epoch_in_histogram,
+                    "Hide January 1st from Histogram",
+                )
+                .changed()
+            {
+                // Save config when changed
+                if let Err(e) = self.global_config.save() {
+                    log::error!("Failed to save config: {}", e);
+                }
             }
         });
 
