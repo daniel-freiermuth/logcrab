@@ -40,6 +40,8 @@ pub enum FilterInternalEvent {
 pub struct FilterBar {
     editing_favorite: bool,
     temp_favorite_name: String,
+    /// Track if we've already requested focus for the current editing session
+    favorite_focus_requested: bool,
     /// Current position in history (None = not browsing, Some(0) = most recent, etc.)
     history_index: Option<usize>,
     /// Temporary storage for the text being edited before entering history mode
@@ -51,6 +53,7 @@ impl FilterBar {
         Self {
             editing_favorite: false,
             temp_favorite_name: String::new(),
+            favorite_focus_requested: false,
             history_index: None,
             pre_history_text: String::new(),
         }
@@ -168,16 +171,20 @@ impl FilterBar {
                 .id(text_edit_id),
         );
 
-        if !text_response.has_focus() {
+        // Only request focus once when entering editing mode
+        if !self.favorite_focus_requested {
             text_response.request_focus();
+            self.favorite_focus_requested = true;
         }
 
         if text_response.has_focus() {
             if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.save_favorite_name(filter, global_config);
                 self.editing_favorite = false;
+                self.favorite_focus_requested = false;
             } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.editing_favorite = false;
+                self.favorite_focus_requested = false;
             }
         }
 
@@ -186,6 +193,7 @@ impl FilterBar {
                 self.save_favorite_name(filter, global_config);
             }
             self.editing_favorite = false;
+            self.favorite_focus_requested = false;
         }
     }
 
@@ -220,6 +228,7 @@ impl FilterBar {
         if let Some(fav) = current_favorite {
             if combo_response.response.double_clicked() {
                 self.editing_favorite = true;
+                self.favorite_focus_requested = false; // Reset so we request focus in the next frame
                 self.temp_favorite_name.clone_from(&fav.name);
             }
         }
