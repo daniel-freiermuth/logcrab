@@ -1,5 +1,5 @@
 use super::line::LogLine;
-use chrono::{DateTime, Datelike, Local};
+use chrono::{DateTime, Datelike, Local, TimeZone};
 use fancy_regex::Regex;
 use std::sync::LazyLock;
 
@@ -8,6 +8,10 @@ static ISO_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)")
         .unwrap()
 });
+
+// Alternative date format with hyphens: 2025-11-26-09:58:05
+static HYPHENATED_TIMESTAMP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2}(?:\.\d{3})?)").unwrap());
 
 // Common syslog: Nov 20 14:23:45
 static SYSLOG_TIMESTAMP: LazyLock<Regex> =
@@ -27,7 +31,24 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
     let mut remaining = raw.as_str();
 
     // Try to extract timestamp - try various formats
-    if let Ok(Some(caps)) = ISO_TIMESTAMP.captures(remaining) {
+    if let Ok(Some(caps)) = HYPHENATED_TIMESTAMP.captures(remaining) {
+        // Format: 2025-11-26-09:58:05 -> convert to "2025-11-26 09:58:05"
+        let date_part = &caps[1][..10]; // "2025-11-26"
+        let time_part = &caps[1][11..]; // "09:58:05" or "09:58:05.123"
+        let normalized = format!("{} {}", date_part, time_part);
+
+        if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S%.f")
+        {
+            timestamp = Local.from_local_datetime(&naive).single();
+            remaining = remaining[caps[0].len()..].trim_start();
+        } else if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S")
+        {
+            timestamp = Local.from_local_datetime(&naive).single();
+            remaining = remaining[caps[0].len()..].trim_start();
+        }
+    } else if let Ok(Some(caps)) = ISO_TIMESTAMP.captures(remaining) {
         if let Ok(dt) = DateTime::parse_from_rfc3339(&caps[1]) {
             timestamp = Some(dt.with_timezone(&Local));
             remaining = remaining[caps[0].len()..].trim_start();
@@ -107,6 +128,23 @@ mod tests {
         let raw = "2025-11-20T14:23:45.123Z ERROR Connection failed".to_string();
         let line = parse_generic(raw, 1);
         assert_eq!(line.unwrap().message, "ERROR Connection failed");
+    }
+
+    #[test]
+    fn test_hyphenated_timestamp() {
+        let raw = "2025-11-26-09:58:05 , [402.037] ,cnss: fatal: SMMU fault happened with IOVA 0x0"
+            .to_string();
+        let line = parse_generic(raw, 1);
+        assert!(line.is_some());
+        let line = line.unwrap();
+        assert_eq!(
+            line.message,
+            ", [402.037] ,cnss: fatal: SMMU fault happened with IOVA 0x0"
+        );
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2025-11-26 09:58:05"
+        );
     }
 
     #[test]
