@@ -365,63 +365,26 @@ impl Histogram {
         }
 
         const NUM_BUCKETS: usize = 100;
-        let bucket_idx = ((relative_x / bar_width).floor() as usize).min(NUM_BUCKETS - 1);
+        // Calculate which bar was clicked by dividing position by bar width
+        // Use truncation since bar i occupies [i*bar_width, (i+1)*bar_width)
+        let clicked_bucket = (relative_x / bar_width) as usize;
+        if clicked_bucket >= NUM_BUCKETS {
+            return None;
+        }
 
-        let bucket_start_time = start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
-        let bucket_end_time =
-            start_time.timestamp() + ((bucket_idx + 1) as f64 * bucket_size) as i64;
-        let click_time_in_bucket =
-            bucket_start_time + ((relative_x % bar_width) / bar_width * bucket_size as f32) as i64;
-
-        let closest_idx = Self::find_closest_line_in_bucket(
-            lines,
-            filtered_indices,
-            bucket_start_time,
-            bucket_end_time,
-            click_time_in_bucket,
-        );
+        // Find the first line that belongs to this bucket using the same
+        // bucketing formula as create_buckets() to ensure consistency
+        let closest_idx = filtered_indices.iter().find(|&&line_idx| {
+            let ts = lines[line_idx].timestamp;
+            let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+            let line_bucket = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
+            line_bucket == clicked_bucket
+        });
 
         closest_idx
+            .copied()
             .filter(|&idx| idx < lines.len())
             .map(|line_index| HistogramClickEvent { line_index })
-    }
-
-    fn find_closest_line_in_bucket(
-        lines: &[LogLine],
-        filtered_indices: &[usize],
-        bucket_start_time: i64,
-        bucket_end_time: i64,
-        click_time_in_bucket: i64,
-    ) -> Option<usize> {
-        let mut closest_idx = None;
-        let mut min_diff = i64::MAX;
-
-        for &line_idx in filtered_indices {
-            let ts = lines[line_idx].timestamp;
-            let ts_value = ts.timestamp();
-
-            if ts_value >= bucket_start_time && ts_value < bucket_end_time {
-                let diff = (ts_value - click_time_in_bucket).abs();
-                if diff < min_diff {
-                    min_diff = diff;
-                    closest_idx = Some(line_idx);
-                }
-            }
-        }
-
-        if closest_idx.is_none() {
-            let bucket_center_time = bucket_start_time + (bucket_end_time - bucket_start_time) / 2;
-            for &line_idx in filtered_indices {
-                let ts = lines[line_idx].timestamp;
-                let diff = (ts.timestamp() - bucket_center_time).abs();
-                if diff < min_diff {
-                    min_diff = diff;
-                    closest_idx = Some(line_idx);
-                }
-            }
-        }
-
-        closest_idx
     }
 
     fn render_timeline_labels(
