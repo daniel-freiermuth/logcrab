@@ -3,7 +3,7 @@ pub struct ChangeFilternameWindow {
 }
 
 impl ChangeFilternameWindow {
-    pub fn new(initial_name: String) -> Self {
+    pub const fn new(initial_name: String) -> Self {
         Self {
             new_name: initial_name,
         }

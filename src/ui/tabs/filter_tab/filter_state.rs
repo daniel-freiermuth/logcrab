@@ -45,7 +45,7 @@ pub struct GlobalFilterWorker {
 }
 
 impl GlobalFilterWorker {
-    pub fn get() -> &'static GlobalFilterWorker {
+    pub fn get() -> &'static Self {
         static INSTANCE: OnceLock<GlobalFilterWorker> = OnceLock::new();
         let is_filtering = Arc::new(AtomicBool::new(false));
         let is_filtering_copy = is_filtering.clone();
@@ -57,7 +57,7 @@ impl GlobalFilterWorker {
                 Self::filter_worker(&request_rx, &is_filtering_copy);
             });
 
-            GlobalFilterWorker {
+            Self {
                 request_tx,
                 is_filtering,
             }
@@ -187,7 +187,7 @@ impl FilterState {
         let initial_filter = String::new();
         let initial_regex = Regex::new(&initial_filter);
 
-        FilterState {
+        Self {
             filter_id,
             search_text: initial_filter,
             search_regex: initial_regex,

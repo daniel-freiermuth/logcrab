@@ -66,7 +66,7 @@ impl FilterView {
         }
     }
 
-    pub fn focus_search_next_frame(&mut self) {
+    pub const fn focus_search_next_frame(&mut self) {
         self.should_focus_search = true;
     }
     /// Render a complete filter view
@@ -287,7 +287,7 @@ impl FilterView {
         let new_pos = if delta < 0 {
             current_pos.saturating_sub(delta.unsigned_abs() as usize)
         } else {
-            (current_pos + delta as usize).min(filter.filtered_indices.len() - 1)
+            (current_pos + delta as usize).min(filter.filtered_indices.len().saturating_sub(1))
         };
 
         let new_line_index = filter.filtered_indices[new_pos];
@@ -297,24 +297,17 @@ impl FilterView {
     /// Jump to the first line in a filtered view (Vim-style gg)
     pub fn jump_to_top_in_filter(&mut self, data_state: &mut LogViewState) {
         let filter = &self.state;
-        if filter.filtered_indices.is_empty() {
-            return;
+        if let Some(&first_line_index) = filter.filtered_indices.first() {
+            data_state.selected_line_index = first_line_index;
         }
-
-        let first_line_index = filter.filtered_indices[0];
-        data_state.selected_line_index = first_line_index;
     }
 
     /// Jump to the last line in a filtered view (Vim-style G)
     pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut LogViewState) {
         let filter = &self.state;
-        if filter.filtered_indices.is_empty() {
-            return;
+        if let Some(&last_line_index) = filter.filtered_indices.last() {
+            data_state.selected_line_index = last_line_index;
         }
-
-        let last_pos = filter.filtered_indices.len() - 1;
-        let last_line_index = filter.filtered_indices[last_pos];
-        data_state.selected_line_index = last_line_index;
     }
 
     /// Move selection up by one page in a filtered view

@@ -49,7 +49,7 @@ pub struct FilterBar {
 }
 
 impl FilterBar {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             editing_favorite: false,
             temp_favorite_name: String::new(),
@@ -87,21 +87,21 @@ impl FilterBar {
         let mut events = Vec::new();
 
         ui.horizontal(|ui| {
-            self.render_edit_button(ui, &mut events);
+            Self::render_edit_button(ui, &mut events);
             self.render_globally_visible_toggle(ui, filter);
             self.render_histogram_toggle(ui, filter);
-            self.render_color_picker(ui, filter);
-            self.render_favorite_toggle(ui, filter, global_config, &mut events);
+            Self::render_color_picker(ui, filter);
+            Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, filter_uuid, global_config, &mut events);
             self.render_search_input(ui, filter, should_focus_search, log_view_state, &mut events);
             self.render_case_checkbox(ui, filter, &mut events);
-            self.render_validation_status(ui, filter);
+            Self::render_validation_status(ui, filter);
         });
 
         events
     }
 
-    fn render_edit_button(&self, ui: &mut Ui, events: &mut Vec<FilterInternalEvent>) {
+    fn render_edit_button(ui: &mut Ui, events: &mut Vec<FilterInternalEvent>) {
         if ui
             .small_button("✏")
             .on_hover_text("Edit filter name")
@@ -111,13 +111,12 @@ impl FilterBar {
         }
     }
 
-    fn render_color_picker(&self, ui: &mut Ui, filter: &mut FilterState) {
+    fn render_color_picker(ui: &mut Ui, filter: &mut FilterState) {
         ui.color_edit_button_srgba(&mut filter.color)
             .on_hover_text("Choose highlight color for this filter");
     }
 
     fn render_favorite_toggle(
-        &self,
         ui: &mut Ui,
         filter: &FilterState,
         global_config: &GlobalConfig,
@@ -207,11 +206,10 @@ impl FilterBar {
         current_favorite: Option<&crate::config::FavoriteFilter>,
         events: &mut Vec<FilterInternalEvent>,
     ) {
-        let selected_text = if let Some(fav) = current_favorite {
-            format!("⭐ {}", fav.display_name())
-        } else {
-            "⭐ Favorites".to_string()
-        };
+        let selected_text = current_favorite.map_or_else(
+            || "⭐ Favorites".to_string(),
+            |fav| format!("⭐ {}", fav.display_name()),
+        );
 
         let combo_response = egui::ComboBox::from_id_salt(format!("favorites_{filter_uuid}"))
             .selected_text(&selected_text)
@@ -364,7 +362,7 @@ impl FilterBar {
             .on_hover_text("Show filter matches as vertical lines in histogram");
     }
 
-    fn render_validation_status(&self, ui: &mut Ui, filter: &FilterState) {
+    fn render_validation_status(ui: &mut Ui, filter: &FilterState) {
         match &filter.search_regex {
             Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
             Err(err) => ui.colored_label(Color32::RED, format!("❌ {err}")),
