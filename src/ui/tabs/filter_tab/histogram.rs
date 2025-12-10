@@ -21,6 +21,9 @@ use crate::ui::tabs::filter_tab::log_table;
 use chrono::Datelike;
 use egui::{Color32, Ui};
 
+/// Number of horizontal time buckets in the histogram
+const NUM_BUCKETS: usize = 100;
+
 /// Number of vertical buckets for anomaly score distribution
 const SCORE_BUCKETS: usize = 20;
 
@@ -34,6 +37,16 @@ struct AnomalyDistribution {
 #[derive(Debug, Clone)]
 pub struct HistogramClickEvent {
     pub line_index: usize,
+}
+
+/// Calculate which bucket a timestamp belongs to
+fn timestamp_to_bucket(
+    ts: chrono::DateTime<chrono::Local>,
+    start_time: chrono::DateTime<chrono::Local>,
+    bucket_size: f64,
+) -> usize {
+    let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+    ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1)
 }
 
 /// Reusable timeline histogram component
@@ -106,7 +119,6 @@ impl Histogram {
         };
 
         let time_range = (end_time.timestamp() - start_time.timestamp()).max(1);
-        const NUM_BUCKETS: usize = 100;
         let bucket_size = time_range as f64 / NUM_BUCKETS as f64;
 
         let (buckets, anomaly_buckets) = Self::create_buckets(
@@ -173,14 +185,12 @@ impl Histogram {
         bucket_size: f64,
         anomaly_scores: Option<&[f64]>,
     ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
-        const NUM_BUCKETS: usize = 100;
         let mut buckets = vec![0usize; NUM_BUCKETS];
         let mut anomaly_distributions = vec![AnomalyDistribution::default(); NUM_BUCKETS];
 
         for &line_idx in filtered_indices {
             let ts = lines[line_idx].timestamp;
-            let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-            let bucket_idx = ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1);
+            let bucket_idx = timestamp_to_bucket(ts, start_time, bucket_size);
             buckets[bucket_idx] += 1;
 
             if let Some(scores) = anomaly_scores {
@@ -208,7 +218,7 @@ impl Histogram {
         let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
 
         if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
-            Some(((elapsed / bucket_size) as usize).min(99))
+            Some(timestamp_to_bucket(sel_ts, start_time, bucket_size))
         } else {
             None
         }
@@ -225,7 +235,6 @@ impl Histogram {
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
     ) -> Option<HistogramClickEvent> {
-        const NUM_BUCKETS: usize = 100;
         let desired_size = egui::vec2(ui.available_width(), 60.0);
         let (response, painter) = ui.allocate_painter(desired_size, egui::Sense::click());
         let rect = response.rect;
@@ -364,20 +373,18 @@ impl Histogram {
             return None;
         }
 
-        const NUM_BUCKETS: usize = 100;
         let bucket_idx = ((relative_x / bar_width).floor() as usize).min(NUM_BUCKETS - 1);
 
         let bucket_start_time = start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
-        let bucket_end_time =
-            start_time.timestamp() + ((bucket_idx + 1) as f64 * bucket_size) as i64;
         let click_time_in_bucket =
             bucket_start_time + ((relative_x % bar_width) / bar_width * bucket_size as f32) as i64;
 
         let closest_idx = Self::find_closest_line_in_bucket(
             lines,
             filtered_indices,
-            bucket_start_time,
-            bucket_end_time,
+            start_time,
+            bucket_size,
+            bucket_idx,
             click_time_in_bucket,
         );
 
@@ -389,8 +396,9 @@ impl Histogram {
     fn find_closest_line_in_bucket(
         lines: &[LogLine],
         filtered_indices: &[usize],
-        bucket_start_time: i64,
-        bucket_end_time: i64,
+        start_time: chrono::DateTime<chrono::Local>,
+        bucket_size: f64,
+        clicked_bucket: usize,
         click_time_in_bucket: i64,
     ) -> Option<usize> {
         let mut closest_idx = None;
@@ -398,10 +406,10 @@ impl Histogram {
 
         for &line_idx in filtered_indices {
             let ts = lines[line_idx].timestamp;
-            let ts_value = ts.timestamp();
+            let line_bucket = timestamp_to_bucket(ts, start_time, bucket_size);
 
-            if ts_value >= bucket_start_time && ts_value < bucket_end_time {
-                let diff = (ts_value - click_time_in_bucket).abs();
+            if line_bucket == clicked_bucket {
+                let diff = (ts.timestamp() - click_time_in_bucket).abs();
                 if diff < min_diff {
                     min_diff = diff;
                     closest_idx = Some(line_idx);
@@ -409,8 +417,10 @@ impl Histogram {
             }
         }
 
+        // Fallback: find closest line overall if bucket was empty
         if closest_idx.is_none() {
-            let bucket_center_time = bucket_start_time + (bucket_end_time - bucket_start_time) / 2;
+            let bucket_center_time =
+                start_time.timestamp() + ((clicked_bucket as f64 + 0.5) * bucket_size) as i64;
             for &line_idx in filtered_indices {
                 let ts = lines[line_idx].timestamp;
                 let diff = (ts.timestamp() - bucket_center_time).abs();
