@@ -52,7 +52,7 @@ fn calc_boot_time_from_message(msg: &Message) -> Option<DateTime<Local>> {
     let boot_time_offset = msg
         .header
         .timestamp
-        .map(|ts| dlt_header_time_to_timedelta(ts))?;
+        .map(dlt_header_time_to_timedelta)?;
 
     // Boot time = storage_time - time_since_boot
     storage_time.checked_sub_signed(boot_time_offset)
@@ -162,12 +162,10 @@ fn convert_dlt_message(
         log::warn!("DLT message missing ECU ID for line {line_number}");
         "UnknownECU".to_string()
     };
-    let session_id = if let Some(session) = msg.header.session_id {
-        session
-    } else {
+    let session_id = msg.header.session_id.unwrap_or_else(|| {
         log::warn!("DLT message missing Session ID for line {line_number}");
         0
-    };
+    });
     let (message_type, app_id, ctx_id) = if let Some(ext_header) = &msg.extended_header {
         (
             ext_header.message_type.clone(),
