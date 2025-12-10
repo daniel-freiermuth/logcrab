@@ -49,10 +49,7 @@ fn calc_boot_time_from_message(msg: &Message) -> Option<DateTime<Local>> {
         .map(|sh| storage_time_to_datetime(&sh.timestamp))?;
 
     // Get header timestamp (time since boot in 0.1ms units, precise)
-    let boot_time_offset = msg
-        .header
-        .timestamp
-        .map(dlt_header_time_to_timedelta)?;
+    let boot_time_offset = msg.header.timestamp.map(dlt_header_time_to_timedelta)?;
 
     // Boot time = storage_time - time_since_boot
     storage_time.checked_sub_signed(boot_time_offset)
@@ -194,6 +191,7 @@ fn convert_dlt_message(
             .filter_map(|arg| match &arg.value {
                 dlt_core::dlt::Value::StringVal(s) => Some(s.clone()),
                 dlt_core::dlt::Value::U32(v) => Some(format!("{v}")),
+                dlt_core::dlt::Value::U64(v) => Some(format!("{v}")),
                 _ => {
                     log::error!(
                         "Unsupported DLT verbose argument {:?} for line {}",
