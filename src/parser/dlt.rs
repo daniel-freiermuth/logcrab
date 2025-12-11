@@ -1,9 +1,14 @@
+use crate::core::log_file::ProgressCallback;
+
 use super::line::LogLine;
 use chrono::{DateTime, Local, TimeDelta, TimeZone};
 use dlt_core::dlt::{DltTimeStamp, Message};
 use dlt_core::read::{read_message, DltMessageReader};
+use std::cell::Cell;
 use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::Path;
+use std::rc::Rc;
 
 /// Format a time difference with 4 significant digits and appropriate unit
 fn format_time_diff(diff: TimeDelta) -> String {
@@ -91,9 +96,44 @@ fn dlt_header_time_to_timedelta(header_time: u32) -> TimeDelta {
     TimeDelta::microseconds(header_time as i64 * 100)
 }
 
-/// Parse a DLT binary file and return log lines
-pub fn parse_dlt_file<P: AsRef<Path>>(path: P) -> Result<Vec<LogLine>, String> {
+/// A reader wrapper that tracks bytes read for progress reporting
+struct ProgressReader<R> {
+    inner: R,
+    bytes_read: Rc<Cell<u64>>,
+}
+
+impl<R: Read> ProgressReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            bytes_read: Rc::new(Cell::new(0)),
+        }
+    }
+
+    fn bytes_read_counter(&self) -> Rc<Cell<u64>> {
+        Rc::clone(&self.bytes_read)
+    }
+}
+
+impl<R: Read> Read for ProgressReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.bytes_read.set(self.bytes_read.get() + n as u64);
+        Ok(n)
+    }
+}
+
+/// Parse a DLT binary file with optional progress reporting
+pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
+    path: P,
+    progress_callback: ProgressCallback,
+) -> Result<Vec<LogLine>, String> {
     let path = path.as_ref();
+
+    // Get file size for progress calculation
+    let file_size = std::fs::metadata(path)
+        .map(|m| m.len())
+        .map_err(|e| format!("{e:?}"))?;
 
     let boot_time = calc_boot_time_from_file(path)?;
 
@@ -101,15 +141,30 @@ pub fn parse_dlt_file<P: AsRef<Path>>(path: P) -> Result<Vec<LogLine>, String> {
 
     // Second pass: parse all messages with the calculated offset
     let file = File::open(path).map_err(|e| format!("Failed to open DLT file: {e}"))?;
-    let mut reader = DltMessageReader::new(file, true);
+    let progress_reader = ProgressReader::new(BufReader::new(file));
+    let bytes_read_counter = progress_reader.bytes_read_counter();
+    let mut reader = DltMessageReader::new(progress_reader, true);
     let mut lines = Vec::new();
     let mut line_number = 1;
+    let mut last_progress_update = 0u64;
+
     loop {
         match read_message(&mut reader, None) {
             Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
                 if let Some(log_line) = convert_dlt_message(&msg, line_number, boot_time) {
                     lines.push(log_line);
                     line_number += 1;
+
+                    // Report progress every ~1MB or 500 messages
+                    let bytes_read = bytes_read_counter.get();
+                    if bytes_read - last_progress_update > 1_000_000 || line_number % 500 == 0 {
+                        last_progress_update = bytes_read;
+                        let progress = bytes_read as f32 / file_size as f32;
+                        progress_callback(
+                            progress,
+                            &format!("Parsing DLT... ({} messages)", lines.len()),
+                        );
+                    }
                 } else {
                     log::warn!("Skipped DLT message without valid timestamp");
                 }

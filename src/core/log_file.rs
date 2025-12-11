@@ -36,6 +36,17 @@ pub enum LoadMessage {
     ScoringComplete(Vec<f64>),
 }
 
+/// Progress callback type for DLT parsing
+pub type ProgressCallback = Box<dyn Fn(f32, &str) + Send>;
+
+/// Create a progress callback that sends updates through the channel and requests repaint
+fn make_progress_callback(tx: Sender<LoadMessage>, ctx: egui::Context) -> ProgressCallback {
+    Box::new(move |progress, message| {
+        let _ = tx.send(LoadMessage::Progress(progress, message.to_string()));
+        ctx.request_repaint();
+    })
+}
+
 /// Handles asynchronous loading and processing of log files
 pub struct LogFileLoader;
 
@@ -59,12 +70,14 @@ impl LogFileLoader {
     ) -> Arc<Vec<LogLine>> {
         log::info!("Detected DLT binary file, using dlt-core parser");
         let _ = tx.send(LoadMessage::Progress(
-            0.5,
+            0.0,
             format!("Parsing DLT binary file {}...", path.display()),
         ));
         ctx.request_repaint();
 
-        match dlt::parse_dlt_file(&path) {
+        let progress_callback = make_progress_callback(tx.clone(), ctx.clone());
+
+        match dlt::parse_dlt_file_with_progress(&path, progress_callback) {
             Ok(lines) => {
                 log::info!("Successfully parsed {} DLT messages", lines.len());
                 let lines_arc = Arc::new(lines);
@@ -128,6 +141,8 @@ impl LogFileLoader {
         start_time: std::time::Instant,
         file_size: u64,
     ) -> Arc<Vec<LogLine>> {
+        let progress_callback = make_progress_callback(tx.clone(), ctx.clone());
+
         let file = File::open(&path);
         if let Err(e) = file {
             log::error!("Cannot open file: {e}");
@@ -193,11 +208,10 @@ impl LogFileLoader {
 
             if file_line_number % 500 == 0 {
                 let progress = (bytes_read as f32 / file_size as f32).min(1.0);
-                let _ = tx.send(LoadMessage::Progress(
+                progress_callback(
                     progress,
-                    format!("Loading {}... ({} lines)", path.display(), lines.len()),
-                ));
-                ctx.request_repaint();
+                    &format!("Loading {}... ({} lines)", path.display(), lines.len()),
+                );
             }
 
             if line_buffer.trim().is_empty() {
