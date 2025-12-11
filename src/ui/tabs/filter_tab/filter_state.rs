@@ -19,6 +19,7 @@
 use crate::parser::line::LogLine;
 use egui::Color32;
 use fancy_regex::{Error, Regex};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -105,7 +106,7 @@ impl GlobalFilterWorker {
                 puffin::profile_scope!("process_single_filter", format!("filter_{}", filter_id));
                 log::trace!("Processing filter request (search: '{:?}')", request.regex);
 
-                // Filter lines
+                // Filter lines in parallel
                 let filtered_indices = {
                     #[cfg(feature = "cpu-profiling")]
                     puffin::profile_scope!(
@@ -113,21 +114,25 @@ impl GlobalFilterWorker {
                         format!("{} lines", request.lines.len())
                     );
 
-                    let mut indices = Vec::with_capacity(request.lines.len() / 10);
-                    for (idx, line) in request.lines.iter().enumerate() {
-                        // Check search filter
-                        if let Some(ref regex) = request.regex {
-                            // fancy-regex returns Result<bool>, handle it
-                            if regex.is_match(&line.message).unwrap_or(false)
-                                || regex.is_match(&line.raw).unwrap_or(false)
-                            {
-                                indices.push(idx);
-                            }
-                        } else {
-                            indices.push(idx);
-                        }
+                    if let Some(ref regex) = request.regex {
+                        // Parallel filtering with rayon
+                        request.lines
+                            .par_iter()
+                            .enumerate()
+                            .filter_map(|(idx, line)| {
+                                if regex.is_match(&line.message).unwrap_or(false)
+                                    || regex.is_match(&line.raw).unwrap_or(false)
+                                {
+                                    Some(idx)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        // No filter: all indices match
+                        (0..request.lines.len()).collect()
                     }
-                    indices
                 };
 
                 log::trace!(
