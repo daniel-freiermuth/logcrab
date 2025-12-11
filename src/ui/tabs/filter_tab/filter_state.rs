@@ -28,8 +28,7 @@ use std::sync::{Arc, OnceLock};
 #[derive(Clone)]
 struct FilterRequest {
     filter_id: usize, // Unique identifier for each filter instance
-    search_text: String,
-    case_insensitive: bool,
+    regex: Option<Regex>,
     lines: Arc<Vec<LogLine>>,        // Shared read-only access to log lines
     result_tx: Sender<FilterResult>, // Each filter has its own result channel
 }
@@ -105,37 +104,9 @@ impl GlobalFilterWorker {
                 #[cfg(feature = "cpu-profiling")]
                 puffin::profile_scope!("process_single_filter", format!("filter_{}", filter_id));
                 log::trace!(
-                    "Processing filter request (search: '{}')",
-                    request.search_text
+                    "Processing filter request (search: '{:?}')",
+                    request.regex
                 );
-
-                // Build regex for search
-                let search_regex = {
-                    #[cfg(feature = "cpu-profiling")]
-                    puffin::profile_scope!("build_regex");
-
-                    if request.search_text.is_empty() {
-                        None
-                    } else {
-                        // Use fancy-regex with (?i) inline flag for case-insensitive matching
-                        let pattern = if request.case_insensitive {
-                            format!("(?i){}", request.search_text)
-                        } else {
-                            request.search_text.clone()
-                        };
-                        match Regex::new(&pattern) {
-                            Ok(r) => Some(r),
-                            Err(e) => {
-                                log::warn!(
-                                    "Failed to build regex for '{}': {}",
-                                    request.search_text,
-                                    e
-                                );
-                                None
-                            }
-                        }
-                    }
-                };
 
                 // Filter lines
                 let filtered_indices = {
@@ -148,7 +119,7 @@ impl GlobalFilterWorker {
                     let mut indices = Vec::with_capacity(request.lines.len() / 10);
                     for (idx, line) in request.lines.iter().enumerate() {
                         // Check search filter
-                        if let Some(ref regex) = search_regex {
+                        if let Some(ref regex) = request.regex {
                             // fancy-regex returns Result<bool>, handle it
                             if regex.is_match(&line.message).unwrap_or(false)
                                 || regex.is_match(&line.raw).unwrap_or(false)
@@ -195,7 +166,7 @@ pub struct FilterState {
     filter_id: usize, // Unique identifier for this filter instance
     pub search_text: String,
     pub search_regex: Result<Regex, Error>,
-    pub case_insensitive: bool,
+    pub case_sensitive: bool,
     pub filtered_indices: Vec<usize>,
     pub last_rendered_selection: usize,
     pub name: String,
@@ -222,7 +193,7 @@ impl FilterState {
             filter_id,
             search_text: initial_filter,
             search_regex: initial_regex,
-            case_insensitive: false,
+            case_sensitive: false,
             filtered_indices: Vec::new(),
             last_rendered_selection: 0,
             name,
@@ -236,7 +207,7 @@ impl FilterState {
     /// Update the search regex based on current search text
     pub fn update_search_regex(&mut self) {
         // Use fancy-regex with (?i) inline flag for case-insensitive matching
-        let pattern = if self.case_insensitive {
+        let pattern = if !self.case_sensitive {
             format!("(?i){}", self.search_text)
         } else {
             self.search_text.clone()
@@ -262,8 +233,7 @@ impl FilterState {
 
         let request = FilterRequest {
             filter_id: self.filter_id,
-            search_text: self.search_text.clone(),
-            case_insensitive: self.case_insensitive,
+            regex: self.search_regex.as_ref().ok().cloned(),
             lines,
             result_tx: self.filter_result_tx.clone(),
         };

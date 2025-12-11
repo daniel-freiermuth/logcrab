@@ -105,10 +105,10 @@ impl FilterView {
                 }
                 FilterInternalEvent::FavoriteSelected {
                     search_text,
-                    case_insensitive,
+                    case_sensitive,
                 } => {
                     self.state.search_text = search_text;
-                    self.state.case_insensitive = case_insensitive;
+                    self.state.case_sensitive = case_sensitive;
                     self.state.request_filter_update(Arc::clone(lines));
                     events.push(FilterViewEvent::FilterModified);
                 }
@@ -219,11 +219,11 @@ impl FilterView {
                 }
                 FilterViewEvent::FavoriteToggled => {
                     let search_text = self.state.search_text.clone();
-                    let case_insensitive = self.state.case_insensitive;
+                    let case_sensitive = self.state.case_sensitive;
 
                     // Check if this filter is already a favorite
                     if let Some(pos) = global_config.favorite_filters.iter().position(|f| {
-                        f.search_text == search_text && f.case_insensitive == case_insensitive
+                        f.search_text == search_text && f.case_sensitive == case_sensitive
                     }) {
                         // Remove from favorites
                         global_config.favorite_filters.remove(pos);
@@ -234,7 +234,7 @@ impl FilterView {
                             .favorite_filters
                             .push(crate::config::FavoriteFilter::new(
                                 search_text,
-                                case_insensitive,
+                                case_sensitive,
                             ));
                         log::info!("Added favorite: '{}'", self.state.search_text);
                     }

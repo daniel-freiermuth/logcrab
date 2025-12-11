@@ -30,7 +30,7 @@ pub enum FilterInternalEvent {
     CaseInsensitiveToggled,
     FavoriteSelected {
         search_text: String,
-        case_insensitive: bool,
+        case_sensitive: bool,
     },
     FilterNameEditRequested,
     FavoriteToggled,
@@ -219,7 +219,7 @@ impl FilterBar {
                     if ui.selectable_label(false, fav.display_name()).clicked() {
                         events.push(FilterInternalEvent::FavoriteSelected {
                             search_text: fav.search_text.clone(),
-                            case_insensitive: fav.case_insensitive,
+                            case_sensitive: fav.case_sensitive,
                         });
                     }
                 }
@@ -344,8 +344,10 @@ impl FilterBar {
         filter: &mut FilterState,
         events: &mut Vec<FilterInternalEvent>,
     ) {
-        let checkbox_response = ui.checkbox(&mut filter.case_insensitive, "Aa");
-        if checkbox_response.changed() {
+        let toggle_response = ui
+            .toggle_value(&mut filter.case_sensitive, "Aa")
+            .on_hover_text("Toggle case insensitive matching");
+        if toggle_response.changed() {
             events.push(FilterInternalEvent::CaseInsensitiveToggled);
         }
     }

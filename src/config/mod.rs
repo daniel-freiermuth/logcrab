@@ -56,18 +56,18 @@ impl Default for GlobalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteFilter {
     pub search_text: String,
-    pub case_insensitive: bool,
+    pub case_sensitive: bool,
     #[serde(default)]
     pub name: String,
 }
 
 impl FavoriteFilter {
     /// Create a new favorite with the given parameters, using `search_text` as the default name
-    pub fn new(search_text: String, case_insensitive: bool) -> Self {
+    pub fn new(search_text: String, case_sensitive: bool) -> Self {
         let name = search_text.clone();
         Self {
             search_text,
-            case_insensitive,
+            case_sensitive,
             name,
         }
     }
@@ -82,7 +82,7 @@ impl FavoriteFilter {
     }
 
     pub fn matches(&self, filter: &FilterState) -> bool {
-        self.search_text == filter.search_text && self.case_insensitive == filter.case_insensitive
+        self.search_text == filter.search_text && self.case_sensitive == filter.case_sensitive
     }
 }
 

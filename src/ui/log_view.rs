@@ -274,7 +274,7 @@ fn default_filter_color() -> Color32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedFilter {
     search_text: String,
-    case_insensitive: bool,
+    case_sensitive: bool,
     name: String,
     #[serde(
         default = "default_filter_color",
@@ -288,7 +288,7 @@ impl From<&SavedFilter> for FilterState {
     fn from(saved_filter: &SavedFilter) -> FilterState {
         let mut filter = FilterState::new(saved_filter.name.clone(), saved_filter.color);
         filter.search_text.clone_from(&saved_filter.search_text);
-        filter.case_insensitive = saved_filter.case_insensitive;
+        filter.case_sensitive = saved_filter.case_sensitive;
         filter.globally_visible = true;
         filter.update_search_regex();
         filter
@@ -299,7 +299,7 @@ impl From<&FilterState> for SavedFilter {
     fn from(filter: &FilterState) -> SavedFilter {
         SavedFilter {
             search_text: filter.search_text.clone(),
-            case_insensitive: filter.case_insensitive,
+            case_sensitive: filter.case_sensitive,
             name: filter.name.clone(),
             color: filter.color,
         }
