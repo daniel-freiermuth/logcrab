@@ -71,6 +71,7 @@ pub enum SourceStatus {
     Loading { progress: f32 },
     Done,
     Streaming,                       // Live stdin
+    Tailing,                         // File being watched for growth (-f/--follow)
     Error(String),
 }
 ```
@@ -229,29 +230,256 @@ impl ScrollState {
 | Memory model | RAM-only for now |
 | Filters | Regex only, stateless, always incremental-capable |
 | Source distinction in UI | Column showing source (color-coded) |
-| Stdin activation | CLI flag |
+| Stdin activation | CLI flag `--stdin` |
+| File tailing | CLI flag `-f`/`--follow` before filename |
 
 ---
 
-## Open Questions (Deferred)
+## Tailing / Growing Files
 
-### Session Persistence
+Support for files that grow over time (like `tail -f`).
 
-Current: Single file → `filename.crab` sidecar
+### Activation
 
-Problem: With multiple sources, where do bookmarks/filters go?
+```bash
+# Follow a single file
+logcrab -f app.log
+logcrab --follow app.log
 
-Options discussed:
-- **Option A**: Separate session file concept
-- **Option B**: Always session-based
-- **Option C**: Implicit session, explicit "Save Session As..."
-- **Option D**: First file wins (`first.log.crab` stores everything)
+# Follow multiple files
+logcrab -f app.log -f system.log
 
-**Decision**: Deferred. Need to think through UX more carefully.
+# Mix: follow one, static other
+logcrab -f app.log system.log.old
+```
+
+The `-f`/`--follow` flag applies to the filename immediately following it.
+
+### Implementation
+
+```rust
+struct TailingSource {
+    path: PathBuf,
+    file: File,
+    last_position: u64,        // Where we stopped reading
+    last_size: u64,            // Last known file size
+    source_id: u16,
+    last_line_number: u32,     // For continuing LineId sequence
+}
+
+impl TailingSource {
+    fn check_for_new_lines(&mut self) -> Vec<LogLine> {
+        let metadata = self.path.metadata().ok()?;
+        let current_size = metadata.len();
+        
+        if current_size <= self.last_size {
+            return vec![];  // No growth (or file truncated)
+        }
+        
+        // Seek to where we left off
+        self.file.seek(SeekFrom::Start(self.last_position));
+        
+        // Read new content
+        let mut new_content = String::new();
+        self.file.read_to_string(&mut new_content);
+        
+        // Parse new lines (continuing line number sequence)
+        let new_lines = parse_lines(
+            &new_content, 
+            self.source_id, 
+            self.last_line_number
+        );
+        
+        self.last_line_number += new_lines.len() as u32;
+        self.last_position = current_size;
+        self.last_size = current_size;
+        
+        new_lines
+    }
+}
+```
+
+### Polling
+
+- Check for file growth every 500ms (configurable later)
+- Simple and cross-platform (no inotify/FSEvents dependency)
+- Can optimize to file system notifications later if needed
+
+### Truncation Detection
+
+If `new_size < last_size`, the file was truncated (log rotation):
+- Warn user: "File was truncated, reloading..."
+- Option: Reload from start, or just continue from new content
+
+### Integration
+
+```rust
+// In background thread or main loop
+fn poll_tailing_sources(store: &mut LogStore, tailing: &mut [TailingSource]) {
+    for source in tailing {
+        let new_lines = source.check_for_new_lines();
+        if !new_lines.is_empty() {
+            store.append_lines(source.source_id, new_lines);
+            // version bumped → views will refresh
+        }
+    }
+}
+```
+
+### Persistence
+
+- Tailed files have `.crab` files like normal files
+- Saved on close (same as static files)
+- On reopen without `-f`: loads as static file at that point in time
+
+---
+
+## Session Persistence — Spread Out Model
+
+### Core Principle
+
+Every log file has its own `.crab` sidecar file. No separate "session file" concept.
+
+```
+app.log       → app.log.crab       (bookmarks for app.log + filters)
+system.log    → system.log.crab    (bookmarks for system.log + filters)
+```
+
+### What Goes Where
+
+| Data | Storage |
+|------|---------|
+| Bookmarks | In the `.crab` file of the source they belong to (determined by `LineId.source_id`) |
+| Filters | **Duplicated** to all `.crab` files (they're small, and this enables portability) |
+
+### .crab File Format
+
+```rust
+struct CrabFile {
+    version: u32,
+    bookmarks: Vec<Bookmark>,        // Only bookmarks for this file's lines
+    filters: Vec<SavedFilter>,       // All filters (duplicated across files)
+}
+
+struct Bookmark {
+    line_id: LineId,                 // Stable identifier
+    name: String,
+    // ... other bookmark metadata
+}
+```
+
+### On Save (Multi-File Session)
+
+```rust
+fn save_session(store: &LogStore, bookmarks: &[Bookmark], filters: &[SavedFilter]) {
+    for source in &store.sources {
+        // Skip stdin (no persistence)
+        let Some(path) = &source.info.path else { continue };
+        
+        let crab_path = path.with_extension("crab");
+        let crab = CrabFile {
+            version: 1,
+            // Only bookmarks belonging to this source
+            bookmarks: bookmarks
+                .iter()
+                .filter(|b| b.line_id.source_id == source.info.id)
+                .cloned()
+                .collect(),
+            // All filters (duplicated)
+            filters: filters.clone(),
+        };
+        
+        save(&crab_path, &crab);
+    }
+}
+```
+
+### On Load (Multi-File Session)
+
+```rust
+fn load_session(sources: &[SourceInfo]) -> (Vec<Bookmark>, Vec<SavedFilter>) {
+    let mut all_bookmarks = vec![];
+    let mut all_filters = vec![];
+    let mut seen_filters: HashSet<FilterKey> = HashSet::new();
+    
+    for source in sources {
+        let Some(path) = &source.path else { continue };
+        let crab_path = path.with_extension("crab");
+        
+        let Ok(crab) = load(&crab_path) else { continue };
+        
+        // Collect all bookmarks
+        all_bookmarks.extend(crab.bookmarks);
+        
+        // Merge filters (dedupe by content)
+        for filter in crab.filters {
+            let key = (&filter.search_text, filter.case_sensitive);
+            if !seen_filters.contains(&key) {
+                seen_filters.insert(key);
+                all_filters.push(filter);
+            }
+        }
+    }
+    
+    (all_bookmarks, all_filters)
+}
+```
+
+### Filter Merge Behavior
+
+Filters are merged from all `.crab` files, deduplicated by content:
+
+```rust
+fn filter_key(f: &SavedFilter) -> impl Hash + Eq {
+    (&f.search_text, f.case_sensitive)
+}
+```
+
+**Divergence scenario**:
+```
+Day 1: Open app.log + system.log, create filters [A, B, C], close
+       → app.log.crab has [A, B, C]
+       → system.log.crab has [A, B, C]
+
+Day 2: Open just app.log, add filter D, close
+       → app.log.crab has [A, B, C, D]
+       → system.log.crab still has [A, B, C]
+
+Day 3: Open app.log + system.log
+       → Load & merge: [A, B, C, D]
+       → On close: both .crab files now have [A, B, C, D]
+```
+
+Filters naturally propagate and converge over time. No sync logic needed.
+
+### Handover to Colleagues
+
+**Simple rule**: Keep `.crab` files next to log files. Share the whole folder.
+
+```
+# Zip and send:
+logs/
+  app.log
+  app.log.crab
+  system.log
+  system.log.crab
+
+# Colleague unzips, opens the log files → everything works
+```
+
+Each file is self-contained. Colleague can open just one file and still get the filters.
+
+### Stdin Handling
+
+- Stdin has no path → no `.crab` file
+- Bookmarks on stdin lines are **ephemeral** (lost on close)
+- Filters are still saved to other sources' `.crab` files
+- Warning to user: "Bookmarks on stdin will not be saved"
 
 ### Bookmarks
 
-- Need to change from `line_index: usize` to `LineId`
+- Changed from `line_index: usize` to `LineId`
+- Always saved to the `.crab` file matching `LineId.source_id`
 - Stdin bookmarks are ephemeral (can't survive session reload)
 
 ---
