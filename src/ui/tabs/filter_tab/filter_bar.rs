@@ -88,6 +88,8 @@ impl FilterBar {
 
         ui.horizontal(|ui| {
             self.render_edit_button(ui, &mut events);
+            self.render_globally_visible_toggle(ui, filter);
+            self.render_histogram_toggle(ui, filter);
             self.render_color_picker(ui, filter);
             self.render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, filter_uuid, global_config, &mut events);
@@ -350,6 +352,16 @@ impl FilterBar {
         if toggle_response.changed() {
             events.push(FilterInternalEvent::CaseInsensitiveToggled);
         }
+    }
+
+    fn render_globally_visible_toggle(&self, ui: &mut Ui, filter: &mut FilterState) {
+        ui.toggle_value(&mut filter.globally_visible, "👁")
+            .on_hover_text("Show highlights from this filter in all tabs");
+    }
+
+    fn render_histogram_toggle(&self, ui: &mut Ui, filter: &mut FilterState) {
+        ui.toggle_value(&mut filter.show_in_histogram, "📊")
+            .on_hover_text("Show filter matches as vertical lines in histogram");
     }
 
     fn render_validation_status(&self, ui: &mut Ui, filter: &FilterState) {

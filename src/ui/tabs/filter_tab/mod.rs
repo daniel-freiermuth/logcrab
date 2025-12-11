@@ -22,7 +22,7 @@ pub mod histogram;
 pub mod log_table;
 
 pub use filter_bar::{FilterBar, FilterInternalEvent};
-pub use histogram::Histogram;
+pub use histogram::{Histogram, HistogramMarker};
 pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
@@ -79,6 +79,7 @@ impl FilterView {
         global_config: &mut GlobalConfig,
         bookmarked_lines: &HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
+        histogram_markers: &[HistogramMarker],
     ) -> Vec<FilterViewEvent> {
         let selected_line_index = log_view_state.selected_line_index;
         let mut events = Vec::new();
@@ -142,6 +143,7 @@ impl FilterView {
             selected_line_index,
             log_view_state.scores.as_deref(),
             global_config.hide_epoch_in_histogram,
+            histogram_markers,
         ) {
             events.push(FilterViewEvent::LineSelected {
                 line_index: hist_event.line_index,
@@ -185,6 +187,7 @@ impl FilterView {
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
+        histogram_markers: &[HistogramMarker],
     ) {
         // Convert bookmarks HashMap to simple HashMap<usize, String> for the component
         let bookmarked_lines: HashMap<usize, String> = data_state
@@ -200,6 +203,7 @@ impl FilterView {
             global_config,
             &bookmarked_lines,
             all_filter_highlights,
+            histogram_markers,
         );
 
         // Handle events
@@ -355,6 +359,7 @@ impl LogCrabTab for FilterView {
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
+        histogram_markers: &[HistogramMarker],
     ) {
         // Create a new highlights list with this tab's filter at the front (for priority)
         // This ensures the current tab's filter is always visible and takes precedence
@@ -382,7 +387,13 @@ impl LogCrabTab for FilterView {
             }
         }
 
-        self.render_filter(ui, data_state, global_config, &highlights_with_current);
+        self.render_filter(
+            ui,
+            data_state,
+            global_config,
+            &highlights_with_current,
+            histogram_markers,
+        );
     }
 
     fn process_events(
@@ -451,6 +462,17 @@ impl LogCrabTab for FilterView {
                 regex: regex.clone(),
                 color: self.state.color,
             })
+    }
+
+    fn get_histogram_marker(&self) -> Option<HistogramMarker> {
+        if !self.state.show_in_histogram || self.state.filtered_indices.is_empty() {
+            return None;
+        }
+        Some(HistogramMarker {
+            name: self.state.name.clone(),
+            indices: self.state.filtered_indices.clone(),
+            color: self.state.color,
+        })
     }
 
     fn context_menu(&mut self, ui: &mut egui::Ui) {

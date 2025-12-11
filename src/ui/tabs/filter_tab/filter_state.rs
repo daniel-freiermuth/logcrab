@@ -103,10 +103,7 @@ impl GlobalFilterWorker {
 
                 #[cfg(feature = "cpu-profiling")]
                 puffin::profile_scope!("process_single_filter", format!("filter_{}", filter_id));
-                log::trace!(
-                    "Processing filter request (search: '{:?}')",
-                    request.regex
-                );
+                log::trace!("Processing filter request (search: '{:?}')", request.regex);
 
                 // Filter lines
                 let filtered_indices = {
@@ -172,6 +169,7 @@ pub struct FilterState {
     pub name: String,
     pub color: Color32,
     pub globally_visible: bool, // Whether this filter's highlights should be shown in all tabs
+    pub show_in_histogram: bool, // Whether to show vertical markers in the histogram
 
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
@@ -199,6 +197,7 @@ impl FilterState {
             name,
             color,
             globally_visible: true,
+            show_in_histogram: false,
             filter_result_rx,
             filter_result_tx: result_tx,
         }

@@ -243,6 +243,7 @@ impl LogCrabTab for BookmarksView {
         data_state: &mut LogViewState,
         _global_config: &mut crate::config::GlobalConfig,
         all_filter_highlights: &[crate::ui::log_view::FilterHighlight],
+        _histogram_markers: &[crate::ui::tabs::filter_tab::HistogramMarker],
     ) {
         self.render_bookmarks(ui, data_state, all_filter_highlights);
     }
@@ -298,6 +299,10 @@ impl LogCrabTab for BookmarksView {
     }
 
     fn get_filter_highlight(&self) -> Option<crate::ui::log_view::FilterHighlight> {
+        None
+    }
+
+    fn get_histogram_marker(&self) -> Option<crate::ui::tabs::filter_tab::HistogramMarker> {
         None
     }
 }

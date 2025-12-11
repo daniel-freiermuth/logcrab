@@ -28,6 +28,7 @@ use egui_dock::TabViewer;
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
 use crate::ui::log_view::{FilterHighlight, LogViewState, SavedFilter};
+use crate::ui::tabs::filter_tab::HistogramMarker;
 
 pub trait LogCrabTab {
     fn title(&mut self) -> egui::WidgetText;
@@ -37,11 +38,13 @@ pub trait LogCrabTab {
         data_state: &mut LogViewState,
         global_config: &mut GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
+        histogram_markers: &[HistogramMarker],
     );
     fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogViewState)
         -> bool;
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
     fn get_filter_highlight(&self) -> Option<FilterHighlight>;
+    fn get_histogram_marker(&self) -> Option<HistogramMarker>;
     fn context_menu(&mut self, _ui: &mut egui::Ui) {
         // Default implementation does nothing
     }
@@ -60,6 +63,7 @@ pub struct LogCrabTabViewer<'a> {
     pub global_config: &'a mut GlobalConfig,
     pub pending_tab_add: &'a mut Option<PendingTabAdd>,
     pub all_filter_highlights: &'a [FilterHighlight],
+    pub histogram_markers: &'a [HistogramMarker],
 }
 
 impl TabViewer for LogCrabTabViewer<'_> {
@@ -75,6 +79,7 @@ impl TabViewer for LogCrabTabViewer<'_> {
             self.log_view,
             self.global_config,
             self.all_filter_highlights,
+            self.histogram_markers,
         );
     }
 

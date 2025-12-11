@@ -282,6 +282,14 @@ pub struct SavedFilter {
         deserialize_with = "deserialize_color"
     )]
     color: Color32,
+    #[serde(default = "default_globally_visible")]
+    globally_visible: bool,
+    #[serde(default)]
+    show_in_histogram: bool,
+}
+
+fn default_globally_visible() -> bool {
+    true
 }
 
 impl From<&SavedFilter> for FilterState {
@@ -289,7 +297,8 @@ impl From<&SavedFilter> for FilterState {
         let mut filter = FilterState::new(saved_filter.name.clone(), saved_filter.color);
         filter.search_text.clone_from(&saved_filter.search_text);
         filter.case_sensitive = saved_filter.case_sensitive;
-        filter.globally_visible = true;
+        filter.globally_visible = saved_filter.globally_visible;
+        filter.show_in_histogram = saved_filter.show_in_histogram;
         filter.update_search_regex();
         filter
     }
@@ -302,6 +311,8 @@ impl From<&FilterState> for SavedFilter {
             case_sensitive: filter.case_sensitive,
             name: filter.name.clone(),
             color: filter.color,
+            globally_visible: filter.globally_visible,
+            show_in_histogram: filter.show_in_histogram,
         }
     }
 }
@@ -542,6 +553,13 @@ impl LogView {
             .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
             .collect();
 
+        // Collect histogram markers from all tabs
+        let histogram_markers: Vec<_> = self
+            .dock_state
+            .iter_all_tabs()
+            .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker())
+            .collect();
+
         // Use dock area for VS Code-like draggable/tiling layout
         DockArea::new(&mut self.dock_state)
             .show_add_buttons(true)
@@ -553,6 +571,7 @@ impl LogView {
                     global_config,
                     pending_tab_add: &mut self.pending_tab_add,
                     all_filter_highlights: &all_filter_highlights,
+                    histogram_markers: &histogram_markers,
                 },
             );
         if self.state.modified

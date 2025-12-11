@@ -27,6 +27,14 @@ const NUM_BUCKETS: usize = 100;
 /// Number of vertical buckets for anomaly score distribution
 const SCORE_BUCKETS: usize = 20;
 
+/// Marker data for showing filter matches in histogram
+#[derive(Debug, Clone)]
+pub struct HistogramMarker {
+    pub name: String,
+    pub indices: Vec<usize>,
+    pub color: Color32,
+}
+
 /// Distribution of anomaly scores within a histogram bucket
 #[derive(Debug, Clone, Copy, Default)]
 struct AnomalyDistribution {
@@ -63,6 +71,7 @@ impl Histogram {
         selected_line_index: usize,
         anomaly_scores: Option<&[f64]>,
         hide_epoch: bool,
+        markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
         if lines.is_empty() || filtered_indices.is_empty() {
             if lines.is_empty() {
@@ -100,6 +109,7 @@ impl Histogram {
             effective_filtered_indices,
             selected_line_index,
             anomaly_scores,
+            markers,
         )
     }
 
@@ -109,6 +119,7 @@ impl Histogram {
         filtered_indices: &[usize],
         selected_line_index: usize,
         anomaly_scores: Option<&[f64]>,
+        markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
         let (start_time, end_time) = match Self::calculate_time_range(lines, filtered_indices) {
             Some(range) => range,
@@ -148,6 +159,7 @@ impl Histogram {
             filtered_indices,
             start_time,
             bucket_size,
+            markers,
         );
 
         Self::render_timeline_labels(ui, start_time, end_time, lines, selected_line_index);
@@ -234,9 +246,13 @@ impl Histogram {
         filtered_indices: &[usize],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
+        markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
         let desired_size = egui::vec2(ui.available_width(), 60.0);
-        let (response, painter) = ui.allocate_painter(desired_size, egui::Sense::click());
+        let (response, painter) = ui.allocate_painter(
+            desired_size,
+            egui::Sense::hover().union(egui::Sense::click()),
+        );
         let rect = response.rect;
 
         painter.rect_filled(rect, 0.0, Color32::from_gray(20));
@@ -251,7 +267,11 @@ impl Histogram {
             max_count,
             bar_width,
         );
+        Self::draw_markers(&painter, rect, lines, start_time, bucket_size, markers);
         Self::draw_selected_indicator(&painter, rect, selected_bucket, bar_width);
+
+        // Handle hover tooltip for markers
+        Self::handle_marker_hover(ui, &response, rect, lines, start_time, bucket_size, markers);
 
         Self::handle_click(
             &response,
@@ -339,6 +359,90 @@ impl Histogram {
             painter.rect_filled(segment_rect, 0.0, color);
 
             current_y = y;
+        }
+    }
+
+    fn draw_markers(
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        lines: &[LogLine],
+        start_time: chrono::DateTime<chrono::Local>,
+        bucket_size: f64,
+        markers: &[HistogramMarker],
+    ) {
+        let total_width = rect.width();
+        let total_time = NUM_BUCKETS as f64 * bucket_size;
+
+        for marker in markers {
+            for &line_idx in &marker.indices {
+                if line_idx >= lines.len() {
+                    continue;
+                }
+                let ts = lines[line_idx].timestamp;
+                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+
+                let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
+
+                painter.vline(x, rect.y_range(), (1.0, marker.color));
+            }
+        }
+    }
+
+    fn handle_marker_hover(
+        ui: &mut Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        lines: &[LogLine],
+        start_time: chrono::DateTime<chrono::Local>,
+        bucket_size: f64,
+        markers: &[HistogramMarker],
+    ) {
+        let Some(hover_pos) = response.hover_pos() else {
+            return;
+        };
+
+        let total_width = rect.width();
+        let total_time = NUM_BUCKETS as f64 * bucket_size;
+        let hover_threshold = 3.0; // pixels
+
+        struct MarkerMatch<'a> {
+            marker: &'a HistogramMarker,
+            distance: f32,
+            x_pos: f32,
+        }
+
+        let mut closest_match: Option<MarkerMatch> = None;
+
+        for marker in markers {
+            for &line_idx in &marker.indices {
+                if line_idx >= lines.len() {
+                    continue;
+                }
+                let ts = lines[line_idx].timestamp;
+                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+                let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
+
+                let distance = (hover_pos.x - x).abs();
+                if distance < hover_threshold
+                    && closest_match.as_ref().map_or(true, |m| distance < m.distance)
+                {
+                    closest_match = Some(MarkerMatch { marker, distance, x_pos: x });
+                }
+            }
+        }
+
+        if let Some(closest) = closest_match {
+            // Show tooltip near the marker line (just above the histogram)
+            let tooltip_pos = egui::pos2(closest.x_pos, rect.min.y - 5.0);
+            egui::Tooltip::always_open(
+                ui.ctx().clone(),
+                response.layer_id,
+                egui::Id::new("histogram_marker_tooltip"),
+                tooltip_pos,
+            )
+            .show(|ui| {
+                ui.colored_label(closest.marker.color, &closest.marker.name);
+            });
         }
     }
 
