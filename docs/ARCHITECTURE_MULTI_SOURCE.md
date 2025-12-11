@@ -56,7 +56,22 @@ pub struct LogLine {
 ```rust
 pub struct SourceData {
     pub info: SourceInfo,
-    pub lines: Vec<LogLine>,         // Sorted by timestamp within source
+    pub lines: Vec<LogLine>,         // Kept sorted by timestamp within source
+}
+
+impl SourceData {
+    /// Add a line, maintaining sorted order.
+    /// Fast path for monotonic timestamps (common case).
+    fn add_line(&mut self, line: LogLine) {
+        // Fast path: timestamp >= last (monotonic, common case)
+        if self.lines.last().map_or(true, |last| line.id.timestamp >= last.id.timestamp) {
+            self.lines.push(line);
+        } else {
+            // Slow path: out of order, insert in sorted position
+            let pos = self.lines.partition_point(|l| l.id < line.id);
+            self.lines.insert(pos, line);
+        }
+    }
 }
 
 pub struct SourceInfo {
@@ -75,6 +90,8 @@ pub enum SourceStatus {
     Error(String),
 }
 ```
+
+**Sort-on-insert principle**: Each source maintains its own sorted order. This means `iter_merged()` only needs to interleave (k-way merge), not sort — pure O(n) with O(k) state.
 
 ### LogStore — Single Source of Truth
 
@@ -206,15 +223,18 @@ impl ScrollState {
 
 ## Complexity Analysis
 
-| Operation | Complexity |
-|-----------|------------|
-| Get line by `LineId` | O(1) |
-| Get line by position in view | O(1) |
-| Find position of `LineId` in view | O(log n) |
-| Find by timestamp | O(log n) |
-| Append line to source | O(1) |
-| Filter recompute | O(n) |
-| Merge iteration | O(n log k) where k = number of sources |
+| Operation | Complexity | Notes |
+|-----------|------------|-------|
+| Get line by `LineId` | O(1) | Direct index |
+| Get line by position in view | O(1) | Index into `matching_ids` |
+| Find position of `LineId` in view | O(log n) | Binary search |
+| Find by timestamp | O(log n) | Binary search |
+| Add line (monotonic timestamp) | O(1) | Append — common case |
+| Add line (out of order) | O(n) | Insert — rare |
+| Filter recompute | O(n) | Must check every line |
+| Merge iteration | O(n) | K-way interleave, sources pre-sorted |
+
+**No super-linear operations.** The design is O(n) worst case.
 
 ---
 
@@ -237,23 +257,93 @@ impl ScrollState {
 
 ## Tailing / Growing Files
 
+## Per-File Options
+
+Each file can have options that control how it's loaded and handled.
+
+### Options
+
+| Option | CLI | UI Checkbox | Default | Effect |
+|--------|-----|-------------|---------|--------|
+| Follow | `-f`/`--follow` | ☐ Follow | Off | Watch file for growth |
+| Sort | `-s`/`--sort` | ☐ Sort by timestamp | Off | Sort lines by timestamp after load |
+
+### CLI Syntax
+
+```bash
+# Follow a file
+logcrab -f app.log
+logcrab --follow app.log
+
+# Sort a file (for unsorted/merged logs)
+logcrab -s app.log
+logcrab --sort app.log
+
+# Both options
+logcrab -fs app.log
+logcrab --follow --sort app.log
+
+# Mix per file
+logcrab -f app.log -s old.log system.log
+```
+
+The flags apply to the filename immediately following them.
+
+### UI Dialog
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Open Log File                                                    │
+│                                                                  │
+│  [________________________] [Browse...]                          │
+│                                                                  │
+│  ☐ Follow (watch for new lines)                                 │
+│  ☐ Sort by timestamp                                            │
+│                                                                  │
+│  [Open]  [Cancel]                                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Implementation
+
+```rust
+struct SourceOptions {
+    follow: bool,    // Watch for growth
+    sort: bool,      // Sort after initial load
+}
+
+impl SourceData {
+    fn finish_loading(&mut self, options: &SourceOptions) {
+        if options.sort {
+            self.lines.sort_by_key(|l| l.id);
+        }
+        
+        self.info.status = if options.follow {
+            SourceStatus::Tailing
+        } else {
+            SourceStatus::Done
+        };
+    }
+}
+```
+
+### When is Sort Needed?
+
+Most log files are chronological, but sometimes:
+- Merged logs from multiple sources (pre-combined, not sorted)
+- Log rotation artifacts
+- Parallel writers without synchronization
+- Logs collected from distributed systems
+
+---
+
+## Tailing / Growing Files
+
 Support for files that grow over time (like `tail -f`).
 
 ### Activation
 
-```bash
-# Follow a single file
-logcrab -f app.log
-logcrab --follow app.log
-
-# Follow multiple files
-logcrab -f app.log -f system.log
-
-# Mix: follow one, static other
-logcrab -f app.log system.log.old
-```
-
-The `-f`/`--follow` flag applies to the filename immediately following it.
+Via CLI (`-f`/`--follow`) or UI checkbox. See Per-File Options above.
 
 ### Implementation
 
