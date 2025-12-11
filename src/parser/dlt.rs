@@ -192,6 +192,9 @@ fn convert_dlt_message(
                 dlt_core::dlt::Value::StringVal(s) => Some(s.clone()),
                 dlt_core::dlt::Value::U32(v) => Some(format!("{v}")),
                 dlt_core::dlt::Value::U64(v) => Some(format!("{v}")),
+                dlt_core::dlt::Value::U8(v) => Some(format!("{v}")),
+                dlt_core::dlt::Value::U16(v) => Some(format!("{v}")),
+                dlt_core::dlt::Value::I32(v) => Some(format!("{v}")),
                 _ => {
                     log::error!(
                         "Unsupported DLT verbose argument {:?} for line {}",
