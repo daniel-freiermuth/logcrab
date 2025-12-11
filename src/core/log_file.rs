@@ -81,7 +81,7 @@ impl LogFileLoader {
             Ok(lines) => {
                 log::info!("Successfully parsed {} DLT messages", lines.len());
                 let lines_arc = Arc::new(lines);
-                let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path.clone()));
+                let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path));
                 ctx.request_repaint();
                 lines_arc
             }
@@ -125,10 +125,10 @@ impl LogFileLoader {
 
         if !lines_arc.is_empty() {
             Self::score_and_send_lines(
-                &lines_arc.clone(),
-                &path.clone(),
-                &tx.clone(),
-                &ctx.clone(),
+                &lines_arc,
+                &path,
+                &tx,
+                &ctx,
                 start_time,
             );
         }
@@ -249,7 +249,7 @@ impl LogFileLoader {
         // Send the parsed lines immediately so user can start working
         // Arc clone is cheap (just increments reference count)
         let send_start = std::time::Instant::now();
-        let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path.clone()));
+        let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path));
         ctx.request_repaint();
         log::info!("Sending Complete message took {:?}", send_start.elapsed());
         log::info!("Total time to display file: {:?}", start_time.elapsed());

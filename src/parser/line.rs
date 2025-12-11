@@ -10,13 +10,13 @@ pub struct LogLine {
 }
 
 impl LogLine {
-    pub fn new(
+    pub const fn new(
         raw: String,
         line_number: usize,
         message: String,
         timestamp: DateTime<Local>,
     ) -> Self {
-        LogLine {
+        Self {
             raw,
             timestamp,
             message,

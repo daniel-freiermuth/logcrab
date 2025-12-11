@@ -424,7 +424,7 @@ impl Histogram {
 
                 let distance = (hover_pos.x - x).abs();
                 if distance < hover_threshold
-                    && closest_match.as_ref().map_or(true, |m| distance < m.distance)
+                    && closest_match.as_ref().is_none_or(|m| distance < m.distance)
                 {
                     closest_match = Some(MarkerMatch { marker, distance, x_pos: x });
                 }

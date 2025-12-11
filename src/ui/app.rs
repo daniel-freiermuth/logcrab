@@ -66,7 +66,7 @@ impl LogCrabApp {
         // Load global configuration
         let global_config = GlobalConfig::load();
 
-        let mut app = LogCrabApp {
+        let mut app = Self {
             log_view: None,
             current_file: None,
             status_message: if file.is_some() {
@@ -400,7 +400,7 @@ impl LogCrabApp {
             let font = TextStyle::Heading.resolve(&ctx.style());
             let mut layout_job = LayoutJob::simple(
                 text,
-                font.clone(),
+                font,
                 Color32::WHITE,
                 screen_rect.width() - 40.0,
             );

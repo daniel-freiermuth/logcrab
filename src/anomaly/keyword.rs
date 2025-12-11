@@ -28,8 +28,8 @@ pub struct KeywordScorer {
 }
 
 impl KeywordScorer {
-    pub fn new() -> Self {
-        KeywordScorer {}
+    pub const fn new() -> Self {
+        Self {}
     }
 
     fn score_message(message: &str) -> f64 {

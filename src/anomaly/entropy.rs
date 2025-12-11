@@ -11,8 +11,8 @@ pub struct EntropyScorer {
 }
 
 impl EntropyScorer {
-    pub fn new() -> Self {
-        EntropyScorer {
+    pub const fn new() -> Self {
+        Self {
             avg_length: 0.0,
             avg_entropy: 0.0,
             sample_count: 0,

@@ -92,7 +92,7 @@ fn storage_time_to_datetime(storage_time: &DltTimeStamp) -> DateTime<Local> {
         .expect("Invalid storage timestamp")
 }
 
-fn dlt_header_time_to_timedelta(header_time: u32) -> TimeDelta {
+const fn dlt_header_time_to_timedelta(header_time: u32) -> TimeDelta {
     TimeDelta::microseconds(header_time as i64 * 100)
 }
 

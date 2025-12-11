@@ -11,7 +11,7 @@ pub struct RarityScorer {
 
 impl RarityScorer {
     pub fn new() -> Self {
-        RarityScorer {
+        Self {
             template_counts: HashMap::new(),
             total_lines: 0,
         }

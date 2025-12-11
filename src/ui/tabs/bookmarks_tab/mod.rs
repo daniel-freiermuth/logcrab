@@ -126,7 +126,7 @@ impl BookmarksView {
         bookmarks.sort_by_key(|b| b.line_index);
 
         // Render using BookmarksView
-        let events = BookmarksView::render(
+        let events = Self::render(
             ui,
             data_state,
             &bookmarks,

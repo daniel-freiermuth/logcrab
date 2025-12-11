@@ -17,7 +17,7 @@ pub struct CompositeScorer {
 
 impl CompositeScorer {
     pub fn new() -> Self {
-        CompositeScorer {
+        Self {
             scorers: Vec::new(),
         }
     }

@@ -38,7 +38,7 @@ pub struct GlobalConfig {
     pub hide_epoch_in_histogram: bool,
 }
 
-fn default_hide_epoch() -> bool {
+const fn default_hide_epoch() -> bool {
     true
 }
 
@@ -103,7 +103,7 @@ impl GlobalConfig {
             if path.exists() {
                 log::info!("Loading global config from {}", path.display());
                 if let Ok(contents) = std::fs::read_to_string(&path) {
-                    if let Ok(config) = serde_json::from_str::<GlobalConfig>(&contents) {
+                    if let Ok(config) = serde_json::from_str::<Self>(&contents) {
                         log::info!(
                             "Loaded {} shortcuts and {} favorite filters",
                             config.shortcuts.len(),

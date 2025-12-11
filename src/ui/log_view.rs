@@ -47,7 +47,7 @@ impl FilterHighlight {
     pub fn highlight_text_with_filters(
         text: &str,
         base_color: Color32,
-        all_filter_highlights: &[FilterHighlight],
+        all_filter_highlights: &[Self],
     ) -> egui::text::LayoutJob {
         let mut job = LayoutJob::default();
 
@@ -180,7 +180,7 @@ impl FilterHighlight {
         let b_linear = linearize(effective_b);
 
         // Calculate relative luminance: L = 0.2126 * R + 0.7152 * G + 0.0722 * B
-        let luminance = 0.2126 * r_linear + 0.7152 * g_linear + 0.0722 * b_linear;
+        let luminance = 0.0722f32.mul_add(b_linear, 0.2126f32.mul_add(r_linear, 0.7152 * g_linear));
 
         // Use black text on bright backgrounds, white text on dark backgrounds
         // Threshold of 0.5 works well in practice
@@ -242,13 +242,13 @@ struct SerializableColor {
 impl From<Color32> for SerializableColor {
     fn from(c: Color32) -> Self {
         let [r, g, b, a] = c.to_array();
-        SerializableColor { r, g, b, a }
+        Self { r, g, b, a }
     }
 }
 
 impl From<SerializableColor> for Color32 {
     fn from(c: SerializableColor) -> Self {
-        Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+        Self::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
     }
 }
 
@@ -266,7 +266,7 @@ where
     SerializableColor::deserialize(deserializer).map(Color32::from)
 }
 
-fn default_filter_color() -> Color32 {
+const fn default_filter_color() -> Color32 {
     Color32::YELLOW // Default to yellow if not specified
 }
 
@@ -288,13 +288,13 @@ pub struct SavedFilter {
     show_in_histogram: bool,
 }
 
-fn default_globally_visible() -> bool {
+const fn default_globally_visible() -> bool {
     true
 }
 
 impl From<&SavedFilter> for FilterState {
-    fn from(saved_filter: &SavedFilter) -> FilterState {
-        let mut filter = FilterState::new(saved_filter.name.clone(), saved_filter.color);
+    fn from(saved_filter: &SavedFilter) -> Self {
+        let mut filter = Self::new(saved_filter.name.clone(), saved_filter.color);
         filter.search_text.clone_from(&saved_filter.search_text);
         filter.case_sensitive = saved_filter.case_sensitive;
         filter.globally_visible = saved_filter.globally_visible;
@@ -305,8 +305,8 @@ impl From<&SavedFilter> for FilterState {
 }
 
 impl From<&FilterState> for SavedFilter {
-    fn from(filter: &FilterState) -> SavedFilter {
-        SavedFilter {
+    fn from(filter: &FilterState) -> Self {
+        Self {
             search_text: filter.search_text.clone(),
             case_sensitive: filter.case_sensitive,
             name: filter.name.clone(),
@@ -384,7 +384,7 @@ impl LogViewState {
 impl LogView {
     pub fn new(lines: Arc<Vec<LogLine>>, crab_file: PathBuf) -> Self {
         assert!(!lines.is_empty(), "LogView requires at least one log line");
-        let mut view = LogView {
+        let mut view = Self {
             crab_file,
             dock_state: DockState::new(Vec::new()),
             monotonic_filter_counter: 0,

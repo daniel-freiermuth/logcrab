@@ -16,7 +16,7 @@ pub struct TemporalScorer {
 
 impl TemporalScorer {
     pub fn new(window_seconds: i64) -> Self {
-        TemporalScorer {
+        Self {
             window_duration: Duration::seconds(window_seconds),
             last_seen: HashMap::new(),
             recent_timestamps: VecDeque::new(),

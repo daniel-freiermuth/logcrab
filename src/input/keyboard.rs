@@ -52,11 +52,11 @@ impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
         let kb_key = map_egui_key_to_kb_key(*key_event.key, key_event.mods.shift);
         let kb_mods = map_modifiers(key_event.mods, is_letter_key);
 
-        keybinds::KeyInput::new(kb_key, kb_mods)
+        Self::new(kb_key, kb_mods)
     }
 }
 
-fn is_letter_key(key: egui::Key) -> bool {
+const fn is_letter_key(key: egui::Key) -> bool {
     matches!(
         key,
         egui::Key::A
@@ -88,7 +88,7 @@ fn is_letter_key(key: egui::Key) -> bool {
     )
 }
 
-fn map_egui_key_to_kb_key(key: egui::Key, shift: bool) -> keybinds::Key {
+const fn map_egui_key_to_kb_key(key: egui::Key, shift: bool) -> keybinds::Key {
     use keybinds::Key;
 
     match key {
@@ -223,99 +223,99 @@ pub enum ShortcutAction {
 
 impl ShortcutAction {
     /// Get all shortcut actions
-    pub const fn all() -> &'static [ShortcutAction] {
+    pub const fn all() -> &'static [Self] {
         &[
-            ShortcutAction::MoveUp,
-            ShortcutAction::MoveDown,
-            ShortcutAction::ToggleBookmark,
-            ShortcutAction::FocusSearch,
-            ShortcutAction::NewFilterTab,
-            ShortcutAction::NewBookmarksTab,
-            ShortcutAction::CloseTab,
-            ShortcutAction::JumpToTop,
-            ShortcutAction::JumpToBottom,
-            ShortcutAction::PageUp,
-            ShortcutAction::PageDown,
-            ShortcutAction::OpenFile,
-            ShortcutAction::FocusPaneLeft,
-            ShortcutAction::FocusPaneDown,
-            ShortcutAction::FocusPaneUp,
-            ShortcutAction::FocusPaneRight,
-            ShortcutAction::CycleTab,
-            ShortcutAction::ReverseCycleTab,
-            ShortcutAction::RenameFilter,
+            Self::MoveUp,
+            Self::MoveDown,
+            Self::ToggleBookmark,
+            Self::FocusSearch,
+            Self::NewFilterTab,
+            Self::NewBookmarksTab,
+            Self::CloseTab,
+            Self::JumpToTop,
+            Self::JumpToBottom,
+            Self::PageUp,
+            Self::PageDown,
+            Self::OpenFile,
+            Self::FocusPaneLeft,
+            Self::FocusPaneDown,
+            Self::FocusPaneUp,
+            Self::FocusPaneRight,
+            Self::CycleTab,
+            Self::ReverseCycleTab,
+            Self::RenameFilter,
         ]
     }
 
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            ShortcutAction::MoveUp => "Move Selection Up",
-            ShortcutAction::MoveDown => "Move Selection Down",
-            ShortcutAction::ToggleBookmark => "Toggle Bookmark",
-            ShortcutAction::FocusSearch => "Focus Search Input",
-            ShortcutAction::NewFilterTab => "New Filter Tab",
-            ShortcutAction::NewBookmarksTab => "New Bookmarks Tab",
-            ShortcutAction::CloseTab => "Close Current Tab",
-            ShortcutAction::JumpToTop => "Jump to Top",
-            ShortcutAction::JumpToBottom => "Jump to Bottom",
-            ShortcutAction::PageUp => "Page Up",
-            ShortcutAction::PageDown => "Page Down",
-            ShortcutAction::OpenFile => "Open File",
-            ShortcutAction::FocusPaneLeft => "Focus Pane Left",
-            ShortcutAction::FocusPaneDown => "Focus Pane Down",
-            ShortcutAction::FocusPaneUp => "Focus Pane Up",
-            ShortcutAction::FocusPaneRight => "Focus Pane Right",
-            ShortcutAction::CycleTab => "Cycle to Next Tab",
-            ShortcutAction::ReverseCycleTab => "Cycle to Previous Tab",
-            ShortcutAction::RenameFilter => "Rename Filter",
+            Self::MoveUp => "Move Selection Up",
+            Self::MoveDown => "Move Selection Down",
+            Self::ToggleBookmark => "Toggle Bookmark",
+            Self::FocusSearch => "Focus Search Input",
+            Self::NewFilterTab => "New Filter Tab",
+            Self::NewBookmarksTab => "New Bookmarks Tab",
+            Self::CloseTab => "Close Current Tab",
+            Self::JumpToTop => "Jump to Top",
+            Self::JumpToBottom => "Jump to Bottom",
+            Self::PageUp => "Page Up",
+            Self::PageDown => "Page Down",
+            Self::OpenFile => "Open File",
+            Self::FocusPaneLeft => "Focus Pane Left",
+            Self::FocusPaneDown => "Focus Pane Down",
+            Self::FocusPaneUp => "Focus Pane Up",
+            Self::FocusPaneRight => "Focus Pane Right",
+            Self::CycleTab => "Cycle to Next Tab",
+            Self::ReverseCycleTab => "Cycle to Previous Tab",
+            Self::RenameFilter => "Rename Filter",
         }
     }
 
-    pub fn description(self) -> &'static str {
+    pub const fn description(self) -> &'static str {
         match self {
-            ShortcutAction::MoveUp => "Move to the previous log line in the active view",
-            ShortcutAction::MoveDown => "Move to the next log line in the active view",
-            ShortcutAction::ToggleBookmark => "Add or remove a bookmark on the selected line",
-            ShortcutAction::FocusSearch => "Jump to the search input field (filter tabs only). Press Enter to return focus to logs.",
-            ShortcutAction::NewFilterTab => "Create a new filter tab with search focused",
-            ShortcutAction::NewBookmarksTab => "Create a new bookmarks tab next to the current tab",
-            ShortcutAction::CloseTab => "Close the currently active tab",
-            ShortcutAction::JumpToTop => "Jump to the first log line (Vim-style: gg)",
-            ShortcutAction::JumpToBottom => "Jump to the last log line (Vim-style: Shift+G)",
-            ShortcutAction::PageUp => "Jump up by one page of log lines",
-            ShortcutAction::PageDown => "Jump down by one page of log lines",
-            ShortcutAction::OpenFile => "Open a file dialog to load a new log file",
-            ShortcutAction::FocusPaneLeft => "Move focus to the pane on the left (Vim-style: Shift+H)",
-            ShortcutAction::FocusPaneDown => "Move focus to the pane below (Vim-style: Shift+J)",
-            ShortcutAction::FocusPaneUp => "Move focus to the pane above (Vim-style: Shift+K)",
-            ShortcutAction::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
-            ShortcutAction::CycleTab => "Cycle to the next tab in the active pane",
-            ShortcutAction::ReverseCycleTab => "Cycle to the previous tab in the active pane",
-            ShortcutAction::RenameFilter => "Open rename dialog for the current filter tab",
+            Self::MoveUp => "Move to the previous log line in the active view",
+            Self::MoveDown => "Move to the next log line in the active view",
+            Self::ToggleBookmark => "Add or remove a bookmark on the selected line",
+            Self::FocusSearch => "Jump to the search input field (filter tabs only). Press Enter to return focus to logs.",
+            Self::NewFilterTab => "Create a new filter tab with search focused",
+            Self::NewBookmarksTab => "Create a new bookmarks tab next to the current tab",
+            Self::CloseTab => "Close the currently active tab",
+            Self::JumpToTop => "Jump to the first log line (Vim-style: gg)",
+            Self::JumpToBottom => "Jump to the last log line (Vim-style: Shift+G)",
+            Self::PageUp => "Jump up by one page of log lines",
+            Self::PageDown => "Jump down by one page of log lines",
+            Self::OpenFile => "Open a file dialog to load a new log file",
+            Self::FocusPaneLeft => "Move focus to the pane on the left (Vim-style: Shift+H)",
+            Self::FocusPaneDown => "Move focus to the pane below (Vim-style: Shift+J)",
+            Self::FocusPaneUp => "Move focus to the pane above (Vim-style: Shift+K)",
+            Self::FocusPaneRight => "Move focus to the pane on the right (Vim-style: Shift+L)",
+            Self::CycleTab => "Cycle to the next tab in the active pane",
+            Self::ReverseCycleTab => "Cycle to the previous tab in the active pane",
+            Self::RenameFilter => "Open rename dialog for the current filter tab",
         }
     }
 
-    pub fn default_binding(self) -> &'static str {
+    pub const fn default_binding(self) -> &'static str {
         match self {
-            ShortcutAction::MoveUp => "k",
-            ShortcutAction::MoveDown => "j",
-            ShortcutAction::ToggleBookmark => "Space",
-            ShortcutAction::FocusSearch => "Ctrl+l",
-            ShortcutAction::NewFilterTab => "Ctrl+t",
-            ShortcutAction::NewBookmarksTab => "Ctrl+b",
-            ShortcutAction::CloseTab => "Ctrl+w",
-            ShortcutAction::JumpToTop => "g g",
-            ShortcutAction::JumpToBottom => "G", // Uppercase G (Shift+G in egui)
-            ShortcutAction::PageUp => "PageUp",
-            ShortcutAction::PageDown => "PageDown",
-            ShortcutAction::OpenFile => "Ctrl+o",
-            ShortcutAction::FocusPaneLeft => "H", // Uppercase letters for Vim-style pane navigation
-            ShortcutAction::FocusPaneDown => "J",
-            ShortcutAction::FocusPaneUp => "K",
-            ShortcutAction::FocusPaneRight => "L",
-            ShortcutAction::CycleTab => "Ctrl+Tab",
-            ShortcutAction::ReverseCycleTab => "Ctrl+Shift+Tab",
-            ShortcutAction::RenameFilter => "\u{E002}", // F2
+            Self::MoveUp => "k",
+            Self::MoveDown => "j",
+            Self::ToggleBookmark => "Space",
+            Self::FocusSearch => "Ctrl+l",
+            Self::NewFilterTab => "Ctrl+t",
+            Self::NewBookmarksTab => "Ctrl+b",
+            Self::CloseTab => "Ctrl+w",
+            Self::JumpToTop => "g g",
+            Self::JumpToBottom => "G", // Uppercase G (Shift+G in egui)
+            Self::PageUp => "PageUp",
+            Self::PageDown => "PageDown",
+            Self::OpenFile => "Ctrl+o",
+            Self::FocusPaneLeft => "H", // Uppercase letters for Vim-style pane navigation
+            Self::FocusPaneDown => "J",
+            Self::FocusPaneUp => "K",
+            Self::FocusPaneRight => "L",
+            Self::CycleTab => "Ctrl+Tab",
+            Self::ReverseCycleTab => "Ctrl+Shift+Tab",
+            Self::RenameFilter => "\u{E002}", // F2
         }
     }
 }

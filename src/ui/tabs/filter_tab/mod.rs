@@ -56,7 +56,7 @@ pub struct FilterView {
 }
 
 impl FilterView {
-    pub fn new(uuid: usize, state: FilterState) -> Self {
+    pub const fn new(uuid: usize, state: FilterState) -> Self {
         Self {
             uuid,
             should_focus_search: false,
