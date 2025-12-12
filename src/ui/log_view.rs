@@ -48,6 +48,7 @@ impl FilterHighlight {
         text: &str,
         base_color: Color32,
         all_filter_highlights: &[Self],
+        dark_mode: bool,
     ) -> egui::text::LayoutJob {
         let mut job = LayoutJob::default();
 
@@ -100,7 +101,7 @@ impl FilterHighlight {
             if next_color != current_color {
                 // Color changed, append the current segment
                 if let Some(bg_color) = current_color {
-                    let text_color = Self::choose_text_color(bg_color);
+                    let text_color = Self::choose_text_color(bg_color, dark_mode);
                     job.append(
                         &text[current_start..i],
                         0.0,
@@ -129,7 +130,7 @@ impl FilterHighlight {
         // Append the final segment
         if current_start < text.len() {
             if let Some(bg_color) = current_color {
-                let text_color = Self::choose_text_color(bg_color);
+                let text_color = Self::choose_text_color(bg_color, dark_mode);
                 job.append(
                     &text[current_start..],
                     0.0,
@@ -156,15 +157,21 @@ impl FilterHighlight {
 
     /// Choose black or white text color based on background brightness
     /// Uses relative luminance calculation from WCAG guidelines
-    fn choose_text_color(background: Color32) -> Color32 {
-        // For semi-transparent backgrounds, blend with dark background to get effective color
-        // This assumes the application has a dark theme
+    fn choose_text_color(background: Color32, dark_mode: bool) -> Color32 {
+        // For semi-transparent backgrounds, blend with the base background to get effective color
         let alpha = f32::from(background.a()) / 255.0;
 
-        // Blend with dark background (black) to get effective RGB
-        let effective_r = (f32::from(background.r()) / 255.0) * alpha;
-        let effective_g = (f32::from(background.g()) / 255.0) * alpha;
-        let effective_b = (f32::from(background.b()) / 255.0) * alpha;
+        // Base background: black for dark mode, white for light mode
+        let (base_r, base_g, base_b) = if dark_mode {
+            (0.0, 0.0, 0.0)
+        } else {
+            (1.0, 1.0, 1.0)
+        };
+
+        // Blend highlight color with base background
+        let effective_r = (f32::from(background.r()) / 255.0) * alpha + base_r * (1.0 - alpha);
+        let effective_g = (f32::from(background.g()) / 255.0) * alpha + base_g * (1.0 - alpha);
+        let effective_b = (f32::from(background.b()) / 255.0) * alpha + base_b * (1.0 - alpha);
 
         // Linearize (gamma correction) for proper luminance calculation
         let linearize = |c_norm: f32| -> f32 {

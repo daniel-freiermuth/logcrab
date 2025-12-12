@@ -66,6 +66,13 @@ impl LogCrabApp {
         // Load global configuration
         let global_config = GlobalConfig::load();
 
+        // Apply saved theme
+        if global_config.bright_mode {
+            cc.egui_ctx.set_visuals(egui::Visuals::light());
+        } else {
+            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        }
+
         let mut app = Self {
             log_view: None,
             current_file: None,
@@ -279,6 +286,24 @@ impl LogCrabApp {
                 )
                 .changed()
             {
+                // Save config when changed
+                if let Err(e) = self.global_config.save() {
+                    log::error!("Failed to save config: {}", e);
+                }
+            }
+
+            ui.separator();
+
+            if ui
+                .checkbox(&mut self.global_config.bright_mode, "Bright Mode")
+                .changed()
+            {
+                // Apply theme change
+                if self.global_config.bright_mode {
+                    ctx.set_visuals(egui::Visuals::light());
+                } else {
+                    ctx.set_visuals(egui::Visuals::dark());
+                }
                 // Save config when changed
                 if let Err(e) = self.global_config.save() {
                     log::error!("Failed to save config: {}", e);

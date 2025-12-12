@@ -36,6 +36,10 @@ pub struct GlobalConfig {
     /// Hide January 1st timestamps from histogram (default: true)
     #[serde(default = "default_hide_epoch")]
     pub hide_epoch_in_histogram: bool,
+
+    /// Use bright/light theme instead of dark (default: false)
+    #[serde(default)]
+    pub bright_mode: bool,
 }
 
 const fn default_hide_epoch() -> bool {
@@ -48,6 +52,7 @@ impl Default for GlobalConfig {
             shortcuts: HashMap::new(),
             favorite_filters: Vec::new(),
             hide_epoch_in_histogram: true,
+            bright_mode: false,
         }
     }
 }

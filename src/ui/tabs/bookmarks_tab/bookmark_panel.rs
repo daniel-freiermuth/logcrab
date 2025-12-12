@@ -18,6 +18,7 @@
 
 use crate::parser::line::LogLine;
 use crate::ui::log_view::{FilterHighlight, LogViewState};
+use crate::ui::tabs::filter_tab::log_table::{self, bookmarked_row_color, selected_row_color};
 use chrono::DateTime;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -38,19 +39,6 @@ pub enum BookmarkPanelEvent {
     BookmarkRenamed { line_index: usize, new_name: String },
     StartRenaming { line_index: usize },
     CancelRenaming,
-}
-
-/// Convert anomaly score to color
-fn score_to_color(score: f64) -> Color32 {
-    if score >= 80.0 {
-        Color32::from_rgb(255, 100, 100)
-    } else if score >= 60.0 {
-        Color32::from_rgb(255, 180, 100)
-    } else if score >= 30.0 {
-        Color32::from_rgb(255, 200, 200)
-    } else {
-        Color32::LIGHT_GRAY
-    }
 }
 
 /// Reusable bookmark panel component
@@ -113,6 +101,7 @@ impl BookmarkPanel {
         let available_height = ui.available_height();
         let header_height = ui.text_style_height(&egui::TextStyle::Heading);
         let body_height = available_height - header_height - 1.0;
+        let dark_mode = ui.visuals().dark_mode;
 
         TableBuilder::new(ui)
             .striped(true)
@@ -154,6 +143,7 @@ impl BookmarkPanel {
                         bookmark_name_input,
                         all_filter_highlights,
                         events,
+                        dark_mode,
                     );
                 });
             });
@@ -167,6 +157,7 @@ impl BookmarkPanel {
         bookmark_name_input: &mut String,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<BookmarkPanelEvent>,
+        dark_mode: bool,
     ) {
         let row_index = row.index();
         let bookmark = &bookmarks[row_index];
@@ -175,15 +166,17 @@ impl BookmarkPanel {
 
         let is_selected = log_view_state.selected_line_index == line_idx;
         let color = if let Some(score) = &log_view_state.scores {
-            score_to_color(score[line_idx])
-        } else {
+            log_table::score_to_color(score[line_idx], dark_mode)
+        } else if dark_mode {
             Color32::WHITE
+        } else {
+            Color32::BLACK
         };
 
         let mut row_clicked = false;
 
         // Line number column
-        Self::render_line_column(row, line_idx, is_selected, color, lines, &mut row_clicked);
+        Self::render_line_column(row, line_idx, is_selected, color, lines, &mut row_clicked, dark_mode);
 
         // Timestamp column
         Self::render_timestamp_column(
@@ -193,6 +186,7 @@ impl BookmarkPanel {
             color,
             bookmark,
             &mut row_clicked,
+            dark_mode,
         );
 
         // Name column
@@ -206,6 +200,7 @@ impl BookmarkPanel {
             bookmark_name_input,
             events,
             &mut row_clicked,
+            dark_mode,
         );
 
         // Message column
@@ -217,10 +212,11 @@ impl BookmarkPanel {
             lines,
             all_filter_highlights,
             &mut row_clicked,
+            dark_mode,
         );
 
         // Delete button column
-        Self::render_delete_column(row, line_idx, is_selected, events);
+        Self::render_delete_column(row, line_idx, is_selected, events, dark_mode);
 
         if row_clicked {
             events.push(BookmarkPanelEvent::BookmarkClicked {
@@ -236,9 +232,10 @@ impl BookmarkPanel {
         color: Color32,
         lines: &[LogLine],
         row_clicked: &mut bool,
+        dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected);
+            Self::paint_selection_background(ui, is_selected, dark_mode);
 
             let line_number = lines[line_idx].line_number;
             let text = if is_selected {
@@ -268,9 +265,10 @@ impl BookmarkPanel {
         color: Color32,
         bookmark: &BookmarkData,
         row_clicked: &mut bool,
+        dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected);
+            Self::paint_selection_background(ui, is_selected, dark_mode);
 
             let timestamp_str = bookmark.timestamp.format("%H:%M:%S%.3f").to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
@@ -296,9 +294,10 @@ impl BookmarkPanel {
         bookmark_name_input: &mut String,
         events: &mut Vec<BookmarkPanelEvent>,
         row_clicked: &mut bool,
+        dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected);
+            Self::paint_selection_background(ui, is_selected, dark_mode);
 
             if editing_bookmark == Some(line_idx) {
                 Self::render_name_editor(ui, line_idx, bookmark_name_input, events);
@@ -370,13 +369,14 @@ impl BookmarkPanel {
         lines: &[LogLine],
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
+        dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected);
+            Self::paint_selection_background(ui, is_selected, dark_mode);
 
             let message = &lines[line_idx].message;
             let job =
-                FilterHighlight::highlight_text_with_filters(message, color, all_filter_highlights);
+                FilterHighlight::highlight_text_with_filters(message, color, all_filter_highlights, dark_mode);
             ui.label(job);
 
             let response = ui.interact(
@@ -395,9 +395,10 @@ impl BookmarkPanel {
         line_idx: usize,
         is_selected: bool,
         events: &mut Vec<BookmarkPanelEvent>,
+        dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected);
+            Self::paint_selection_background(ui, is_selected, dark_mode);
 
             if ui.small_button("🗑").on_hover_text("Delete").clicked() {
                 events.push(BookmarkPanelEvent::BookmarkDeleted {
@@ -407,13 +408,17 @@ impl BookmarkPanel {
         });
     }
 
-    fn paint_selection_background(ui: &mut Ui, is_selected: bool) {
-        if is_selected {
-            ui.painter().rect_filled(
-                ui.available_rect_before_wrap(),
-                0.0,
-                Color32::from_rgb(100, 80, 30),
-            );
-        }
+    fn paint_selection_background(ui: &mut Ui, is_selected: bool, dark_mode: bool) {
+        // All bookmark rows have the bookmark background
+        let bg_color = if is_selected {
+            selected_row_color(dark_mode)
+        } else {
+            bookmarked_row_color(dark_mode)
+        };
+        ui.painter().rect_filled(
+            ui.available_rect_before_wrap(),
+            0.0,
+            bg_color,
+        );
     }
 }

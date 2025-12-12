@@ -149,6 +149,9 @@ impl Histogram {
             bucket_size,
         );
 
+        let dark_mode = ui.visuals().dark_mode;
+        let bg_color = ui.visuals().extreme_bg_color;
+
         let click_event = Self::render_histogram_bars(
             ui,
             &buckets,
@@ -160,6 +163,8 @@ impl Histogram {
             start_time,
             bucket_size,
             markers,
+            dark_mode,
+            bg_color,
         );
 
         Self::render_timeline_labels(ui, start_time, end_time, lines, selected_line_index);
@@ -247,6 +252,8 @@ impl Histogram {
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
         markers: &[HistogramMarker],
+        dark_mode: bool,
+        bg_color: Color32,
     ) -> Option<HistogramClickEvent> {
         let desired_size = egui::vec2(ui.available_width(), 60.0);
         let (response, painter) = ui.allocate_painter(
@@ -255,7 +262,7 @@ impl Histogram {
         );
         let rect = response.rect;
 
-        painter.rect_filled(rect, 0.0, Color32::from_gray(20));
+        painter.rect_filled(rect, 0.0, bg_color);
 
         let bar_width = rect.width() / NUM_BUCKETS as f32;
 
@@ -266,6 +273,7 @@ impl Histogram {
             anomaly_buckets,
             max_count,
             bar_width,
+            dark_mode,
         );
         Self::draw_markers(&painter, rect, lines, start_time, bucket_size, markers);
         Self::draw_selected_indicator(&painter, rect, selected_bucket, bar_width);
@@ -291,6 +299,7 @@ impl Histogram {
         anomaly_buckets: &[AnomalyDistribution],
         max_count: usize,
         bar_width: f32,
+        dark_mode: bool,
     ) {
         for (i, &count) in buckets.iter().enumerate() {
             if count > 0 {
@@ -311,6 +320,7 @@ impl Histogram {
                         total_height,
                         dist,
                         total as f32,
+                        dark_mode,
                     );
                 } else {
                     // No anomaly data, use default blue
@@ -335,6 +345,7 @@ impl Histogram {
         total_height: f32,
         dist: &AnomalyDistribution,
         total: f32,
+        dark_mode: bool,
     ) {
         let mut current_y = bottom_y;
 
@@ -349,7 +360,7 @@ impl Histogram {
 
             let score = ((bucket_idx as f32 + 1.0) / SCORE_BUCKETS as f32) * 100.0;
 
-            let color = log_table::score_to_color(score as f64);
+            let color = log_table::score_to_color(score as f64, dark_mode);
 
             let y = current_y - segment_height;
             let segment_rect = egui::Rect::from_min_size(
@@ -545,6 +556,13 @@ impl Histogram {
         lines: &[LogLine],
         selected_line_index: usize,
     ) {
+        let dark_mode = ui.visuals().dark_mode;
+        let selected_color = if dark_mode {
+            Color32::YELLOW
+        } else {
+            Color32::from_rgb(180, 120, 0) // Dark golden/orange for light mode
+        };
+        
         ui.horizontal(|ui| {
             ui.label(format!(
                 "Timeline: {} → {}",
@@ -554,7 +572,7 @@ impl Histogram {
             let sel_ts = lines[selected_line_index].timestamp;
             ui.separator();
             ui.colored_label(
-                Color32::YELLOW,
+                selected_color,
                 format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
             );
         });
