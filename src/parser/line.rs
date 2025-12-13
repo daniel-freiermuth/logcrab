@@ -7,6 +7,7 @@ pub struct LogLine {
     pub message: String,
     pub line_number: usize,
     pub template_key: String,
+    pub anomaly_score: f64,
 }
 
 impl LogLine {
@@ -22,6 +23,7 @@ impl LogLine {
             message,
             line_number,
             template_key: String::new(),
+            anomaly_score: 0.0,
         }
     }
 }

@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::parser::line::LogLine;
+use crate::core::LogStore;
 use crate::ui::tabs::filter_tab::log_table;
 use chrono::Datelike;
 use egui::{Color32, Ui};
@@ -66,17 +66,16 @@ impl Histogram {
     /// Returns Some(event) if the histogram was clicked
     pub fn render(
         ui: &mut Ui,
-        lines: &[LogLine],
+        store: &LogStore,
         filtered_indices: &[usize],
         selected_line_index: usize,
-        anomaly_scores: Option<&[f64]>,
         hide_epoch: bool,
         markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
-        if lines.is_empty() || filtered_indices.is_empty() {
-            if lines.is_empty() {
-                return None;
-            }
+        if store.total_lines() == 0 {
+            return None;
+        }
+        if filtered_indices.is_empty() {
             ui.label("No logs match the current filter");
             return None;
         }
@@ -86,12 +85,17 @@ impl Histogram {
         let effective_filtered_indices = if hide_epoch {
             filtered_indices_vec = filtered_indices
                 .iter()
-                .filter(|&&idx| {
-                    let ts = lines[idx].timestamp;
-                    // Exclude all timestamps that are January 1st (any year)
-                    !(ts.month0() == 0 && ts.day0() == 0)
+                .filter_map(|idx| {
+                    store.get_by_id(*idx).and_then(|line| {
+                        let ts = line.timestamp;
+                        // Exclude all timestamps that are January 1st (any year)
+                        if !(ts.month0() == 0 && ts.day0() == 0) {
+                            Some(*idx)
+                        } else {
+                            None
+                        }
+                    })
                 })
-                .copied()
                 .collect();
             &filtered_indices_vec[..]
         } else {
@@ -105,23 +109,21 @@ impl Histogram {
 
         Self::render_internal(
             ui,
-            lines,
+            store,
             effective_filtered_indices,
             selected_line_index,
-            anomaly_scores,
             markers,
         )
     }
 
     fn render_internal(
         ui: &mut Ui,
-        lines: &[LogLine],
+        store: &LogStore,
         filtered_indices: &[usize],
         selected_line_index: usize,
-        anomaly_scores: Option<&[f64]>,
         markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
-        let (start_time, end_time) = match Self::calculate_time_range(lines, filtered_indices) {
+        let (start_time, end_time) = match Self::calculate_time_range(store, filtered_indices) {
             Some(range) => range,
             None => {
                 ui.label("No timestamps available for histogram");
@@ -132,17 +134,12 @@ impl Histogram {
         let time_range = (end_time.timestamp() - start_time.timestamp()).max(1);
         let bucket_size = time_range as f64 / NUM_BUCKETS as f64;
 
-        let (buckets, anomaly_buckets) = Self::create_buckets(
-            lines,
-            filtered_indices,
-            start_time,
-            bucket_size,
-            anomaly_scores,
-        );
+        let (buckets, anomaly_buckets) =
+            Self::create_buckets(store, filtered_indices, start_time, bucket_size);
         let max_count = *buckets.iter().max().unwrap_or(&1);
 
         let selected_bucket = Self::calculate_selected_bucket(
-            lines,
+            store,
             selected_line_index,
             start_time,
             end_time,
@@ -158,7 +155,7 @@ impl Histogram {
             &anomaly_buckets,
             max_count,
             selected_bucket,
-            lines,
+            store,
             filtered_indices,
             start_time,
             bucket_size,
@@ -167,13 +164,13 @@ impl Histogram {
             bg_color,
         );
 
-        Self::render_timeline_labels(ui, start_time, end_time, lines, selected_line_index);
+        Self::render_timeline_labels(ui, start_time, end_time, store, selected_line_index);
 
         click_event
     }
 
     fn calculate_time_range(
-        lines: &[LogLine],
+        store: &LogStore,
         filtered_indices: &[usize],
     ) -> Option<(
         chrono::DateTime<chrono::Local>,
@@ -181,12 +178,12 @@ impl Histogram {
     )> {
         let first_ts = filtered_indices
             .iter()
-            .map(|&idx| lines[idx].timestamp)
+            .map(|&idx| store.get_by_id(idx).unwrap().timestamp)
             .next();
         let last_ts = filtered_indices
             .iter()
             .rev()
-            .map(|&idx| lines[idx].timestamp)
+            .map(|&idx| store.get_by_id(idx).unwrap().timestamp)
             .next();
 
         match (first_ts, last_ts) {
@@ -196,42 +193,39 @@ impl Histogram {
     }
 
     fn create_buckets(
-        lines: &[LogLine],
+        store: &LogStore,
         filtered_indices: &[usize],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
-        anomaly_scores: Option<&[f64]>,
     ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
         let mut buckets = vec![0usize; NUM_BUCKETS];
         let mut anomaly_distributions = vec![AnomalyDistribution::default(); NUM_BUCKETS];
 
         for &line_idx in filtered_indices {
-            let ts = lines[line_idx].timestamp;
+            let line = store.get_by_id(line_idx).unwrap();
+            let ts = line.timestamp;
             let bucket_idx = timestamp_to_bucket(ts, start_time, bucket_size);
             buckets[bucket_idx] += 1;
 
-            if let Some(scores) = anomaly_scores {
-                if line_idx < scores.len() {
-                    let score = scores[line_idx] / 100.0;
-                    // Determine which score bucket this falls into
-                    let score_bucket =
-                        ((score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);
-                    anomaly_distributions[bucket_idx].buckets[score_bucket] += 1;
-                }
-            }
+            // Use anomaly_score from the line
+            let score = line.anomaly_score / 100.0;
+            // Determine which score bucket this falls into
+            let score_bucket =
+                ((score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);
+            anomaly_distributions[bucket_idx].buckets[score_bucket] += 1;
         }
 
         (buckets, anomaly_distributions)
     }
 
     fn calculate_selected_bucket(
-        lines: &[LogLine],
+        store: &LogStore,
         selected_line_index: usize,
         start_time: chrono::DateTime<chrono::Local>,
         end_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
     ) -> Option<usize> {
-        let sel_ts = lines[selected_line_index].timestamp;
+        let sel_ts = store.get_by_id(selected_line_index).unwrap().timestamp;
         let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
 
         if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
@@ -247,7 +241,7 @@ impl Histogram {
         anomaly_buckets: &[AnomalyDistribution],
         max_count: usize,
         selected_bucket: Option<usize>,
-        lines: &[LogLine],
+        store: &LogStore,
         filtered_indices: &[usize],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
@@ -275,17 +269,16 @@ impl Histogram {
             bar_width,
             dark_mode,
         );
-        Self::draw_markers(&painter, rect, lines, start_time, bucket_size, markers);
+        Self::draw_markers(&painter, rect, store, start_time, bucket_size, markers);
         Self::draw_selected_indicator(&painter, rect, selected_bucket, bar_width);
 
         // Handle hover tooltip for markers
-        Self::handle_marker_hover(ui, &response, rect, lines, start_time, bucket_size, markers);
-
+        Self::handle_marker_hover(ui, &response, rect, store, start_time, bucket_size, markers);
         Self::handle_click(
             &response,
             rect,
             bar_width,
-            lines,
+            store,
             filtered_indices,
             start_time,
             bucket_size,
@@ -376,7 +369,7 @@ impl Histogram {
     fn draw_markers(
         painter: &egui::Painter,
         rect: egui::Rect,
-        lines: &[LogLine],
+        store: &LogStore,
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
         markers: &[HistogramMarker],
@@ -386,10 +379,7 @@ impl Histogram {
 
         for marker in markers {
             for &line_idx in &marker.indices {
-                if line_idx >= lines.len() {
-                    continue;
-                }
-                let ts = lines[line_idx].timestamp;
+                let ts = store.get_by_id(line_idx).unwrap().timestamp;
                 let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
 
                 let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
@@ -403,7 +393,7 @@ impl Histogram {
         ui: &mut Ui,
         response: &egui::Response,
         rect: egui::Rect,
-        lines: &[LogLine],
+        store: &LogStore,
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
         markers: &[HistogramMarker],
@@ -426,10 +416,7 @@ impl Histogram {
 
         for marker in markers {
             for &line_idx in &marker.indices {
-                if line_idx >= lines.len() {
-                    continue;
-                }
-                let ts = lines[line_idx].timestamp;
+                let ts = store.get_by_id(line_idx).unwrap().timestamp;
                 let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
                 let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
 
@@ -437,7 +424,11 @@ impl Histogram {
                 if distance < hover_threshold
                     && closest_match.as_ref().is_none_or(|m| distance < m.distance)
                 {
-                    closest_match = Some(MarkerMatch { marker, distance, x_pos: x });
+                    closest_match = Some(MarkerMatch {
+                        marker,
+                        distance,
+                        x_pos: x,
+                    });
                 }
             }
         }
@@ -473,7 +464,7 @@ impl Histogram {
         response: &egui::Response,
         rect: egui::Rect,
         bar_width: f32,
-        lines: &[LogLine],
+        store: &LogStore,
         filtered_indices: &[usize],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
@@ -495,7 +486,7 @@ impl Histogram {
             bucket_start_time + ((relative_x % bar_width) / bar_width * bucket_size as f32) as i64;
 
         let closest_idx = Self::find_closest_line_in_bucket(
-            lines,
+            store,
             filtered_indices,
             start_time,
             bucket_size,
@@ -503,13 +494,11 @@ impl Histogram {
             click_time_in_bucket,
         );
 
-        closest_idx
-            .filter(|&idx| idx < lines.len())
-            .map(|line_index| HistogramClickEvent { line_index })
+        closest_idx.map(|line_index| HistogramClickEvent { line_index })
     }
 
     fn find_closest_line_in_bucket(
-        lines: &[LogLine],
+        store: &LogStore,
         filtered_indices: &[usize],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
@@ -520,7 +509,7 @@ impl Histogram {
         let mut min_diff = i64::MAX;
 
         for &line_idx in filtered_indices {
-            let ts = lines[line_idx].timestamp;
+            let ts = store.get_by_id(line_idx).unwrap().timestamp;
             let line_bucket = timestamp_to_bucket(ts, start_time, bucket_size);
 
             if line_bucket == clicked_bucket {
@@ -537,7 +526,7 @@ impl Histogram {
             let bucket_center_time =
                 start_time.timestamp() + ((clicked_bucket as f64 + 0.5) * bucket_size) as i64;
             for &line_idx in filtered_indices {
-                let ts = lines[line_idx].timestamp;
+                let ts = store.get_by_id(line_idx).unwrap().timestamp;
                 let diff = (ts.timestamp() - bucket_center_time).abs();
                 if diff < min_diff {
                     min_diff = diff;
@@ -553,7 +542,7 @@ impl Histogram {
         ui: &mut Ui,
         start_time: chrono::DateTime<chrono::Local>,
         end_time: chrono::DateTime<chrono::Local>,
-        lines: &[LogLine],
+        store: &LogStore,
         selected_line_index: usize,
     ) {
         let dark_mode = ui.visuals().dark_mode;
@@ -562,14 +551,14 @@ impl Histogram {
         } else {
             Color32::from_rgb(180, 120, 0) // Dark golden/orange for light mode
         };
-        
+
         ui.horizontal(|ui| {
             ui.label(format!(
                 "Timeline: {} → {}",
                 start_time.format("%H:%M:%S"),
                 end_time.format("%H:%M:%S")
             ));
-            let sel_ts = lines[selected_line_index].timestamp;
+            let sel_ts = store.get_by_id(selected_line_index).unwrap().timestamp;
             ui.separator();
             ui.colored_label(
                 selected_color,

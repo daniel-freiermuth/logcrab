@@ -31,6 +31,7 @@ rayon = "1.10"
 dhat = { version = "0.3", optional = true }
 puffin = { version = "0.19", optional = true }
 puffin_egui = { version = "0.29", optional = true }
+im = { version = "15.1.0", features = ["rayon"] }
 
 # Release profile optimizations
 [profile.release]

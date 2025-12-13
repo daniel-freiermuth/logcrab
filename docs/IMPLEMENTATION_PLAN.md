@@ -42,6 +42,7 @@ Incremental steps to implement the multi-source architecture. Each step is a shi
 - User sees lines appearing progressively
 - Same pattern as tailing — just stops at EOF
 - **Immediate UX win** for large files
+- **Future improvement**: Score lines progressively as chunks arrive (currently scoring waits until full load)
 
 ---
 

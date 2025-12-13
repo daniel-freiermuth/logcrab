@@ -26,8 +26,8 @@ pub use histogram::{Histogram, HistogramMarker};
 pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
+use crate::core::LogStore;
 use crate::input::ShortcutAction;
-use crate::parser::line::LogLine;
 use crate::ui::log_view::{FilterHighlight, LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
@@ -95,13 +95,13 @@ impl FilterView {
         );
         self.should_focus_search = false;
 
-        let lines = &log_view_state.lines;
+        let store = &log_view_state.store;
         // Handle filter bar events
         for event in filter_bar_events {
             match event {
                 FilterInternalEvent::SearchChanged
                 | FilterInternalEvent::CaseInsensitiveToggled => {
-                    self.state.request_filter_update(Arc::clone(lines));
+                    self.state.request_filter_update(Arc::clone(store));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::FavoriteSelected {
@@ -110,7 +110,7 @@ impl FilterView {
                 } => {
                     self.state.search_text = search_text;
                     self.state.case_sensitive = case_sensitive;
-                    self.state.request_filter_update(Arc::clone(lines));
+                    self.state.request_filter_update(Arc::clone(store));
                     events.push(FilterViewEvent::FilterModified);
                 }
                 FilterInternalEvent::FilterNameEditRequested => {
@@ -120,6 +120,12 @@ impl FilterView {
                     events.push(FilterViewEvent::FavoriteToggled);
                 }
             }
+        }
+
+        // Check if we need to recompute based on version (Step 9)
+        if self.state.cached_for_version != store.version() {
+            log::trace!("Filter cache invalid for version {}", store.version());
+            self.state.request_filter_update(Arc::clone(store));
         }
 
         ui.separator();
@@ -138,10 +144,9 @@ impl FilterView {
         // Render histogram
         if let Some(hist_event) = Histogram::render(
             ui,
-            lines,
+            store,
             &self.state.filtered_indices,
             selected_line_index,
-            log_view_state.scores.as_deref(),
             global_config.hide_epoch_in_histogram,
             histogram_markers,
         ) {
@@ -155,8 +160,7 @@ impl FilterView {
         // Render log table
         let table_events = LogTable::render(
             ui,
-            log_view_state,
-            lines,
+            store,
             &self.state,
             self.uuid,
             selected_line_index,
@@ -323,8 +327,8 @@ impl FilterView {
         self.move_selection_in_filter(PAGE_SIZE, data_state);
     }
 
-    pub fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>) {
-        self.state.request_filter_update(lines);
+    pub fn request_filter_update(&mut self, store: Arc<LogStore>) {
+        self.state.request_filter_update(store);
     }
 }
 

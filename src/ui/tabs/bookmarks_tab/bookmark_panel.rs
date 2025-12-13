@@ -18,7 +18,9 @@
 
 use crate::parser::line::LogLine;
 use crate::ui::log_view::{FilterHighlight, LogViewState};
-use crate::ui::tabs::filter_tab::log_table::{self, bookmarked_row_color, selected_row_color};
+use crate::ui::tabs::filter_tab::log_table::{
+    bookmarked_row_color, score_to_color, selected_row_color,
+};
 use chrono::DateTime;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -162,21 +164,36 @@ impl BookmarkPanel {
         let row_index = row.index();
         let bookmark = &bookmarks[row_index];
         let line_idx = bookmark.line_index;
-        let lines = &log_view_state.lines;
 
         let is_selected = log_view_state.selected_line_index == line_idx;
-        let color = if let Some(score) = &log_view_state.scores {
-            log_table::score_to_color(score[line_idx], dark_mode)
-        } else if dark_mode {
-            Color32::WHITE
+
+        let line = if let Some(line) = log_view_state.store.get_by_id(line_idx) {
+            line
         } else {
-            Color32::BLACK
+            row.col(|ui| {
+                ui.label("Loading...");
+            });
+            row.col(|_| {});
+            row.col(|_| {});
+            row.col(|_| {});
+            row.col(|_| {});
+            return;
         };
+
+        let color = score_to_color(line.anomaly_score, dark_mode);
 
         let mut row_clicked = false;
 
         // Line number column
-        Self::render_line_column(row, line_idx, is_selected, color, lines, &mut row_clicked, dark_mode);
+        Self::render_line_column(
+            row,
+            line_idx,
+            is_selected,
+            color,
+            &mut row_clicked,
+            &line,
+            dark_mode,
+        );
 
         // Timestamp column
         Self::render_timestamp_column(
@@ -209,7 +226,7 @@ impl BookmarkPanel {
             line_idx,
             is_selected,
             color,
-            lines,
+            &line,
             all_filter_highlights,
             &mut row_clicked,
             dark_mode,
@@ -230,14 +247,14 @@ impl BookmarkPanel {
         line_idx: usize,
         is_selected: bool,
         color: Color32,
-        lines: &[LogLine],
         row_clicked: &mut bool,
+        line: &LogLine,
         dark_mode: bool,
     ) {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            let line_number = lines[line_idx].line_number;
+            let line_number = line.line_number;
             let text = if is_selected {
                 RichText::new(format!("★ ▶ {line_number}"))
                     .color(color)
@@ -366,7 +383,7 @@ impl BookmarkPanel {
         line_idx: usize,
         is_selected: bool,
         color: Color32,
-        lines: &[LogLine],
+        line: &LogLine,
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
         dark_mode: bool,
@@ -374,9 +391,13 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            let message = &lines[line_idx].message;
-            let job =
-                FilterHighlight::highlight_text_with_filters(message, color, all_filter_highlights, dark_mode);
+            let message = &line.message;
+            let job = FilterHighlight::highlight_text_with_filters(
+                message,
+                color,
+                all_filter_highlights,
+                dark_mode,
+            );
             ui.label(job);
 
             let response = ui.interact(
@@ -415,10 +436,7 @@ impl BookmarkPanel {
         } else {
             bookmarked_row_color(dark_mode)
         };
-        ui.painter().rect_filled(
-            ui.available_rect_before_wrap(),
-            0.0,
-            bg_color,
-        );
+        ui.painter()
+            .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
     }
 }
