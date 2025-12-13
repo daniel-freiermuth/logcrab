@@ -17,7 +17,8 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
-use crate::parser::{dlt, line::LogLine, parse_line};
+use crate::core::log_store::SourceData;
+use crate::parser::{dlt, parse_line};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -28,12 +29,12 @@ use std::thread;
 /// Messages sent during background file loading
 pub enum LoadMessage {
     Progress(f32, String),
-    Complete(Arc<Vec<LogLine>>, PathBuf),
+    Complete(PathBuf),
     Error(String),
     /// Sent periodically during scoring with progress updates
     ScoringProgress(String),
-    /// Sent when scoring is complete with updated lines
-    ScoringComplete(Vec<f64>),
+    /// Sent when scoring is complete (scores stored directly on SourceData)
+    ScoringComplete,
 }
 
 /// Progress callback type for DLT parsing
@@ -53,21 +54,27 @@ pub struct LogFileLoader;
 impl LogFileLoader {
     /// Start loading a file in the background
     /// Returns a receiver for progress updates and completion
-    pub fn load_async(path: PathBuf, ctx: egui::Context) -> Receiver<LoadMessage> {
+    pub fn load_async(
+        path: PathBuf,
+        ctx: egui::Context,
+    ) -> (Arc<SourceData>, Receiver<LoadMessage>) {
         let (tx, rx) = channel();
+        let data_source = Arc::new(SourceData::new());
+        let source_clone = data_source.clone();
 
         thread::spawn(move || {
-            Self::process_file_background(path, tx, ctx);
+            Self::process_file_background(path, source_clone, tx, ctx);
         });
 
-        rx
+        (data_source, rx)
     }
 
     fn read_dlt_file(
         path: PathBuf,
+        data_source: Arc<SourceData>,
         tx: Sender<LoadMessage>,
         ctx: egui::Context,
-    ) -> Arc<Vec<LogLine>> {
+    ) -> bool {
         log::info!("Detected DLT binary file, using dlt-core parser");
         let _ = tx.send(LoadMessage::Progress(
             0.0,
@@ -77,23 +84,27 @@ impl LogFileLoader {
 
         let progress_callback = make_progress_callback(tx.clone(), ctx.clone());
 
-        match dlt::parse_dlt_file_with_progress(&path, progress_callback) {
-            Ok(lines) => {
-                log::info!("Successfully parsed {} DLT messages", lines.len());
-                let lines_arc = Arc::new(lines);
-                let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path));
+        match dlt::parse_dlt_file_with_progress(&path, &data_source, progress_callback) {
+            Ok(total_lines) => {
+                log::info!("Successfully parsed {total_lines} DLT messages");
+                let _ = tx.send(LoadMessage::Complete(path));
                 ctx.request_repaint();
-                lines_arc
+                true
             }
             Err(e) => {
                 log::error!("Failed to parse DLT file: {e}");
                 let _ = tx.send(LoadMessage::Error(format!("Failed to parse DLT file: {e}")));
-                Arc::new(Vec::new())
+                false
             }
         }
     }
 
-    fn process_file_background(path: PathBuf, tx: Sender<LoadMessage>, ctx: egui::Context) {
+    fn process_file_background(
+        path: PathBuf,
+        data_source: Arc<SourceData>,
+        tx: Sender<LoadMessage>,
+        ctx: egui::Context,
+    ) {
         let start_time = std::time::Instant::now();
         log::debug!(
             "Starting background file processing for: {}",
@@ -116,38 +127,42 @@ impl LogFileLoader {
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"));
 
-        // If it's a DLT file, parse it differently
-        let lines_arc = if is_dlt_file {
-            Self::read_dlt_file(path.clone(), tx.clone(), ctx.clone())
+        // Load file - both DLT and generic files use progressive loading now
+        let source_added = if is_dlt_file {
+            // DLT files use incremental loading with chunks
+            Self::read_dlt_file(path.clone(), data_source.clone(), tx.clone(), ctx.clone())
         } else {
-            Self::read_generic_file(path.clone(), tx.clone(), ctx.clone(), start_time, file_size)
+            // Generic files use progressive loading, add to store directly
+            Self::read_generic_file(
+                path.clone(),
+                data_source.clone(),
+                tx.clone(),
+                ctx.clone(),
+                start_time,
+                file_size,
+            )
         };
 
-        if !lines_arc.is_empty() {
-            Self::score_and_send_lines(
-                &lines_arc,
-                &path,
-                &tx,
-                &ctx,
-                start_time,
-            );
+        if source_added && !data_source.is_empty() {
+            Self::score_and_send_lines(data_source, &path, &tx, &ctx, start_time);
         }
     }
 
     fn read_generic_file(
         path: PathBuf,
+        source: Arc<SourceData>,
         tx: Sender<LoadMessage>,
         ctx: egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
-    ) -> Arc<Vec<LogLine>> {
+    ) -> bool {
         let progress_callback = make_progress_callback(tx.clone(), ctx.clone());
 
         let file = File::open(&path);
         if let Err(e) = file {
             log::error!("Cannot open file: {e}");
             let _ = tx.send(LoadMessage::Error(format!("Cannot open file: {e}")));
-            return Arc::new(Vec::new());
+            return false;
         }
 
         // Read file with lossy UTF-8 conversion to handle non-UTF8 characters
@@ -157,7 +172,7 @@ impl LogFileLoader {
         if let Err(e) = file.read_to_end(&mut buffer) {
             log::error!("Cannot read file content: {e}");
             let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {e}")));
-            return Arc::new(Vec::new());
+            return false;
         }
 
         let read_duration = read_start.elapsed();
@@ -189,13 +204,15 @@ impl LogFileLoader {
             null_count
         );
 
-        let mut lines = Vec::new();
+        let mut chunk_lines = Vec::new();
 
         let mut bytes_read: usize = 0;
 
-        // First pass: parse lines WITHOUT scoring for fast display
+        // Progressive loading: parse lines in chunks
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("parse_lines");
+
+        const CHUNK_SIZE: usize = 10_000; // Send update every 10k lines
 
         let parse_start = std::time::Instant::now();
         let mut file_line_number = 0;
@@ -210,7 +227,11 @@ impl LogFileLoader {
                 let progress = (bytes_read as f32 / file_size as f32).min(1.0);
                 progress_callback(
                     progress,
-                    &format!("Loading {}... ({} lines)", path.display(), lines.len()),
+                    &format!(
+                        "Loading {}... ({} lines)",
+                        path.display(),
+                        source.len() + chunk_lines.len()
+                    ),
                 );
             }
 
@@ -222,14 +243,33 @@ impl LogFileLoader {
                 continue; // Skip lines without timestamp
             };
 
-            lines.push(log_line);
+            chunk_lines.push(log_line);
+
+            if chunk_lines.len() >= CHUNK_SIZE {
+                // Append chunk to store and send partial update
+                source.append_lines(std::mem::take(&mut chunk_lines));
+                let progress = (bytes_read as f32 / file_size as f32).min(1.0);
+
+                let _ = tx.send(LoadMessage::Progress(
+                    progress,
+                    format!("Loading {}... ({} lines)", path.display(), source.len()),
+                ));
+                ctx.request_repaint();
+
+                log::debug!("Sent partial load: {} lines", source.len());
+            }
+        }
+
+        // Append any remaining lines
+        if !chunk_lines.is_empty() {
+            source.append_lines(chunk_lines);
         }
 
         let parse_duration = parse_start.elapsed();
         log::info!(
             "Parsing took {:?} to process {} lines from {}",
             parse_duration,
-            lines.len(),
+            source.len(),
             path.display()
         );
         log::info!("Total bytes read: {bytes_read}");
@@ -237,28 +277,19 @@ impl LogFileLoader {
             "Line processing stats: file_line_number={}, lines_in_content={}, parsed_lines={}, skipped={}",
             file_line_number,
             total_lines_in_content,
-            lines.len(),
-            file_line_number - lines.len()
+            source.len(),
+            file_line_number - source.len()
         );
 
-        // Wrap in Arc for cheap cloning
-        let arc_start = std::time::Instant::now();
-        let lines_arc = Arc::new(lines);
-        log::info!("Arc wrapping took {:?}", arc_start.elapsed());
-
-        // Send the parsed lines immediately so user can start working
-        // Arc clone is cheap (just increments reference count)
-        let send_start = std::time::Instant::now();
-        let _ = tx.send(LoadMessage::Complete(Arc::clone(&lines_arc), path));
+        let _ = tx.send(LoadMessage::Complete(path));
         ctx.request_repaint();
-        log::info!("Sending Complete message took {:?}", send_start.elapsed());
         log::info!("Total time to display file: {:?}", start_time.elapsed());
-        lines_arc
+        true
     }
 
     /// Helper to score and send lines (used for both text and DLT files)
     fn score_and_send_lines(
-        lines_arc: &Arc<Vec<LogLine>>,
+        data_source: Arc<SourceData>,
         path: &Path,
         tx: &Sender<LoadMessage>,
         ctx: &egui::Context,
@@ -269,7 +300,7 @@ impl LogFileLoader {
         let score_start = std::time::Instant::now();
         log::debug!(
             "Starting background anomaly scoring for {} lines",
-            lines_arc.len()
+            data_source.len()
         );
 
         let mut scorer = create_default_scorer();
@@ -278,9 +309,9 @@ impl LogFileLoader {
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("score_lines");
 
-        let total_lines = lines_arc.len();
+        let total_lines = data_source.len();
 
-        for (idx, log_line) in lines_arc.iter().enumerate() {
+        for (idx, log_line) in data_source.clone_lines().into_iter().enumerate() {
             if idx % 1000 == 0 {
                 let _ = tx.send(LoadMessage::ScoringProgress(format!(
                     "Scoring... ({idx}/{total_lines})"
@@ -289,9 +320,9 @@ impl LogFileLoader {
             }
 
             if idx > N_SKIP_INITIAL - 1 {
-                raw_scores.push(scorer.score(log_line));
+                raw_scores.push(scorer.score(&log_line));
             };
-            scorer.update(log_line);
+            scorer.update(&log_line);
         }
 
         let _ = tx.send(LoadMessage::ScoringProgress(
@@ -326,13 +357,16 @@ impl LogFileLoader {
             );
         }
 
+        // Store scores directly on the source
+        data_source.set_scores(&normalized_scores);
+
         let score_duration = score_start.elapsed();
         log::info!(
             "Anomaly scoring took {score_duration:?} for {}",
             path.display()
         );
         log::info!("Total processing time: {:?}", start_time.elapsed());
-        let _ = tx.send(LoadMessage::ScoringComplete(normalized_scores));
+        let _ = tx.send(LoadMessage::ScoringComplete);
         ctx.request_repaint();
     }
 }

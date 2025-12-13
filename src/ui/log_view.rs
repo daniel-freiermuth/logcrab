@@ -16,8 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 use crate::config::GlobalConfig;
+use crate::core::LogStore;
 use crate::input::ShortcutAction;
-use crate::parser::line::LogLine;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::{
     navigation, BookmarksView, FilterView, LogCrabTab, LogCrabTabViewer, PendingTabAdd,
@@ -358,8 +358,7 @@ pub struct LogView {
 }
 
 pub struct LogViewState {
-    pub lines: Arc<Vec<LogLine>>,
-    pub scores: Option<Vec<f64>>,
+    pub store: Arc<LogStore>,
     // Selected line tracking
     pub selected_line_index: usize,
     // Bookmarks with names
@@ -389,8 +388,7 @@ impl LogViewState {
 }
 
 impl LogView {
-    pub fn new(lines: Arc<Vec<LogLine>>, crab_file: PathBuf) -> Self {
-        assert!(!lines.is_empty(), "LogView requires at least one log line");
+    pub fn new(store: Arc<LogStore>, crab_file: PathBuf) -> Self {
         let mut view = Self {
             crab_file,
             dock_state: DockState::new(Vec::new()),
@@ -398,8 +396,7 @@ impl LogView {
             pending_tab_add: None,
             state: LogViewState {
                 filter_history: Vec::new(),
-                lines,
-                scores: None,
+                store,
                 selected_line_index: 0,
                 bookmarks: HashMap::new(),
                 modified: false,
@@ -431,7 +428,6 @@ impl LogView {
         if focus_search {
             filter.focus_search_next_frame();
         }
-        filter.request_filter_update(self.state.lines.clone());
         self.dock_state.push_to_focused_leaf(filter);
         self.monotonic_filter_counter += 1;
     }
@@ -713,9 +709,11 @@ impl LogView {
 impl LogViewState {
     pub fn toggle_bookmark(&mut self, line_index: usize) {
         if let std::collections::hash_map::Entry::Vacant(e) = self.bookmarks.entry(line_index) {
-            let timestamp = self.lines[line_index].timestamp;
+            let line = self.store.get_by_id(line_index).unwrap();
+            let timestamp = line.timestamp;
+            let line_number = line.line_number;
 
-            let bookmark_name = format!("Line {}", self.lines[line_index].line_number);
+            let bookmark_name = format!("Line {}", line_number);
 
             log::debug!("Adding bookmark: {bookmark_name}");
             e.insert(Bookmark {

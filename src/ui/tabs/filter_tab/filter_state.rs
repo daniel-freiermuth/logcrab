@@ -16,10 +16,9 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::parser::line::LogLine;
+use crate::core::LogStore;
 use egui::Color32;
 use fancy_regex::{Error, Regex};
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -30,7 +29,7 @@ use std::sync::{Arc, OnceLock};
 struct FilterRequest {
     filter_id: usize, // Unique identifier for each filter instance
     regex: Option<Regex>,
-    lines: Arc<Vec<LogLine>>,        // Shared read-only access to log lines
+    store: Arc<LogStore>,            // Shared read-only access to log store
     result_tx: Sender<FilterResult>, // Each filter has its own result channel
 }
 
@@ -111,27 +110,18 @@ impl GlobalFilterWorker {
                     #[cfg(feature = "cpu-profiling")]
                     puffin::profile_scope!(
                         "filter_lines",
-                        format!("{} lines", request.lines.len())
+                        format!("{} lines", request.store.total_lines())
                     );
 
                     if let Some(ref regex) = request.regex {
                         // Parallel filtering with rayon
-                        request.lines
-                            .par_iter()
-                            .enumerate()
-                            .filter_map(|(idx, line)| {
-                                if regex.is_match(&line.message).unwrap_or(false)
-                                    || regex.is_match(&line.raw).unwrap_or(false)
-                                {
-                                    Some(idx)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>()
+                        request.store.get_matching_ids(|line| {
+                            regex.is_match(&line.message).unwrap_or(false)
+                                || regex.is_match(&line.raw).unwrap_or(false)
+                        })
                     } else {
                         // No filter: all indices match
-                        (0..request.lines.len()).collect()
+                        (0..request.store.total_lines()).collect()
                     }
                 };
 
@@ -176,6 +166,9 @@ pub struct FilterState {
     pub globally_visible: bool, // Whether this filter's highlights should be shown in all tabs
     pub show_in_histogram: bool, // Whether to show vertical markers in the histogram
 
+    // Version-based cache invalidation (Step 9)
+    pub cached_for_version: u64,
+
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
     filter_result_tx: Sender<FilterResult>, // Keep sender to create requests
@@ -203,6 +196,7 @@ impl FilterState {
             color,
             globally_visible: true,
             show_in_histogram: false,
+            cached_for_version: 0,
             filter_result_rx,
             filter_result_tx: result_tx,
         }
@@ -220,25 +214,28 @@ impl FilterState {
     }
 
     /// Send a filter request to the background thread
-    pub fn request_filter_update(&mut self, lines: Arc<Vec<LogLine>>) {
+    pub fn request_filter_update(&mut self, store: Arc<LogStore>) {
         self.update_search_regex();
 
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_function!();
 
+        self.cached_for_version = store.version();
+
         // Only mark as filtering if we have search text
         if !self.search_text.is_empty() {
             log::debug!(
-                "Filter {}: Started background filtering for search: '{}'",
+                "Filter {}: Started background filtering for search: '{}' (version: {})",
                 self.filter_id,
-                self.search_text
+                self.search_text,
+                store.version()
             );
         }
 
         let request = FilterRequest {
             filter_id: self.filter_id,
             regex: self.search_regex.as_ref().ok().cloned(),
-            lines,
+            store,
             result_tx: self.filter_result_tx.clone(),
         };
 

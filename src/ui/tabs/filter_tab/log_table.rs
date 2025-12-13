@@ -17,11 +17,9 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
+    core::LogStore,
     parser::line::LogLine,
-    ui::{
-        log_view::{FilterHighlight, LogViewState},
-        tabs::filter_tab::filter_state::FilterState,
-    },
+    ui::{log_view::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -138,8 +136,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         ui: &mut Ui,
-        log_view_state: &LogViewState,
-        lines: &[LogLine],
+        store: &LogStore,
         filter: &FilterState,
         ui_salt: usize,
         selected_line_index: usize,
@@ -161,8 +158,7 @@ impl LogTable {
 
                 Self::render_table_with_header(
                     table,
-                    log_view_state,
-                    lines,
+                    store,
                     filter,
                     ui_salt,
                     selected_line_index,
@@ -204,8 +200,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_table_with_header(
         table: TableBuilder,
-        log_view_state: &LogViewState,
-        lines: &[LogLine],
+        store: &LogStore,
         filter: &FilterState,
         ui_salt: usize,
         selected_line_index: usize,
@@ -221,8 +216,7 @@ impl LogTable {
             .body(|body| {
                 Self::render_table_body(
                     body,
-                    log_view_state,
-                    lines,
+                    store,
                     filter,
                     ui_salt,
                     selected_line_index,
@@ -252,8 +246,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_table_body(
         body: egui_extras::TableBody,
-        log_view_state: &LogViewState,
-        lines: &[LogLine],
+        store: &LogStore,
         filter: &FilterState,
         ui_salt: usize,
         selected_line_index: usize,
@@ -267,8 +260,7 @@ impl LogTable {
         body.rows(18.0, visible_lines, |mut row| {
             let event = Self::render_table_row(
                 &mut row,
-                log_view_state,
-                lines,
+                store,
                 filter,
                 ui_salt,
                 selected_line_index,
@@ -286,8 +278,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_table_row(
         row: &mut egui_extras::TableRow,
-        log_view_state: &LogViewState,
-        lines: &[LogLine],
+        store: &LogStore,
         filter: &FilterState,
         ui_salt: usize,
         selected_line_index: usize,
@@ -297,24 +288,18 @@ impl LogTable {
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
         let line_idx = filter.filtered_indices[row_index];
-        let line = &lines[line_idx];
+        let line = store.get_by_id(line_idx).unwrap();
 
         let is_selected = selected_line_index == line_idx;
         let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
-        let color = if let Some(score) = &log_view_state.scores {
-            score_to_color(score[line_idx], dark_mode)
-        } else if dark_mode {
-            Color32::WHITE
-        } else {
-            Color32::BLACK
-        };
+        let color = score_to_color(line.anomaly_score, dark_mode);
 
         let mut row_clicked = false;
         let mut row_right_clicked = false;
 
         Self::render_all_columns(
             row,
-            line,
+            &line,
             line_idx,
             ui_salt,
             is_selected,
@@ -322,7 +307,6 @@ impl LogTable {
             color,
             bookmarked_lines,
             all_filter_highlights,
-            log_view_state,
             &mut row_clicked,
             &mut row_right_clicked,
             dark_mode,
@@ -352,7 +336,6 @@ impl LogTable {
         color: Color32,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
-        log_view_state: &LogViewState,
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
         dark_mode: bool,
@@ -403,7 +386,7 @@ impl LogTable {
 
         Self::render_score_column(
             row,
-            log_view_state,
+            line,
             line_idx,
             ui_salt,
             is_selected,
@@ -620,7 +603,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_score_column(
         row: &mut egui_extras::TableRow,
-        log_view_state: &LogViewState,
+        line: &LogLine,
         line_idx: usize,
         ui_salt: usize,
         is_selected: bool,
@@ -651,11 +634,7 @@ impl LogTable {
                 );
             }
 
-            let anomaly_str = if let Some(score) = &log_view_state.scores {
-                format!("{:.1}", score[line_idx])
-            } else {
-                "-".to_string()
-            };
+            let anomaly_str = format!("{:.1}", line.anomaly_score);
             let text = RichText::new(anomaly_str).strong().color(color);
             ui.label(text);
 

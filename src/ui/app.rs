@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use crate::config::GlobalConfig;
-use crate::core::{LoadMessage, LogFileLoader};
+use crate::core::{LoadMessage, LogFileLoader, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
 use crate::ui::tabs::BookmarksView;
@@ -119,15 +119,26 @@ impl LogCrabApp {
             }
         }
 
-        self.log_view = None;
         self.current_file = Some(path.clone());
         self.update_window_title(&ctx);
         self.is_loading = true;
         self.load_progress = 0.0;
         self.status_message = format!("Loading {}...", path.display());
 
-        let rx = LogFileLoader::load_async(path, ctx);
+        // Create a new store for this file
+        let store = LogStore::new();
+
+        let (source, rx) = LogFileLoader::load_async(path.clone(), ctx);
         self.load_receiver = Some(rx);
+        store.add_source(source);
+
+        // Create LogView immediately - it will show lines as they stream in
+        let mut crab_path = path.clone();
+        crab_path.set_file_name(format!(
+            "{}.crab",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        self.log_view = Some(LogView::new(store, crab_path));
     }
 
     /// Show file dialog and load selected file
@@ -169,21 +180,15 @@ impl LogCrabApp {
                     self.load_progress = progress;
                     self.status_message = status;
                 }
-                LoadMessage::Complete(lines, path) => {
-                    let n_lines = lines.len();
-                    self.status_message = format!(
-                        "Loaded {n_lines} lines - calculating anomaly scores in background..."
-                    );
-                    self.is_loading = false;
-                    self.load_progress = 0.0;
-
-                    if n_lines > 0 {
-                        let mut crab_path = path.clone();
-                        crab_path.set_file_name(format!(
-                            "{}.crab",
-                            path.file_name().unwrap().to_string_lossy()
-                        ));
-                        self.log_view = Some(LogView::new(lines, crab_path));
+                LoadMessage::Complete(_path) => {
+                    if let Some(ref log_view) = self.log_view {
+                        let store = log_view.state.store.clone();
+                        let n_lines = store.total_lines();
+                        self.status_message = format!(
+                            "Loaded {n_lines} lines - calculating anomaly scores in background..."
+                        );
+                        self.is_loading = false;
+                        self.load_progress = 0.0;
                     }
                     self.update_window_title(ctx);
                     // Keep receiver open for scoring progress
@@ -191,14 +196,7 @@ impl LogCrabApp {
                 LoadMessage::ScoringProgress(status) => {
                     self.status_message = status;
                 }
-                LoadMessage::ScoringComplete(scores) => {
-                    let n_lines = scores.len();
-                    if let Some(ref mut log_view) = self.log_view {
-                        log_view.state.scores = Some(scores);
-                    }
-                    self.status_message =
-                        format!("Ready. {n_lines} lines loaded with anomaly scores");
-                    self.load_progress = 1.0;
+                LoadMessage::ScoringComplete => {
                     should_clear_receiver = true;
                 }
                 LoadMessage::Error(err) => {
@@ -423,12 +421,8 @@ impl LogCrabApp {
             painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
 
             let font = TextStyle::Heading.resolve(&ctx.style());
-            let mut layout_job = LayoutJob::simple(
-                text,
-                font,
-                Color32::WHITE,
-                screen_rect.width() - 40.0,
-            );
+            let mut layout_job =
+                LayoutJob::simple(text, font, Color32::WHITE, screen_rect.width() - 40.0);
             layout_job.wrap.max_width = screen_rect.width() - 40.0;
 
             let galley = painter.layout_job(layout_job);

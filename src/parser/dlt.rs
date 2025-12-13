@@ -1,4 +1,5 @@
 use crate::core::log_file::ProgressCallback;
+use crate::core::log_store::SourceData;
 
 use super::line::LogLine;
 use chrono::{DateTime, Local, TimeDelta, TimeZone};
@@ -9,6 +10,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Format a time difference with 4 significant digits and appropriate unit
 fn format_time_diff(diff: TimeDelta) -> String {
@@ -123,11 +125,21 @@ impl<R: Read> Read for ProgressReader<R> {
     }
 }
 
-/// Parse a DLT binary file with optional progress reporting
+/// Chunk size for incremental loading (send update every N lines)
+const DLT_CHUNK_SIZE: usize = 10_000;
+
+/// Parse a DLT binary file with incremental loading
+///
+/// Appends parsed lines directly to `source` in batches for progressive display.
+/// Calls `progress_callback` periodically with progress updates.
+/// Bumps store version after each chunk and marks source as done when complete.
+///
+/// Returns total number of lines parsed, or error.
 pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     path: P,
+    source: &Arc<SourceData>,
     progress_callback: ProgressCallback,
-) -> Result<Vec<LogLine>, String> {
+) -> Result<usize, String> {
     let path = path.as_ref();
 
     // Get file size for progress calculation
@@ -144,7 +156,7 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     let progress_reader = ProgressReader::new(BufReader::new(file));
     let bytes_read_counter = progress_reader.bytes_read_counter();
     let mut reader = DltMessageReader::new(progress_reader, true);
-    let mut lines = Vec::new();
+    let mut chunk_lines = Vec::new();
     let mut line_number = 1;
     let mut last_progress_update = 0u64;
 
@@ -152,18 +164,34 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
         match read_message(&mut reader, None) {
             Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
                 if let Some(log_line) = convert_dlt_message(&msg, line_number, boot_time) {
-                    lines.push(log_line);
+                    chunk_lines.push(log_line);
                     line_number += 1;
 
-                    // Report progress every ~1MB or 500 messages
-                    let bytes_read = bytes_read_counter.get();
-                    if bytes_read - last_progress_update > 1_000_000 || line_number % 500 == 0 {
-                        last_progress_update = bytes_read;
+                    // Send chunk when we have enough lines
+                    if chunk_lines.len() >= DLT_CHUNK_SIZE {
+                        source.append_lines(std::mem::take(&mut chunk_lines));
+
+                        let bytes_read = bytes_read_counter.get();
                         let progress = bytes_read as f32 / file_size as f32;
                         progress_callback(
                             progress,
-                            &format!("Parsing DLT... ({} messages)", lines.len()),
+                            &format!("Parsing DLT... ({} messages)", source.len()),
                         );
+                        last_progress_update = bytes_read;
+                    } else {
+                        // Report progress every ~1MB or 500 messages even without chunk
+                        let bytes_read = bytes_read_counter.get();
+                        if bytes_read - last_progress_update > 1_000_000 || line_number % 500 == 0 {
+                            last_progress_update = bytes_read;
+                            let progress = bytes_read as f32 / file_size as f32;
+                            progress_callback(
+                                progress,
+                                &format!(
+                                    "Parsing DLT... ({} messages)",
+                                    source.len() + chunk_lines.len()
+                                ),
+                            );
+                        }
                     }
                 } else {
                     log::warn!("Skipped DLT message without valid timestamp");
@@ -179,11 +207,17 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
             }
         }
     }
-    if lines.is_empty() {
+
+    // Send any remaining lines
+    if !chunk_lines.is_empty() {
+        source.append_lines(chunk_lines);
+    }
+
+    if source.is_empty() {
         Err("No valid DLT messages found in file".to_string())
     } else {
-        log::info!("Parsed {} DLT messages", lines.len());
-        Ok(lines)
+        log::info!("Parsed {} DLT messages", source.len());
+        Ok(source.len())
     }
 }
 
@@ -284,5 +318,6 @@ fn convert_dlt_message(
         timestamp,
         message,
         template_key: String::new(),
+        anomaly_score: 0.0,
     })
 }
