@@ -83,6 +83,7 @@ impl Histogram {
         // Filter out January 1st timestamps if requested
         let filtered_indices_vec: Vec<usize>;
         let effective_filtered_indices = if hide_epoch {
+            profiling::scope!("Histogram::filter_epoch");
             filtered_indices_vec = filtered_indices
                 .iter()
                 .filter_map(|idx| {
@@ -177,6 +178,7 @@ impl Histogram {
         chrono::DateTime<chrono::Local>,
         chrono::DateTime<chrono::Local>,
     )> {
+        profiling::scope!("Histogram::calculate_time_range");
         let first_ts = filtered_indices
             .iter()
             .map(|&idx| store.get_by_id(idx).unwrap().timestamp)
@@ -199,6 +201,7 @@ impl Histogram {
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
     ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
+        profiling::scope!("Histogram::create_buckets");
         let mut buckets = vec![0usize; NUM_BUCKETS];
         let mut anomaly_distributions = vec![AnomalyDistribution::default(); NUM_BUCKETS];
 
@@ -376,6 +379,7 @@ impl Histogram {
         bucket_size: f64,
         markers: &[HistogramMarker],
     ) {
+        profiling::scope!("Histogram::draw_markers");
         let total_width = rect.width();
         let total_time = NUM_BUCKETS as f64 * bucket_size;
 
@@ -547,6 +551,7 @@ impl Histogram {
         store: &LogStore,
         selected_line_index: usize,
     ) {
+        profiling::scope!("Histogram::render_timeline_labels");
         let dark_mode = ui.visuals().dark_mode;
         let selected_color = if dark_mode {
             Color32::YELLOW
