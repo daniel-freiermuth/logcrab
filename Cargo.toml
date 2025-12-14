@@ -9,7 +9,7 @@ authors = ["Daniel Freiermuth"]
 default = []
 profiling = ["ram-profiling", "cpu-profiling"]
 ram-profiling = ["dhat"]
-cpu-profiling = ["puffin", "puffin_egui"]
+cpu-profiling = ["profiling/profile-with-puffin", "puffin_http"]
 
 [dependencies]
 eframe = "0.33.2"
@@ -30,8 +30,8 @@ dlt-core = "0.20"
 rayon = "1.10"
 egui-toast = "0.19"
 dhat = { version = "0.3", optional = true }
-puffin = { version = "0.19", optional = true }
-puffin_egui = { version = "0.29", optional = true }
+profiling = { version = "1.0", default-features = false }
+puffin_http = { version = "0.16", optional = true }
 
 # Release profile optimizations
 [profile.release]

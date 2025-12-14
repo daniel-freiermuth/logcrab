@@ -196,8 +196,7 @@ impl LogFileLoader {
         let mut bytes_read: usize = 0;
 
         // Progressive loading: parse lines in chunks
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_scope!("parse_lines");
+        profiling::scope!("parse_lines");
 
         const CHUNK_SIZE: usize = 10_000; // Send update every 10k lines
 
@@ -300,8 +299,7 @@ impl LogFileLoader {
         let mut scorer = create_default_scorer();
         let mut raw_scores = Vec::new();
 
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_scope!("score_lines");
+        profiling::scope!("score_lines");
 
         let total_lines = data_source.len();
 
@@ -319,8 +317,7 @@ impl LogFileLoader {
 
         toast.update(0.95, "Normalizing scores...");
 
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_scope!("normalize_scores");
+        profiling::scope!("normalize_scores");
 
         let normalized_scores = vec![0.0; N_SKIP_INITIAL]
             .into_iter()

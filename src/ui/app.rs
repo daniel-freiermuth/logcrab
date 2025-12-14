@@ -46,10 +46,6 @@ pub struct LogCrabApp {
 
     /// Toast notification manager
     toast_manager: ToastManager,
-
-    /// Whether to show the CPU profiler window
-    #[cfg(feature = "cpu-profiling")]
-    show_profiler: bool,
 }
 
 impl LogCrabApp {
@@ -74,8 +70,6 @@ impl LogCrabApp {
             pending_rebind: None,
             pending_drop_file: None,
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
-            #[cfg(feature = "cpu-profiling")]
-            show_profiler: false,
         };
 
         // Load initial file if provided via command line
@@ -265,11 +259,6 @@ impl LogCrabApp {
                 ui.close();
             }
         });
-
-        #[cfg(feature = "cpu-profiling")]
-        ui.menu_button("Profiling", |ui| {
-            ui.checkbox(&mut self.show_profiler, "Show CPU Profiler");
-        });
     }
 
     /// Render bottom status panel
@@ -289,8 +278,7 @@ impl LogCrabApp {
 
     /// Render central content area with dock layout
     fn render_central_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_scope!("central_panel");
+        profiling::scope!("central_panel");
 
         // Preview hovering files
         Self::preview_files_being_dropped(ctx);
@@ -418,8 +406,7 @@ impl eframe::App for LogCrabApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_function!();
+        profiling::function_scope!();
 
         // Process pending dropped file
         if let Some(path) = self.pending_drop_file.take() {
@@ -459,13 +446,6 @@ impl eframe::App for LogCrabApp {
         // Show toast notifications
         self.toast_manager.show(ctx);
 
-        #[cfg(feature = "cpu-profiling")]
-        {
-            puffin::GlobalProfiler::lock().new_frame();
-
-            if self.show_profiler {
-                puffin_egui::profiler_window(ctx);
-            }
-        }
+        profiling::finish_frame!();
     }
 }

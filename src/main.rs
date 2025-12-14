@@ -75,10 +75,13 @@ fn main() -> eframe::Result<()> {
     };
 
     #[cfg(feature = "cpu-profiling")]
-    {
-        puffin::set_scopes_on(true);
-        log::info!("CPU profiling enabled");
-    }
+    let _puffin_server = {
+        profiling::puffin::set_scopes_on(true);  // Enable puffin profiling
+        let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);
+        log::info!("CPU profiling enabled - puffin server running on {}", server_addr);
+        log::info!("Run `puffin_viewer` to view the profiling data");
+        puffin_http::Server::new(&server_addr).expect("Failed to start puffin server")
+    };
 
     let args = Args::parse();
 

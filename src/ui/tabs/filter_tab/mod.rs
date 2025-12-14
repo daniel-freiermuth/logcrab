@@ -80,6 +80,8 @@ impl FilterView {
         all_filter_highlights: &[FilterHighlight],
         histogram_markers: &[HistogramMarker],
     ) -> Vec<FilterViewEvent> {
+        profiling::scope!("FilterView::render");
+
         let selected_line_index = log_view_state.selected_line_index;
         let mut events = Vec::new();
 

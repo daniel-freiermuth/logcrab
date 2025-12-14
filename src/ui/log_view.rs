@@ -549,6 +549,8 @@ impl LogView {
     }
 
     pub fn render(&mut self, ui: &mut egui::Ui, global_config: &mut GlobalConfig) {
+        profiling::scope!("LogView::render");
+
         // Collect all filter highlights from all tabs
         let all_filter_highlights: Vec<FilterHighlight> = self
             .dock_state
@@ -564,19 +566,22 @@ impl LogView {
             .collect();
 
         // Use dock area for VS Code-like draggable/tiling layout
-        DockArea::new(&mut self.dock_state)
-            .show_add_buttons(true)
-            .show_add_popup(true)
-            .show_inside(
-                ui,
-                &mut LogCrabTabViewer {
-                    log_view: &mut self.state,
-                    global_config,
-                    pending_tab_add: &mut self.pending_tab_add,
-                    all_filter_highlights: &all_filter_highlights,
-                    histogram_markers: &histogram_markers,
-                },
-            );
+        {
+            profiling::scope!("DockArea::show");
+            DockArea::new(&mut self.dock_state)
+                .show_add_buttons(true)
+                .show_add_popup(true)
+                .show_inside(
+                    ui,
+                    &mut LogCrabTabViewer {
+                        log_view: &mut self.state,
+                        global_config,
+                        pending_tab_add: &mut self.pending_tab_add,
+                        all_filter_highlights: &all_filter_highlights,
+                        histogram_markers: &histogram_markers,
+                    },
+                );
+        }
         if self.state.modified
             && self
                 .state

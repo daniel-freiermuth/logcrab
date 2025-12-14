@@ -144,6 +144,8 @@ impl LogTable {
         scroll_to_row: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<LogTableEvent> {
+        profiling::scope!("LogTable::render");
+
         let mut events = Vec::new();
         let dark_mode = ui.visuals().dark_mode;
 
@@ -151,8 +153,7 @@ impl LogTable {
             .id_salt(format!("filtered_scroll_{ui_salt}"))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                #[cfg(feature = "cpu-profiling")]
-                puffin::profile_scope!("filtered_table");
+                profiling::scope!("filtered_table");
 
                 let table = Self::create_table(ui, scroll_to_row);
 
@@ -214,6 +215,7 @@ impl LogTable {
                 Self::render_header(&mut header);
             })
             .body(|body| {
+                profiling::scope!("LogTable::body");
                 Self::render_table_body(
                     body,
                     store,

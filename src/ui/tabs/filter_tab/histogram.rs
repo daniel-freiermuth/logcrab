@@ -123,6 +123,7 @@ impl Histogram {
         selected_line_index: usize,
         markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
+        profiling::scope!("Histogram::render");
         let (start_time, end_time) = match Self::calculate_time_range(store, filtered_indices) {
             Some(range) => range,
             None => {
@@ -249,6 +250,7 @@ impl Histogram {
         dark_mode: bool,
         bg_color: Color32,
     ) -> Option<HistogramClickEvent> {
+        profiling::scope!("Histogram::draw_bars");
         let desired_size = egui::vec2(ui.available_width(), 60.0);
         let (response, painter) = ui.allocate_painter(
             desired_size,

@@ -84,6 +84,8 @@ impl FilterBar {
         should_focus_search: bool,
         log_view_state: &mut LogViewState,
     ) -> Vec<FilterInternalEvent> {
+        profiling::scope!("FilterBar::render");
+
         let mut events = Vec::new();
 
         ui.horizontal(|ui| {

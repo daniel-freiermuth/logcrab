@@ -66,8 +66,7 @@ impl GlobalFilterWorker {
 
     /// Single background worker that processes all filter requests
     fn filter_worker(request_rx: &Receiver<FilterRequest>, is_filtering: &Arc<AtomicBool>) {
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_function!();
+        profiling::function_scope!();
 
         log::debug!("Filter worker thread started");
 
@@ -89,8 +88,7 @@ impl GlobalFilterWorker {
         // Main processing loop
         while let Ok(first_request) = request_rx.recv() {
             is_filtering.store(true, Ordering::Relaxed);
-            #[cfg(feature = "cpu-profiling")]
-            puffin::profile_scope!("process_filter_request");
+            profiling::scope!("process_filter_request");
             pending_requests.insert(first_request.filter_id, first_request);
 
             // Collect any additional pending requests
@@ -101,17 +99,12 @@ impl GlobalFilterWorker {
                 let request = pending_requests.remove(&first_key).unwrap().clone();
                 let filter_id = request.filter_id;
 
-                #[cfg(feature = "cpu-profiling")]
-                puffin::profile_scope!("process_single_filter", format!("filter_{}", filter_id));
+                profiling::scope!("process_single_filter");
                 log::trace!("Processing filter request (search: '{:?}')", request.regex);
 
                 // Filter lines in parallel
                 let filtered_indices = {
-                    #[cfg(feature = "cpu-profiling")]
-                    puffin::profile_scope!(
-                        "filter_lines",
-                        format!("{} lines", request.store.total_lines())
-                    );
+                    profiling::scope!("filter_lines");
 
                     if let Some(ref regex) = request.regex {
                         // Parallel filtering with rayon
@@ -135,8 +128,7 @@ impl GlobalFilterWorker {
 
                 // Send result back to the specific filter (ignore errors if filter is gone)
                 {
-                    #[cfg(feature = "cpu-profiling")]
-                    puffin::profile_scope!("send_result");
+                    profiling::scope!("send_result");
 
                     let _ = request.result_tx.send(result);
                 }
@@ -217,8 +209,7 @@ impl FilterState {
     pub fn request_filter_update(&mut self, store: Arc<LogStore>) {
         self.update_search_regex();
 
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_function!();
+        profiling::function_scope!();
 
         self.cached_for_version = store.version();
 
@@ -245,8 +236,7 @@ impl FilterState {
 
     /// Check for completed filter results from background thread
     pub fn check_filter_results(&mut self) -> bool {
-        #[cfg(feature = "cpu-profiling")]
-        puffin::profile_function!();
+        profiling::function_scope!();
 
         if let Ok(result) = self.filter_result_rx.try_recv() {
             self.filtered_indices = result.filtered_indices;
