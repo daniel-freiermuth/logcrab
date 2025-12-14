@@ -19,81 +19,66 @@
 use crate::anomaly::{create_default_scorer, normalize_scores};
 use crate::core::log_store::SourceData;
 use crate::parser::{dlt, parse_line};
+use crate::ui::ProgressToastHandle;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 
-/// Messages sent during background file loading
-pub enum LoadMessage {
-    Progress(f32, String),
-    Complete(PathBuf),
-    Error(String),
-    /// Sent periodically during scoring with progress updates
-    ScoringProgress(String),
-    /// Sent when scoring is complete (scores stored directly on SourceData)
-    ScoringComplete,
-}
-
 /// Progress callback type for DLT parsing
 pub type ProgressCallback = Box<dyn Fn(f32, &str) + Send>;
-
-/// Create a progress callback that sends updates through the channel and requests repaint
-fn make_progress_callback(tx: Sender<LoadMessage>, ctx: egui::Context) -> ProgressCallback {
-    Box::new(move |progress, message| {
-        let _ = tx.send(LoadMessage::Progress(progress, message.to_string()));
-        ctx.request_repaint();
-    })
-}
 
 /// Handles asynchronous loading and processing of log files
 pub struct LogFileLoader;
 
 impl LogFileLoader {
-    /// Start loading a file in the background
-    /// Returns a receiver for progress updates and completion
+    /// Start loading a file in the background.
+    ///
+    /// The toast handle will be updated with progress and dismissed when complete.
+    /// Returns the SourceData that will be populated with log lines.
     pub fn load_async(
         path: PathBuf,
         ctx: egui::Context,
-    ) -> (Arc<SourceData>, Receiver<LoadMessage>) {
-        let (tx, rx) = channel();
+        toast: ProgressToastHandle,
+    ) -> Arc<SourceData> {
         let data_source = Arc::new(SourceData::new());
         let source_clone = data_source.clone();
 
         thread::spawn(move || {
-            Self::process_file_background(path, source_clone, tx, ctx);
+            Self::process_file_background(path, source_clone, toast, ctx);
         });
 
-        (data_source, rx)
+        data_source
     }
 
     fn read_dlt_file(
         path: PathBuf,
         data_source: Arc<SourceData>,
-        tx: Sender<LoadMessage>,
+        toast: &ProgressToastHandle,
         ctx: egui::Context,
     ) -> bool {
         log::info!("Detected DLT binary file, using dlt-core parser");
-        let _ = tx.send(LoadMessage::Progress(
+        toast.update(
             0.0,
             format!("Parsing DLT binary file {}...", path.display()),
-        ));
-        ctx.request_repaint();
+        );
 
-        let progress_callback = make_progress_callback(tx.clone(), ctx.clone());
+        // Create progress callback that updates the toast
+        let toast_clone = toast.clone();
+        let progress_callback: ProgressCallback = Box::new(move |progress, message| {
+            toast_clone.update(progress, message);
+        });
 
         match dlt::parse_dlt_file_with_progress(&path, &data_source, progress_callback) {
             Ok(total_lines) => {
                 log::info!("Successfully parsed {total_lines} DLT messages");
-                let _ = tx.send(LoadMessage::Complete(path));
                 ctx.request_repaint();
                 true
             }
             Err(e) => {
                 log::error!("Failed to parse DLT file: {e}");
-                let _ = tx.send(LoadMessage::Error(format!("Failed to parse DLT file: {e}")));
+                toast.set_error(format!("Failed to parse DLT file: {e}"));
                 false
             }
         }
@@ -102,7 +87,7 @@ impl LogFileLoader {
     fn process_file_background(
         path: PathBuf,
         data_source: Arc<SourceData>,
-        tx: Sender<LoadMessage>,
+        toast: ProgressToastHandle,
         ctx: egui::Context,
     ) {
         let start_time = std::time::Instant::now();
@@ -115,7 +100,7 @@ impl LogFileLoader {
         let metadata = std::fs::metadata(&path);
         if let Err(e) = metadata {
             log::error!("Cannot read file metadata: {e}");
-            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {e}")));
+            toast.set_error(format!("Cannot read file: {e}"));
             return;
         }
         let file_size = metadata.unwrap().len();
@@ -130,13 +115,13 @@ impl LogFileLoader {
         // Load file - both DLT and generic files use progressive loading now
         let source_added = if is_dlt_file {
             // DLT files use incremental loading with chunks
-            Self::read_dlt_file(path.clone(), data_source.clone(), tx.clone(), ctx.clone())
+            Self::read_dlt_file(path.clone(), data_source.clone(), &toast, ctx.clone())
         } else {
             // Generic files use progressive loading, add to store directly
             Self::read_generic_file(
                 path.clone(),
                 data_source.clone(),
-                tx.clone(),
+                &toast,
                 ctx.clone(),
                 start_time,
                 file_size,
@@ -144,24 +129,27 @@ impl LogFileLoader {
         };
 
         if source_added && !data_source.is_empty() {
-            Self::score_and_send_lines(data_source, &path, &tx, &ctx, start_time);
+            Self::score_lines(data_source, &path, &toast, start_time);
+        } else if data_source.is_empty() {
+            toast.set_error("No log lines found in file");
         }
+
+        // Toast auto-dismisses when dropped (handle goes out of scope)
+        toast.dismiss();
     }
 
     fn read_generic_file(
         path: PathBuf,
         source: Arc<SourceData>,
-        tx: Sender<LoadMessage>,
+        toast: &ProgressToastHandle,
         ctx: egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
-        let progress_callback = make_progress_callback(tx.clone(), ctx.clone());
-
         let file = File::open(&path);
         if let Err(e) = file {
             log::error!("Cannot open file: {e}");
-            let _ = tx.send(LoadMessage::Error(format!("Cannot open file: {e}")));
+            toast.set_error(format!("Cannot open file: {e}"));
             return false;
         }
 
@@ -171,7 +159,7 @@ impl LogFileLoader {
         let mut buffer = Vec::new();
         if let Err(e) = file.read_to_end(&mut buffer) {
             log::error!("Cannot read file content: {e}");
-            let _ = tx.send(LoadMessage::Error(format!("Cannot read file: {e}")));
+            toast.set_error(format!("Cannot read file: {e}"));
             return false;
         }
 
@@ -205,7 +193,6 @@ impl LogFileLoader {
         );
 
         let mut chunk_lines = Vec::new();
-
         let mut bytes_read: usize = 0;
 
         // Progressive loading: parse lines in chunks
@@ -219,17 +206,22 @@ impl LogFileLoader {
         let total_lines_in_content = content.lines().count();
         log::info!("File contains {total_lines_in_content} lines (by line iterator count)");
 
+        let file_name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy();
+
         for line_buffer in content.lines() {
             file_line_number += 1;
             bytes_read += line_buffer.len() + 1; // +1 for newline
 
             if file_line_number % 500 == 0 {
                 let progress = (bytes_read as f32 / file_size as f32).min(1.0);
-                progress_callback(
+                toast.update(
                     progress,
-                    &format!(
+                    format!(
                         "Loading {}... ({} lines)",
-                        path.display(),
+                        file_name,
                         source.len() + chunk_lines.len()
                     ),
                 );
@@ -250,10 +242,10 @@ impl LogFileLoader {
                 source.append_lines(std::mem::take(&mut chunk_lines));
                 let progress = (bytes_read as f32 / file_size as f32).min(1.0);
 
-                let _ = tx.send(LoadMessage::Progress(
+                toast.update(
                     progress,
-                    format!("Loading {}... ({} lines)", path.display(), source.len()),
-                ));
+                    format!("Loading {}... ({} lines)", file_name, source.len()),
+                );
                 ctx.request_repaint();
 
                 log::debug!("Sent partial load: {} lines", source.len());
@@ -281,22 +273,24 @@ impl LogFileLoader {
             file_line_number - source.len()
         );
 
-        let _ = tx.send(LoadMessage::Complete(path));
         ctx.request_repaint();
         log::info!("Total time to display file: {:?}", start_time.elapsed());
         true
     }
 
-    /// Helper to score and send lines (used for both text and DLT files)
-    fn score_and_send_lines(
+    /// Score lines and update toast with progress
+    fn score_lines(
         data_source: Arc<SourceData>,
         path: &Path,
-        tx: &Sender<LoadMessage>,
-        ctx: &egui::Context,
+        toast: &ProgressToastHandle,
         start_time: std::time::Instant,
     ) {
         static N_SKIP_INITIAL: usize = 10;
-        // Now calculate anomaly scores in the background
+
+        // Switch toast to scoring phase
+        toast.set_title("Calculating Anomaly Scores");
+        toast.update(0.0, "Starting...");
+
         let score_start = std::time::Instant::now();
         log::debug!(
             "Starting background anomaly scoring for {} lines",
@@ -313,10 +307,8 @@ impl LogFileLoader {
 
         for (idx, log_line) in data_source.clone_lines().into_iter().enumerate() {
             if idx % 1000 == 0 {
-                let _ = tx.send(LoadMessage::ScoringProgress(format!(
-                    "Scoring... ({idx}/{total_lines})"
-                )));
-                ctx.request_repaint();
+                let progress = idx as f32 / total_lines as f32;
+                toast.update(progress, format!("Scoring... ({idx}/{total_lines})"));
             }
 
             if idx > N_SKIP_INITIAL - 1 {
@@ -325,10 +317,7 @@ impl LogFileLoader {
             scorer.update(&log_line);
         }
 
-        let _ = tx.send(LoadMessage::ScoringProgress(
-            "Normalizing scores...".to_string(),
-        ));
-        ctx.request_repaint();
+        toast.update(0.95, "Normalizing scores...");
 
         #[cfg(feature = "cpu-profiling")]
         puffin::profile_scope!("normalize_scores");
@@ -338,10 +327,7 @@ impl LogFileLoader {
             .chain(normalize_scores(&raw_scores))
             .collect::<Vec<f64>>();
 
-        let _ = tx.send(LoadMessage::ScoringProgress(
-            "Finalizing scores...".to_string(),
-        ));
-        ctx.request_repaint();
+        toast.update(1.0, "Done!");
 
         // Log score statistics
         if !raw_scores.is_empty() {
@@ -366,7 +352,5 @@ impl LogFileLoader {
             path.display()
         );
         log::info!("Total processing time: {:?}", start_time.elapsed());
-        let _ = tx.send(LoadMessage::ScoringComplete);
-        ctx.request_repaint();
     }
 }

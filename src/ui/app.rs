@@ -1,10 +1,10 @@
 use super::windows;
+use super::ToastManager;
 
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
 
 use crate::config::GlobalConfig;
-use crate::core::{LoadMessage, LogFileLoader, LogStore};
+use crate::core::{LogFileLoader, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
 use crate::ui::tabs::BookmarksView;
@@ -26,18 +26,6 @@ pub struct LogCrabApp {
     /// Currently loaded file path
     current_file: Option<PathBuf>,
 
-    /// Status message shown in the bottom panel
-    status_message: String,
-
-    /// Whether a file is currently being loaded
-    is_loading: bool,
-
-    /// Progress of the current load operation (0.0 to 1.0)
-    load_progress: f32,
-
-    /// Receiver for background loading messages
-    load_receiver: Option<Receiver<LoadMessage>>,
-
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
 
@@ -55,6 +43,9 @@ pub struct LogCrabApp {
 
     /// Pending dropped file to load
     pending_drop_file: Option<PathBuf>,
+
+    /// Toast notification manager
+    toast_manager: ToastManager,
 
     /// Whether to show the CPU profiler window
     #[cfg(feature = "cpu-profiling")]
@@ -76,20 +67,13 @@ impl LogCrabApp {
         let mut app = Self {
             log_view: None,
             current_file: None,
-            status_message: if file.is_some() {
-                "Loading file...".to_string()
-            } else {
-                "Ready. Open a log file to begin.".to_string()
-            },
-            is_loading: false,
-            load_progress: 0.0,
-            load_receiver: None,
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
             pending_drop_file: None,
+            toast_manager: ToastManager::new(cc.egui_ctx.clone()),
             #[cfg(feature = "cpu-profiling")]
             show_profiler: false,
         };
@@ -99,7 +83,8 @@ impl LogCrabApp {
             if file.exists() {
                 app.load_file(file, cc.egui_ctx.clone());
             } else {
-                app.status_message = format!("Error: File not found: {}", file.display());
+                app.toast_manager
+                    .show_error(format!("File not found: {}", file.display()));
             }
         }
         app
@@ -113,23 +98,29 @@ impl LogCrabApp {
             if path.exists() {
                 log::info!("Loading log file from .crab session: {}", path.display());
             } else {
-                self.status_message = format!("Error: File not found: {}", path.display(),);
-                log::error!("{}", self.status_message);
+                let err_msg = format!("File not found: {}", path.display());
+                log::error!("{}", err_msg);
+                self.toast_manager.show_error(err_msg);
                 return;
             }
         }
 
         self.current_file = Some(path.clone());
         self.update_window_title(&ctx);
-        self.is_loading = true;
-        self.load_progress = 0.0;
-        self.status_message = format!("Loading {}...", path.display());
 
         // Create a new store for this file
         let store = LogStore::new();
 
-        let (source, rx) = LogFileLoader::load_async(path.clone(), ctx);
-        self.load_receiver = Some(rx);
+        // Create a progress toast handle and pass it to the loader
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+        let toast_handle = self
+            .toast_manager
+            .create_progress_toast(file_name, "Starting...");
+
+        let source = LogFileLoader::load_async(path.clone(), ctx, toast_handle);
         store.add_source(source);
 
         // Create LogView immediately - it will show lines as they stream in
@@ -165,51 +156,6 @@ impl LogCrabApp {
             "LogCrab - Log Anomaly Explorer".to_string()
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
-    }
-
-    /// Process background file loading messages
-    fn process_file_loading(&mut self, ctx: &egui::Context) {
-        let mut should_clear_receiver = false;
-        while let Some(msg) = self
-            .load_receiver
-            .as_ref()
-            .and_then(|rx| rx.try_recv().ok())
-        {
-            match msg {
-                LoadMessage::Progress(progress, status) => {
-                    self.load_progress = progress;
-                    self.status_message = status;
-                }
-                LoadMessage::Complete(_path) => {
-                    if let Some(ref log_view) = self.log_view {
-                        let store = log_view.state.store.clone();
-                        let n_lines = store.total_lines();
-                        self.status_message = format!(
-                            "Loaded {n_lines} lines - calculating anomaly scores in background..."
-                        );
-                        self.is_loading = false;
-                        self.load_progress = 0.0;
-                    }
-                    self.update_window_title(ctx);
-                    // Keep receiver open for scoring progress
-                }
-                LoadMessage::ScoringProgress(status) => {
-                    self.status_message = status;
-                }
-                LoadMessage::ScoringComplete => {
-                    should_clear_receiver = true;
-                }
-                LoadMessage::Error(err) => {
-                    self.status_message = err;
-                    self.is_loading = false;
-                    self.load_progress = 0.0;
-                    should_clear_receiver = true;
-                }
-            }
-        }
-        if should_clear_receiver {
-            self.load_receiver = None;
-        }
     }
 
     /// Render top menu bar
@@ -310,11 +256,6 @@ impl LogCrabApp {
         });
 
         ui.menu_button("Help", |ui| {
-            if ui.button("About").clicked() {
-                self.status_message = "LogCrab 🦀 - Log Anomaly Explorer v0.1.0".to_string();
-                ui.close();
-            }
-
             if ui.button("Anomaly Score Calculation").clicked() {
                 self.show_anomaly_explanation = true;
                 ui.close();
@@ -334,14 +275,6 @@ impl LogCrabApp {
     /// Render bottom status panel
     fn render_status_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(&self.status_message);
-
-            if self.is_loading {
-                ui.separator();
-                let progress_bar = egui::ProgressBar::new(self.load_progress).show_percentage();
-                ui.add(progress_bar);
-            }
-
             // Show filtering indicator if any filter is currently processing
             if GlobalFilterWorker::get()
                 .is_filtering
@@ -380,22 +313,7 @@ impl LogCrabApp {
                 ui.add_space(20.0);
                 ui.add_space(40.0);
 
-                if self.is_loading {
-                    // Show prominent loading indicator instead of button
-                    ui.add_space(20.0);
-                    ui.spinner();
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new(&self.status_message)
-                            .size(16.0)
-                            .strong(),
-                    );
-                    ui.add_space(10.0);
-                    let progress_bar = egui::ProgressBar::new(self.load_progress)
-                        .show_percentage()
-                        .desired_width(400.0);
-                    ui.add(progress_bar);
-                } else if ui.button("Open Log File").clicked() {
+                if ui.button("Open Log File").clicked() {
                     self.open_file_dialog(ctx);
                 }
             });
@@ -509,9 +427,6 @@ impl eframe::App for LogCrabApp {
             self.load_file(path, ctx.clone());
         }
 
-        // Check for messages from background thread
-        self.process_file_loading(ctx);
-
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.render_menu_bar(ui, ctx);
@@ -540,6 +455,9 @@ impl eframe::App for LogCrabApp {
                 &mut self.global_config,
             );
         }
+
+        // Show toast notifications
+        self.toast_manager.show(ctx);
 
         #[cfg(feature = "cpu-profiling")]
         {
