@@ -150,6 +150,7 @@ impl FilterView {
             selected_line_index,
             global_config.hide_epoch_in_histogram,
             histogram_markers,
+            &mut self.state.histogram_cache,
         ) {
             events.push(FilterViewEvent::LineSelected {
                 line_index: hist_event.line_index,

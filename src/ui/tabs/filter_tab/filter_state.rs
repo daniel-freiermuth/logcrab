@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::core::LogStore;
+use crate::ui::tabs::filter_tab::histogram::HistogramCache;
 use egui::Color32;
 use fancy_regex::{Error, Regex};
 use std::collections::HashMap;
@@ -161,6 +162,9 @@ pub struct FilterState {
     // Version-based cache invalidation (Step 9)
     pub cached_for_version: u64,
 
+    // Histogram cache for expensive bucket computations
+    pub histogram_cache: HistogramCache,
+
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
     filter_result_tx: Sender<FilterResult>, // Keep sender to create requests
@@ -189,6 +193,7 @@ impl FilterState {
             globally_visible: true,
             show_in_histogram: false,
             cached_for_version: 0,
+            histogram_cache: HistogramCache::default(),
             filter_result_rx,
             filter_result_tx: result_tx,
         }

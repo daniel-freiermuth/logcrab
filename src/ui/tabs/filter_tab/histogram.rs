@@ -18,7 +18,7 @@
 
 use crate::core::LogStore;
 use crate::ui::tabs::filter_tab::log_table;
-use chrono::Datelike;
+use chrono::{DateTime, Datelike, Local};
 use egui::{Color32, Ui};
 
 /// Number of horizontal time buckets in the histogram
@@ -47,6 +47,30 @@ pub struct HistogramClickEvent {
     pub line_index: usize,
 }
 
+/// Cached histogram computation results
+#[derive(Debug, Clone, Default)]
+pub struct HistogramCache {
+    /// Cache key: (store_version, indices_len, hide_epoch)
+    key: (u64, usize, bool),
+    /// Filtered indices after epoch removal (if hide_epoch is true)
+    effective_indices: Vec<usize>,
+    /// Time range of the histogram
+    time_range: Option<(DateTime<Local>, DateTime<Local>)>,
+    /// Bucket size in seconds
+    bucket_size: f64,
+    /// Count per time bucket
+    buckets: Vec<usize>,
+    /// Anomaly score distribution per bucket
+    anomaly_buckets: Vec<AnomalyDistribution>,
+}
+
+impl HistogramCache {
+    /// Check if cache is valid for the given inputs
+    fn is_valid(&self, store_version: u64, indices_len: usize, hide_epoch: bool) -> bool {
+        self.key == (store_version, indices_len, hide_epoch)
+    }
+}
+
 /// Calculate which bucket a timestamp belongs to
 fn timestamp_to_bucket(
     ts: chrono::DateTime<chrono::Local>,
@@ -71,7 +95,10 @@ impl Histogram {
         selected_line_index: usize,
         hide_epoch: bool,
         markers: &[HistogramMarker],
+        cache: &mut HistogramCache,
     ) -> Option<HistogramClickEvent> {
+        profiling::scope!("Histogram::render");
+
         if store.total_lines() == 0 {
             return None;
         }
@@ -80,72 +107,86 @@ impl Histogram {
             return None;
         }
 
-        // Filter out January 1st timestamps if requested
-        let filtered_indices_vec: Vec<usize>;
-        let effective_filtered_indices = if hide_epoch {
-            profiling::scope!("Histogram::filter_epoch");
-            filtered_indices_vec = filtered_indices
-                .iter()
-                .filter_map(|idx| {
-                    store.get_by_id(*idx).and_then(|line| {
-                        let ts = line.timestamp;
-                        // Exclude all timestamps that are January 1st (any year)
-                        if !(ts.month0() == 0 && ts.day0() == 0) {
-                            Some(*idx)
-                        } else {
-                            None
-                        }
+        let store_version = store.version();
+
+        // Check if we need to recompute the cached data
+        if !cache.is_valid(store_version, filtered_indices.len(), hide_epoch) {
+            profiling::scope!("Histogram::recompute_cache");
+
+            // Filter out January 1st timestamps if requested
+            let effective_indices: Vec<usize> = if hide_epoch {
+                profiling::scope!("Histogram::filter_epoch");
+                filtered_indices
+                    .iter()
+                    .filter_map(|idx| {
+                        store.get_by_id(*idx).and_then(|line| {
+                            let ts = line.timestamp;
+                            // Exclude all timestamps that are January 1st (any year)
+                            if !(ts.month0() == 0 && ts.day0() == 0) {
+                                Some(*idx)
+                            } else {
+                                None
+                            }
+                        })
                     })
-                })
-                .collect();
-            &filtered_indices_vec[..]
-        } else {
-            filtered_indices
+                    .collect()
+            } else {
+                filtered_indices.to_vec()
+            };
+
+            // Calculate time range
+            let time_range = Self::calculate_time_range(store, &effective_indices);
+
+            if let Some((start_time, end_time)) = time_range {
+                let time_span = (end_time.timestamp() - start_time.timestamp()).max(1);
+                let bucket_size = time_span as f64 / NUM_BUCKETS as f64;
+
+                let (buckets, anomaly_buckets) =
+                    Self::create_buckets(store, &effective_indices, start_time, bucket_size);
+
+                cache.time_range = Some((start_time, end_time));
+                cache.bucket_size = bucket_size;
+                cache.buckets = buckets;
+                cache.anomaly_buckets = anomaly_buckets;
+            } else {
+                cache.time_range = None;
+                cache.buckets.clear();
+                cache.anomaly_buckets.clear();
+            }
+
+            cache.effective_indices = effective_indices;
+            cache.key = (store_version, filtered_indices.len(), hide_epoch);
+        }
+
+        if cache.time_range.is_none() {
+            ui.label("No timestamps available for histogram");
+            return None;
         };
 
-        if effective_filtered_indices.is_empty() {
+        // Now render using cached data
+        if cache.effective_indices.is_empty() {
             ui.label("No logs match the current filter (all timestamps are January 1st)");
             return None;
         }
 
-        Self::render_internal(
-            ui,
-            store,
-            effective_filtered_indices,
-            selected_line_index,
-            markers,
-        )
+        Self::render_cached(ui, store, cache, selected_line_index, markers)
     }
 
-    fn render_internal(
+    fn render_cached(
         ui: &mut Ui,
         store: &LogStore,
-        filtered_indices: &[usize],
+        cache: &HistogramCache,
         selected_line_index: usize,
         markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
-        profiling::scope!("Histogram::render");
-        let (start_time, end_time) = match Self::calculate_time_range(store, filtered_indices) {
-            Some(range) => range,
-            None => {
-                ui.label("No timestamps available for histogram");
-                return None;
-            }
-        };
-
-        let time_range = (end_time.timestamp() - start_time.timestamp()).max(1);
-        let bucket_size = time_range as f64 / NUM_BUCKETS as f64;
-
-        let (buckets, anomaly_buckets) =
-            Self::create_buckets(store, filtered_indices, start_time, bucket_size);
-        let max_count = *buckets.iter().max().unwrap_or(&1);
+        let max_count = *cache.buckets.iter().max().unwrap_or(&1);
 
         let selected_bucket = Self::calculate_selected_bucket(
             store,
             selected_line_index,
-            start_time,
-            end_time,
-            bucket_size,
+            cache.time_range.unwrap().0,
+            cache.time_range.unwrap().1,
+            cache.bucket_size,
         );
 
         let dark_mode = ui.visuals().dark_mode;
@@ -153,20 +194,22 @@ impl Histogram {
 
         let click_event = Self::render_histogram_bars(
             ui,
-            &buckets,
-            &anomaly_buckets,
+            cache,
             max_count,
             selected_bucket,
             store,
-            filtered_indices,
-            start_time,
-            bucket_size,
             markers,
             dark_mode,
             bg_color,
         );
 
-        Self::render_timeline_labels(ui, start_time, end_time, store, selected_line_index);
+        Self::render_timeline_labels(
+            ui,
+            cache.time_range.unwrap().0,
+            cache.time_range.unwrap().1,
+            store,
+            selected_line_index,
+        );
 
         click_event
     }
@@ -241,14 +284,10 @@ impl Histogram {
 
     fn render_histogram_bars(
         ui: &mut Ui,
-        buckets: &[usize],
-        anomaly_buckets: &[AnomalyDistribution],
+        cache: &HistogramCache,
         max_count: usize,
         selected_bucket: Option<usize>,
         store: &LogStore,
-        filtered_indices: &[usize],
-        start_time: chrono::DateTime<chrono::Local>,
-        bucket_size: f64,
         markers: &[HistogramMarker],
         dark_mode: bool,
         bg_color: Color32,
@@ -268,25 +307,40 @@ impl Histogram {
         Self::draw_bars(
             &painter,
             rect,
-            buckets,
-            anomaly_buckets,
+            cache.buckets.as_slice(),
+            cache.anomaly_buckets.as_slice(),
             max_count,
             bar_width,
             dark_mode,
         );
-        Self::draw_markers(&painter, rect, store, start_time, bucket_size, markers);
+        Self::draw_markers(
+            &painter,
+            rect,
+            store,
+            cache.time_range.unwrap().0,
+            cache.bucket_size,
+            markers,
+        );
         Self::draw_selected_indicator(&painter, rect, selected_bucket, bar_width);
 
         // Handle hover tooltip for markers
-        Self::handle_marker_hover(ui, &response, rect, store, start_time, bucket_size, markers);
+        Self::handle_marker_hover(
+            ui,
+            &response,
+            rect,
+            store,
+            cache.time_range.unwrap().0,
+            cache.bucket_size,
+            markers,
+        );
         Self::handle_click(
             &response,
             rect,
             bar_width,
             store,
-            filtered_indices,
-            start_time,
-            bucket_size,
+            &cache.effective_indices,
+            cache.time_range.unwrap().0,
+            cache.bucket_size,
         )
     }
 
