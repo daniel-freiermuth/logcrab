@@ -9,7 +9,7 @@ authors = ["Daniel Freiermuth"]
 default = []
 profiling = ["ram-profiling", "cpu-profiling"]
 ram-profiling = ["dhat"]
-cpu-profiling = ["profiling/profile-with-puffin", "puffin_http"]
+cpu-profiling = ["profiling/profile-with-tracy", "dep:tracy-client"]
 
 [dependencies]
 eframe = "0.33.2"
@@ -31,7 +31,7 @@ rayon = "1.10"
 egui-toast = "0.19"
 dhat = { version = "0.3", optional = true }
 profiling = { version = "1.0", default-features = false }
-puffin_http = { version = "0.16", optional = true }
+tracy-client = { version = "0.17", optional = true }
 
 # Release profile optimizations
 [profile.release]
