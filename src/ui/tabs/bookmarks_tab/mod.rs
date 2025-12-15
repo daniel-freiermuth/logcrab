@@ -23,8 +23,7 @@ pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 use crate::{
     input::ShortcutAction,
     ui::{
-        log_view::{FilterHighlight, LogViewState},
-        tabs::LogCrabTab,
+        filter_highlight::FilterHighlight, log_view::{LogViewState, SavedFilter}, tabs::{LogCrabTab, filter_tab::HistogramMarker}
     },
 };
 use egui::Ui;
@@ -242,8 +241,8 @@ impl LogCrabTab for BookmarksView {
         ui: &mut egui::Ui,
         data_state: &mut LogViewState,
         _global_config: &mut crate::config::GlobalConfig,
-        all_filter_highlights: &[crate::ui::log_view::FilterHighlight],
-        _histogram_markers: &[crate::ui::tabs::filter_tab::HistogramMarker],
+        all_filter_highlights: &[FilterHighlight],
+        _histogram_markers: &[HistogramMarker],
     ) {
         self.render_bookmarks(ui, data_state, all_filter_highlights);
     }
@@ -294,15 +293,15 @@ impl LogCrabTab for BookmarksView {
         false
     }
 
-    fn try_into_stored_filter(&self) -> Option<crate::ui::log_view::SavedFilter> {
+    fn try_into_stored_filter(&self) -> Option<SavedFilter> {
         None
     }
 
-    fn get_filter_highlight(&self) -> Option<crate::ui::log_view::FilterHighlight> {
+    fn get_filter_highlight(&self) -> Option<FilterHighlight> {
         None
     }
 
-    fn get_histogram_marker(&self) -> Option<crate::ui::tabs::filter_tab::HistogramMarker> {
+    fn get_histogram_marker(&self) -> Option<HistogramMarker> {
         None
     }
 }

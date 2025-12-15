@@ -17,7 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::core::LogStore;
-use crate::ui::tabs::filter_tab::filter_state::{FilterRequest, FilterResult, GlobalFilterWorker};
+use crate::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
 use egui::Color32;
 use fancy_regex::{Error, Regex};
 use std::sync::atomic::{AtomicUsize, Ordering};

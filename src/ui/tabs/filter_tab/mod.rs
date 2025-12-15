@@ -27,7 +27,8 @@ pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
-use crate::ui::log_view::{FilterHighlight, FilterToHighlightData, LogViewState, SavedFilter};
+use crate::ui::filter_highlight::FilterHighlight;
+use crate::ui::log_view::{FilterToHighlightData, LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;

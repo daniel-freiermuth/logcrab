@@ -3,6 +3,7 @@ pub mod log_view;
 pub mod tabs;
 pub mod toasts;
 pub mod windows;
+pub mod filter_highlight;
 
 pub use log_view::LogView;
 pub use toasts::{ProgressToastHandle, ToastManager};

@@ -29,7 +29,8 @@ use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
-use crate::ui::log_view::{FilterHighlight, LogViewState, SavedFilter};
+use crate::ui::filter_highlight::FilterHighlight;
+use crate::ui::log_view::{LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::HistogramMarker;
 
 pub trait LogCrabTab {

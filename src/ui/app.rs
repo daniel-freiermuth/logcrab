@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
 use crate::core::{LogFileLoader, LogStore};
+use crate::filter_worker::GlobalFilterWorker;
 use crate::input::{KeyboardBindings, ShortcutAction};
-use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
 use crate::ui::tabs::{BookmarksView, HighlightsView};
 use crate::ui::LogView;
 use egui::text::LayoutJob;

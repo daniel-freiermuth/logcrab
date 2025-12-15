@@ -17,7 +17,8 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::parser::line::LogLine;
-use crate::ui::log_view::{FilterHighlight, LogViewState};
+use crate::ui::filter_highlight::FilterHighlight;
+use crate::ui::log_view::LogViewState;
 use crate::ui::tabs::filter_tab::log_table::{
     bookmarked_row_color, score_to_color, selected_row_color,
 };

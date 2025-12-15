@@ -19,7 +19,7 @@
 use crate::{
     core::LogStore,
     parser::line::LogLine,
-    ui::{log_view::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
+    ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
 use chrono::Local;
 use egui::{Color32, RichText, Ui};
