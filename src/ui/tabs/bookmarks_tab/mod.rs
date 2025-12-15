@@ -33,16 +33,6 @@ use crate::{
 };
 use egui::Ui;
 
-/// Events that can be emitted by the bookmarks view
-#[derive(Debug, Clone)]
-pub enum BookmarksViewEvent {
-    BookmarkClicked { line_index: usize },
-    BookmarkDeleted { line_index: usize },
-    BookmarkRenamed { line_index: usize, new_name: String },
-    StartRenaming { line_index: usize },
-    CancelRenaming,
-}
-
 /// Orchestrates the bookmarks view UI using the `BookmarkPanel` component
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BookmarksView {
@@ -55,46 +45,22 @@ impl BookmarksView {
     /// Render the bookmarks view
     ///
     /// Returns events that occurred during rendering
-    pub fn render(
+    fn render(
         ui: &mut Ui,
         session_state: &SessionState,
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
         all_filter_highlights: &[FilterHighlight],
-    ) -> Vec<BookmarksViewEvent> {
-        let panel_events = BookmarkPanel::render(
+    ) -> Vec<BookmarkPanelEvent> {
+        BookmarkPanel::render(
             ui,
             session_state,
             bookmarks,
             editing_bookmark,
             bookmark_name_input,
             all_filter_highlights,
-        );
-
-        // Transform panel events to view events
-        panel_events
-            .into_iter()
-            .map(|event| match event {
-                BookmarkPanelEvent::BookmarkClicked { line_index } => {
-                    BookmarksViewEvent::BookmarkClicked { line_index }
-                }
-                BookmarkPanelEvent::BookmarkDeleted { line_index } => {
-                    BookmarksViewEvent::BookmarkDeleted { line_index }
-                }
-                BookmarkPanelEvent::BookmarkRenamed {
-                    line_index,
-                    new_name,
-                } => BookmarksViewEvent::BookmarkRenamed {
-                    line_index,
-                    new_name,
-                },
-                BookmarkPanelEvent::StartRenaming { line_index } => {
-                    BookmarksViewEvent::StartRenaming { line_index }
-                }
-                BookmarkPanelEvent::CancelRenaming => BookmarksViewEvent::CancelRenaming,
-            })
-            .collect()
+        )
     }
 
     fn start_renaming_bookmark(&mut self, line_index: usize, data_state: &SessionState) {
@@ -142,14 +108,14 @@ impl BookmarksView {
         // Handle events
         for event in events {
             match event {
-                BookmarksViewEvent::BookmarkClicked { line_index } => {
+                BookmarkPanelEvent::BookmarkClicked { line_index } => {
                     data_state.selected_line_index = line_index;
                 }
-                BookmarksViewEvent::BookmarkDeleted { line_index } => {
+                BookmarkPanelEvent::BookmarkDeleted { line_index } => {
                     data_state.bookmarks.remove(&line_index);
                     data_state.modified = true;
                 }
-                BookmarksViewEvent::BookmarkRenamed {
+                BookmarkPanelEvent::BookmarkRenamed {
                     line_index,
                     new_name,
                 } => {
@@ -159,10 +125,10 @@ impl BookmarksView {
                     data_state.modified = true;
                     self.edited_line_index = None;
                 }
-                BookmarksViewEvent::StartRenaming { line_index } => {
+                BookmarkPanelEvent::StartRenaming { line_index } => {
                     self.start_renaming_bookmark(line_index, data_state);
                 }
-                BookmarksViewEvent::CancelRenaming => {
+                BookmarkPanelEvent::CancelRenaming => {
                     self.edited_line_index = None;
                 }
             }
