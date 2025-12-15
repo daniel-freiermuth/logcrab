@@ -26,7 +26,7 @@ use crate::ui::tabs::{
     navigation, BookmarksView, FilterView, HighlightsView, LogCrabTab, LogCrabTabViewer,
     PendingTabAdd,
 };
-use crate::ui::PaneDirection;
+use crate::ui::{PaneDirection, DEFAULT_PALETTE};
 use egui::Color32;
 
 use chrono::{DateTime, Local};
@@ -181,15 +181,7 @@ impl CrabSession {
     }
 
     pub fn add_filter_view(&mut self, focus_search: bool, state: Option<FilterState>) {
-        let colors = [
-            Color32::YELLOW,
-            Color32::LIGHT_BLUE,
-            Color32::LIGHT_GREEN,
-            Color32::from_rgb(255, 200, 150), // Light orange
-            Color32::from_rgb(255, 150, 255), // Light magenta
-            Color32::from_rgb(150, 255, 255), // Light cyan
-        ];
-        let color = colors[self.monotonic_filter_counter % colors.len()];
+        let color = DEFAULT_PALETTE[self.monotonic_filter_counter % DEFAULT_PALETTE.len()];
 
         let state = state.unwrap_or_else(|| {
             FilterState::new(

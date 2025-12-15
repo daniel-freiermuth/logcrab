@@ -31,18 +31,7 @@ use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::log_view::LogViewState;
 use crate::ui::tabs::filter_tab::HistogramMarker;
 use crate::ui::tabs::LogCrabTab;
-
-/// Color palette for new highlights
-const HIGHLIGHT_COLORS: [Color32; 8] = [
-    Color32::YELLOW,
-    Color32::LIGHT_BLUE,
-    Color32::LIGHT_GREEN,
-    Color32::from_rgb(255, 200, 150), // Light orange
-    Color32::from_rgb(255, 150, 255), // Light magenta
-    Color32::from_rgb(150, 255, 255), // Light cyan
-    Color32::from_rgb(255, 150, 150), // Light red
-    Color32::from_rgb(200, 200, 255), // Light purple
-];
+use crate::ui::DEFAULT_PALETTE;
 
 /// Tab for managing highlight rules
 #[derive(Default)]
@@ -61,7 +50,7 @@ impl HighlightsView {
     }
 
     fn next_color_and_name(&mut self) -> (Color32, String) {
-        let color = HIGHLIGHT_COLORS[self.monotonic_counter % HIGHLIGHT_COLORS.len()];
+        let color = DEFAULT_PALETTE[self.monotonic_counter % DEFAULT_PALETTE.len()];
         let name = format!("Highlight {}", self.monotonic_counter + 1);
         self.monotonic_counter += 1;
         (color, name)
