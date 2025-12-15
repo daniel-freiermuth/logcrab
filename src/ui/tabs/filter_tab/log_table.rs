@@ -130,6 +130,26 @@ pub fn selected_bookmarked_row_color(dark_mode: bool) -> Color32 {
 /// Reusable log table component
 pub struct LogTable;
 
+/// Stored column widths for the log table
+#[derive(Clone, Debug)]
+pub struct ColumnWidths {
+    pub line: f32,
+    pub timestamp: f32,
+    pub message: f32,
+    pub score: f32,
+}
+
+impl Default for ColumnWidths {
+    fn default() -> Self {
+        Self {
+            line: 60.0,
+            timestamp: 175.0,
+            message: 0.0, // Will be calculated
+            score: 70.0,
+        }
+    }
+}
+
 impl LogTable {
     /// Render a table of log lines
     ///
@@ -138,7 +158,7 @@ impl LogTable {
     pub fn render(
         ui: &mut Ui,
         store: &LogStore,
-        filter: &FilterState,
+        filter: &mut FilterState,
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         scroll_to_row: Option<usize>,
@@ -157,27 +177,39 @@ impl LogTable {
                 profiling::scope!("filtered_table");
                 ui.set_min_width(available_width);
 
-                let table = Self::create_table(ui, scroll_to_row);
+                let table = Self::create_table(ui, scroll_to_row, &filter.column_widths);
 
                 Self::render_table_with_header(
                     table,
                     store,
-                    filter,
+                    filter.filtered_indices.as_slice(),
                     selected_line_index,
                     bookmarked_lines,
                     all_filter_highlights,
                     &mut events,
                     dark_mode,
+                    &mut filter.column_widths,
                 );
             });
 
         events
     }
 
-    fn create_table<'a>(ui: &'a mut Ui, scroll_to_row: Option<usize>) -> TableBuilder<'a> {
+    const MIN_MESSAGE_WIDTH: f32 = 100.0;
+
+    fn create_table<'a>(
+        ui: &'a mut Ui,
+        scroll_to_row: Option<usize>,
+        column_widths: &ColumnWidths,
+    ) -> TableBuilder<'a> {
         let available_height = ui.available_height();
+        let available_width = ui.available_width();
         let header_height = ui.text_style_height(&egui::TextStyle::Heading);
         let body_height = available_height - header_height - 1.0;
+
+        // Calculate minimum message column width to fill remaining space
+        let other_cols_width = column_widths.line + column_widths.timestamp + column_widths.score;
+        let remainder = (available_width - other_cols_width).max(Self::MIN_MESSAGE_WIDTH);
 
         let mut table = TableBuilder::new(ui)
             .striped(true)
@@ -189,8 +221,13 @@ impl LogTable {
             .max_scroll_height(body_height)
             .column(Column::initial(60.0).resizable(true).clip(true))
             .column(Column::initial(175.0).resizable(true).clip(true))
-            .column(Column::remainder().resizable(true).clip(true))
-            .column(Column::initial(70.0).resizable(true).clip(true));
+            .column(
+                Column::initial(remainder)
+                    .at_least(remainder)
+                    .resizable(true)
+                    .clip(true),
+            )
+            .column(Column::auto().clip(true));
 
         if let Some(row_idx) = scroll_to_row {
             table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
@@ -203,23 +240,24 @@ impl LogTable {
     fn render_table_with_header(
         table: TableBuilder,
         store: &LogStore,
-        filter: &FilterState,
+        filtered_indices: &[usize],
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
+        column_widths: &mut ColumnWidths,
     ) {
         table
             .header(20.0, |mut header| {
-                Self::render_header(&mut header);
+                Self::render_header(&mut header, column_widths);
             })
             .body(|body| {
                 profiling::scope!("LogTable::body");
                 Self::render_table_body(
                     body,
                     store,
-                    filter,
+                    filtered_indices,
                     selected_line_index,
                     bookmarked_lines,
                     all_filter_highlights,
@@ -229,19 +267,23 @@ impl LogTable {
             });
     }
 
-    fn render_header(header: &mut egui_extras::TableRow) {
+    fn render_header(header: &mut egui_extras::TableRow, column_widths: &mut ColumnWidths) {
         header.col(|ui| {
+            column_widths.line = ui.available_width();
             ui.strong("Line");
         });
         header.col(|ui| {
+            column_widths.timestamp = ui.available_width();
             let now = Local::now();
             let offset = now.offset();
             ui.strong(format!("Timestamp (UTC{offset})"));
         });
         header.col(|ui| {
+            column_widths.message = ui.available_width();
             ui.strong("Message");
         });
         header.col(|ui| {
+            column_widths.score = ui.available_width();
             ui.strong("Score");
         });
     }
@@ -250,20 +292,20 @@ impl LogTable {
     fn render_table_body(
         body: egui_extras::TableBody,
         store: &LogStore,
-        filter: &FilterState,
+        filtered_indices: &[usize],
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) {
-        let visible_lines = filter.filtered_indices.len();
+        let visible_lines = filtered_indices.len();
 
         body.rows(18.0, visible_lines, |mut row| {
             let event = Self::render_table_row(
                 &mut row,
                 store,
-                filter,
+                filtered_indices,
                 selected_line_index,
                 bookmarked_lines,
                 all_filter_highlights,
@@ -280,14 +322,14 @@ impl LogTable {
     fn render_table_row(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
-        filter: &FilterState,
+        filtered_indices: &[usize],
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
         dark_mode: bool,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
-        let line_idx = filter.filtered_indices[row_index];
+        let line_idx = filtered_indices[row_index];
         let line = store.get_by_id(line_idx).unwrap();
 
         let is_selected = selected_line_index == line_idx;
@@ -301,7 +343,6 @@ impl LogTable {
             row,
             &line,
             line_idx,
-            filter.get_id(),
             is_selected,
             is_bookmarked,
             color,
@@ -330,7 +371,6 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        ui_salt: usize,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
@@ -344,7 +384,6 @@ impl LogTable {
             row,
             line,
             line_idx,
-            ui_salt,
             is_selected,
             is_bookmarked,
             color,
@@ -360,7 +399,6 @@ impl LogTable {
             row,
             line,
             line_idx,
-            ui_salt,
             is_selected,
             is_bookmarked,
             color,
@@ -374,7 +412,6 @@ impl LogTable {
             row,
             line,
             line_idx,
-            ui_salt,
             is_selected,
             is_bookmarked,
             color,
@@ -388,7 +425,6 @@ impl LogTable {
             row,
             line,
             line_idx,
-            ui_salt,
             is_selected,
             is_bookmarked,
             color,
@@ -403,7 +439,6 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        ui_salt: usize,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
@@ -456,7 +491,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(ui_salt).with("line"),
+                ui.id().with(line_idx).with("line"),
                 egui::Sense::click(),
             );
 
@@ -474,7 +509,6 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        ui_salt: usize,
         is_selected: bool,
         is_bookmarked: bool,
         bg_color: Color32,
@@ -516,7 +550,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(ui_salt).with("ts"),
+                ui.id().with(line_idx).with("ts"),
                 egui::Sense::click(),
             );
             if response.clicked() {
@@ -533,7 +567,6 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        ui_salt: usize,
         is_selected: bool,
         is_bookmarked: bool,
         bg_color: Color32,
@@ -580,7 +613,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(ui_salt).with("msg"),
+                ui.id().with(line_idx).with("msg"),
                 egui::Sense::click(),
             );
 
@@ -605,7 +638,6 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         line: &LogLine,
         line_idx: usize,
-        ui_salt: usize,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
@@ -640,7 +672,7 @@ impl LogTable {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with(ui_salt).with("score"),
+                ui.id().with(line_idx).with("score"),
                 egui::Sense::click(),
             );
             if response.clicked() {

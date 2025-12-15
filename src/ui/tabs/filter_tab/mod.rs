@@ -172,7 +172,7 @@ impl FilterView {
         let table_events = LogTable::render(
             ui,
             store,
-            &self.state,
+            &mut self.state,
             selected_line_index,
             bookmarked_lines,
             scroll_to_row,

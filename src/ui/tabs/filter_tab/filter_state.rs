@@ -19,6 +19,7 @@
 use crate::core::LogStore;
 use crate::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
 use crate::ui::tabs::filter_tab::histogram::HistogramCache;
+use crate::ui::tabs::filter_tab::log_table::ColumnWidths;
 use egui::Color32;
 use fancy_regex::{Error, Regex};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -45,6 +46,9 @@ pub struct FilterState {
 
     // Histogram cache for expensive bucket computations
     pub histogram_cache: HistogramCache,
+
+    // Column widths for the log table
+    pub column_widths: ColumnWidths,
 
     // Background filtering - each filter has its own result channel
     filter_result_rx: Receiver<FilterResult>,
@@ -75,6 +79,7 @@ impl FilterState {
             show_in_histogram: false,
             cached_for_version: 0,
             histogram_cache: HistogramCache::default(),
+            column_widths: ColumnWidths::default(),
             filter_result_rx,
             filter_result_tx: result_tx,
         }
