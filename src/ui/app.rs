@@ -128,15 +128,23 @@ impl LogCrabApp {
 
     /// Show file dialog and load selected file
     fn open_file_dialog(&mut self, ctx: &egui::Context) {
-        if let Some(path) = rfd::FileDialog::new()
+        let mut dialog = rfd::FileDialog::new()
             .add_filter("Log Files", &["log", "txt", "dlt", "crab"])
-            .add_filter("All Files", &["*"])
-            .pick_file()
-        {
+            .add_filter("All Files", &["*"]);
+
+        if let Some(ref dir) = self.global_config.last_log_directory {
+            dialog = dialog.set_directory(dir);
+        }
+
+        if let Some(path) = dialog.pick_file() {
+            // Remember the directory for next time
+            if let Some(parent) = path.parent() {
+                self.global_config.last_log_directory = Some(parent.to_path_buf());
+                let _ = self.global_config.save();
+            }
             self.load_file(path, ctx.clone());
         }
     }
-
     /// Update window title to show current file
     fn update_window_title(&self, ctx: &egui::Context) {
         let title = if let Some(ref path) = self.current_file {
@@ -164,12 +172,20 @@ impl LogCrabApp {
 
             if let Some(ref mut log_view) = &mut self.log_view {
                 if ui.button("Export Filters...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
+                    let mut dialog = rfd::FileDialog::new()
                         .add_filter("Crab Filters", &["crab-filters"])
                         .add_filter("All Files", &["*"])
-                        .set_file_name("filters.crab-filters")
-                        .save_file()
-                    {
+                        .set_file_name("filters.crab-filters");
+
+                    if let Some(ref dir) = self.global_config.last_filters_directory {
+                        dialog = dialog.set_directory(dir);
+                    }
+
+                    if let Some(path) = dialog.save_file() {
+                        if let Some(parent) = path.parent() {
+                            self.global_config.last_filters_directory = Some(parent.to_path_buf());
+                            let _ = self.global_config.save();
+                        }
                         match log_view.export_filters(&path) {
                             Ok(()) => log::info!("Filters exported successfully"),
                             Err(e) => log::error!("Failed to export filters: {e}"),
@@ -177,13 +193,24 @@ impl LogCrabApp {
                     }
                     ui.close();
                 }
-
                 if ui.button("Import Filters...").clicked() {
-                    if let Some(paths) = rfd::FileDialog::new()
+                    let mut dialog = rfd::FileDialog::new()
                         .add_filter("Crab Filters", &["crab-filters"])
-                        .add_filter("All Files", &["*"])
-                        .pick_files()
-                    {
+                        .add_filter("All Files", &["*"]);
+
+                    if let Some(ref dir) = self.global_config.last_filters_directory {
+                        dialog = dialog.set_directory(dir);
+                    }
+
+                    if let Some(paths) = dialog.pick_files() {
+                        // Remember the directory from the first file
+                        if let Some(first) = paths.first() {
+                            if let Some(parent) = first.parent() {
+                                self.global_config.last_filters_directory =
+                                    Some(parent.to_path_buf());
+                                let _ = self.global_config.save();
+                            }
+                        }
                         for path in paths {
                             match log_view.import_filters(&path) {
                                 Ok(count) => {
@@ -198,7 +225,6 @@ impl LogCrabApp {
                     }
                     ui.close();
                 }
-
                 ui.separator();
             }
 

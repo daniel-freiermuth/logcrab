@@ -40,6 +40,14 @@ pub struct GlobalConfig {
     /// Use bright/light theme instead of dark (default: false)
     #[serde(default)]
     pub bright_mode: bool,
+
+    /// Last directory used for opening log files
+    #[serde(default)]
+    pub last_log_directory: Option<PathBuf>,
+
+    /// Last directory used for filter files (import/export)
+    #[serde(default)]
+    pub last_filters_directory: Option<PathBuf>,
 }
 
 const fn default_hide_epoch() -> bool {
@@ -53,6 +61,8 @@ impl Default for GlobalConfig {
             favorite_filters: Vec::new(),
             hide_epoch_in_histogram: true,
             bright_mode: false,
+            last_log_directory: None,
+            last_filters_directory: None,
         }
     }
 }
