@@ -109,11 +109,10 @@ const fn default_globally_visible() -> bool {
 impl From<&SavedFilter> for FilterState {
     fn from(saved_filter: &SavedFilter) -> Self {
         let mut filter = Self::new(saved_filter.name.clone(), saved_filter.color);
-        filter.search_text.clone_from(&saved_filter.search_text);
-        filter.case_sensitive = saved_filter.case_sensitive;
+        filter.search.search_text.clone_from(&saved_filter.search_text);
+        filter.search.case_sensitive = saved_filter.case_sensitive;
         filter.globally_visible = saved_filter.globally_visible;
         filter.show_in_histogram = saved_filter.show_in_histogram;
-        filter.update_search_regex();
         filter
     }
 }
@@ -121,8 +120,8 @@ impl From<&SavedFilter> for FilterState {
 impl From<&FilterState> for SavedFilter {
     fn from(filter: &FilterState) -> Self {
         Self {
-            search_text: filter.search_text.clone(),
-            case_sensitive: filter.case_sensitive,
+            search_text: filter.search.search_text.clone(),
+            case_sensitive: filter.search.case_sensitive,
             name: filter.name.clone(),
             color: filter.color,
             globally_visible: filter.globally_visible,
@@ -156,11 +155,10 @@ const fn default_enabled() -> bool {
 impl From<&SavedHighlight> for HighlightState {
     fn from(saved: &SavedHighlight) -> Self {
         let mut highlight = Self::new(saved.name.clone(), saved.color);
-        highlight.search_text.clone_from(&saved.search_text);
-        highlight.case_sensitive = saved.case_sensitive;
+        highlight.search.search_text.clone_from(&saved.search_text);
+        highlight.search.case_sensitive = saved.case_sensitive;
         highlight.enabled = saved.enabled;
         highlight.show_in_histogram = saved.show_in_histogram;
-        highlight.update_search_regex();
         highlight
     }
 }
@@ -169,8 +167,8 @@ impl From<&HighlightState> for SavedHighlight {
     fn from(highlight: &HighlightState) -> Self {
         Self {
             name: highlight.name.clone(),
-            search_text: highlight.search_text.clone(),
-            case_sensitive: highlight.case_sensitive,
+            search_text: highlight.search.search_text.clone(),
+            case_sensitive: highlight.search.case_sensitive,
             color: highlight.color,
             enabled: highlight.enabled,
             show_in_histogram: highlight.show_in_histogram,
@@ -489,12 +487,6 @@ impl LogView {
     pub fn render(&mut self, ui: &mut egui::Ui, global_config: &mut GlobalConfig) {
         profiling::scope!("LogView::render");
 
-        // Update highlight caches and check for results
-        for highlight in &mut self.state.highlights {
-            highlight.check_filter_results();
-            highlight.ensure_cache_valid(&self.state.store);
-        }
-
         // Collect all filter highlights from all tabs
         let mut all_filter_highlights: Vec<FilterHighlight> = self
             .dock_state
@@ -504,8 +496,8 @@ impl LogView {
 
         // Add highlights from LogViewState
         for highlight in &self.state.highlights {
-            if highlight.enabled && !highlight.search_text.is_empty() {
-                if let Ok(regex) = &highlight.search_regex {
+            if highlight.enabled && !highlight.search.search_text.is_empty() {
+                if let Ok(regex) = &highlight.search.get_regex() {
                     all_filter_highlights.push(FilterHighlight {
                         regex: regex.clone(),
                         color: highlight.color,
@@ -522,18 +514,18 @@ impl LogView {
             .collect();
 
         // Add histogram markers from highlights (using cached indices)
-        for highlight in &self.state.highlights {
-            if highlight.show_in_histogram && !highlight.search_text.is_empty() {
+        for highlight in &mut self.state.highlights {
+            if highlight.show_in_histogram && !highlight.search.search_text.is_empty() {
                 // Use name if set, otherwise fall back to search text
                 let name = if highlight.name.is_empty() {
-                    highlight.search_text.clone()
+                    highlight.search.search_text.clone()
                 } else {
                     highlight.name.clone()
                 };
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name,
                     color: highlight.color,
-                    indices: highlight.filtered_indices.clone(),
+                    indices: highlight.search.get_filtered_indices(&self.state.store).clone(),
                 });
             }
         }
@@ -588,11 +580,10 @@ impl LogView {
             if let Some(highlight) = self.state.highlights.get(highlight_index) {
                 // Create a new filter with the highlight's settings
                 let mut filter_state = FilterState::new(highlight.name.clone(), highlight.color);
-                filter_state.search_text = highlight.search_text.clone();
-                filter_state.case_sensitive = highlight.case_sensitive;
+                filter_state.search.search_text = highlight.search.search_text.clone();
+                filter_state.search.case_sensitive = highlight.search.case_sensitive;
                 filter_state.globally_visible = highlight.enabled;
                 filter_state.show_in_histogram = highlight.show_in_histogram;
-                filter_state.update_search_regex();
 
                 self.add_filter_view(false, Some(filter_state));
 
@@ -605,21 +596,18 @@ impl LogView {
         // Handle filter-to-highlight conversion
         if let Some(data) = self.state.pending_filter_to_highlight.take() {
             let mut highlight = HighlightState::new(data.name, data.color);
-            highlight.search_text = data.search_text;
-            highlight.case_sensitive = data.case_sensitive;
+            highlight.search.search_text = data.search_text;
+            highlight.search.case_sensitive = data.case_sensitive;
             highlight.enabled = data.globally_visible;
             highlight.show_in_histogram = data.show_in_histogram;
-            highlight.update_search_regex();
-            highlight.request_filter_update(Arc::clone(&self.state.store));
 
             self.state.highlights.push(highlight);
             self.state.modified = true;
 
             // Close the filter tab that was converted
             // Find the tab by uuid and remove it
-            self.dock_state.retain_tabs(|t| {
-                t.get_uuid() != Some(data.filter_uuid)
-            });
+            self.dock_state
+                .retain_tabs(|t| t.get_uuid() != Some(data.filter_uuid));
         }
     }
 

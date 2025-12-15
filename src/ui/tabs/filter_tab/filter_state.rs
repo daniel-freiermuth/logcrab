@@ -16,147 +16,57 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::core::LogStore;
-use crate::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
+use crate::core::SearchState;
 use crate::ui::tabs::filter_tab::histogram::HistogramCache;
 use crate::ui::tabs::filter_tab::log_table::ColumnWidths;
 use egui::Color32;
-use fancy_regex::{Error, Regex};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
 
-/// Global counter for assigning unique filter IDs
-static NEXT_FILTER_ID: AtomicUsize = AtomicUsize::new(0);
-/// Represents a single filter view with its own search criteria and cached results
+/// Represents a single filter view with its own search criteria and cached results.
+///
+/// Uses `SearchState` for the core search functionality, adding filter-specific
+/// features like display settings and histogram caching.
 pub struct FilterState {
-    filter_id: usize, // Unique identifier for this filter instance
-    pub search_text: String,
-    pub search_regex: Result<Regex, Error>,
-    pub case_sensitive: bool,
-    pub filtered_indices: Vec<usize>,
+    /// Core search state (handles regex, filtering, caching)
+    pub search: SearchState,
+
+    /// Last rendered selection for scroll tracking
     pub last_rendered_selection: Option<usize>,
+
+    /// Display name for this filter
     pub name: String,
+
+    /// Color used for highlighting matches
     pub color: Color32,
-    pub globally_visible: bool, // Whether this filter's highlights should be shown in all tabs
-    pub show_in_histogram: bool, // Whether to show vertical markers in the histogram
 
-    // Version-based cache invalidation (Step 9)
-    pub cached_for_version: u64,
+    /// Whether this filter's highlights should be shown in all tabs
+    pub globally_visible: bool,
 
-    // Histogram cache for expensive bucket computations
+    /// Whether to show vertical markers in the histogram
+    pub show_in_histogram: bool,
+
+    /// Histogram cache for expensive bucket computations
     pub histogram_cache: HistogramCache,
 
-    // Column widths for the log table
+    /// Column widths for the log table
     pub column_widths: ColumnWidths,
-
-    // Background filtering - each filter has its own result channel
-    filter_result_rx: Receiver<FilterResult>,
-    filter_result_tx: Sender<FilterResult>, // Keep sender to create requests
 }
 
 impl FilterState {
     pub fn new(name: String, color: Color32) -> Self {
-        // Create result channel for this specific filter
-        let (result_tx, filter_result_rx) = channel::<FilterResult>();
-
-        // Assign unique filter ID
-        let filter_id = NEXT_FILTER_ID.fetch_add(1, Ordering::Relaxed);
-
-        let initial_filter = String::new();
-        let initial_regex = Regex::new(&initial_filter);
-
         Self {
-            filter_id,
-            search_text: initial_filter,
-            search_regex: initial_regex,
-            case_sensitive: false,
-            filtered_indices: Vec::new(),
+            search: SearchState::new(),
             last_rendered_selection: None,
             name,
             color,
             globally_visible: true,
             show_in_histogram: false,
-            cached_for_version: 0,
             histogram_cache: HistogramCache::default(),
             column_widths: ColumnWidths::default(),
-            filter_result_rx,
-            filter_result_tx: result_tx,
         }
     }
 
-    /// Update the search regex based on current search text
-    pub fn update_search_regex(&mut self) {
-        // Use fancy-regex with (?i) inline flag for case-insensitive matching
-        let pattern = if !self.case_sensitive {
-            format!("(?i){}", self.search_text)
-        } else {
-            self.search_text.clone()
-        };
-        self.search_regex = Regex::new(&pattern);
-    }
-
-    /// Send a filter request to the background thread
-    pub fn request_filter_update(&mut self, store: Arc<LogStore>) {
-        self.update_search_regex();
-
-        profiling::function_scope!();
-
-        self.cached_for_version = store.version();
-
-        // Only mark as filtering if we have search text
-        if !self.search_text.is_empty() {
-            log::debug!(
-                "Filter {}: Started background filtering for search: '{}' (version: {})",
-                self.filter_id,
-                self.search_text,
-                store.version()
-            );
-        }
-
-        let request = FilterRequest {
-            filter_id: self.filter_id,
-            regex: self.search_regex.as_ref().ok().cloned(),
-            store,
-            result_tx: self.filter_result_tx.clone(),
-        };
-
-        // Send request to global worker
-        GlobalFilterWorker::send_request(request);
-    }
-
-    /// Check for completed filter results from background thread
-    pub fn check_filter_results(&mut self) {
-        profiling::function_scope!();
-
-        if let Ok(result) = self.filter_result_rx.try_recv() {
-            self.filtered_indices = result.filtered_indices;
-            self.last_rendered_selection = None;
-            log::debug!(
-                "Filter {}: Completed background filtering (found {} matches)",
-                self.filter_id,
-                self.filtered_indices.len()
-            );
-        }
-    }
-
-    /// Find the closest line by timestamp in the filtered results
-    // TODO Implement via binary search
-    pub fn find_closest_timestamp_index(&self, target_idx: usize) -> usize {
-        let mut closest_idx = 0;
-        let mut min_diff = i64::MAX;
-
-        for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
-            let diff = (line_idx as i64 - target_idx as i64).abs();
-            if diff < min_diff {
-                min_diff = diff;
-                closest_idx = filtered_idx;
-            }
-        }
-        closest_idx
-    }
-
+    /// Get the unique filter ID
     pub fn get_id(&self) -> usize {
-        self.filter_id
+        self.search.id()
     }
 }

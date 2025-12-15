@@ -149,33 +149,31 @@ impl HighlightsView {
 
             // Search text input
             let response = ui.add(
-                egui::TextEdit::singleline(&mut highlight.search_text)
+                egui::TextEdit::singleline(&mut highlight.search.search_text)
                     .desired_width(300.0)
                     .hint_text("Search pattern..."),
             );
             if response.changed() {
-                highlight.update_search_regex();
-                actions.push(HighlightRowAction::FilterUpdateNeeded(index));
+                actions.push(HighlightRowAction::Modified);
             }
 
             // Case sensitivity toggle
-            let case_label = if highlight.case_sensitive {
+            let case_label = if highlight.search.case_sensitive {
                 RichText::new("Aa").strong()
             } else {
                 RichText::new("Aa")
             };
             if ui
-                .toggle_value(&mut highlight.case_sensitive, case_label)
+                .toggle_value(&mut highlight.search.case_sensitive, case_label)
                 .on_hover_text("Case sensitive")
                 .changed()
             {
-                highlight.update_search_regex();
-                actions.push(HighlightRowAction::FilterUpdateNeeded(index));
+                actions.push(HighlightRowAction::Modified);
             }
 
             // Show validation status
-            match &highlight.search_regex {
-                Ok(_) if !highlight.search_text.is_empty() => {
+            match &highlight.search.get_regex() {
+                Ok(_) if !highlight.search.search_text.is_empty() => {
                     ui.colored_label(Color32::GREEN, "✓");
                 }
                 Err(err) => {
@@ -210,8 +208,6 @@ impl HighlightsView {
 #[derive(Debug, Clone)]
 enum HighlightRowAction {
     Modified,
-    /// Search text or case sensitivity changed - need to re-filter
-    FilterUpdateNeeded(usize),
     StartEditingName(usize),
     /// Stop editing and save (Enter or focus lost)
     StopEditingName,
@@ -269,13 +265,6 @@ impl LogCrabTab for HighlightsView {
                 for action in actions {
                     match action {
                         HighlightRowAction::Modified => {
-                            data_state.modified = true;
-                        }
-                        HighlightRowAction::FilterUpdateNeeded(index) => {
-                            // Request background filter update for this highlight
-                            if let Some(highlight) = data_state.highlights.get_mut(index) {
-                                highlight.request_filter_update(Arc::clone(&data_state.store));
-                            }
                             data_state.modified = true;
                         }
                         HighlightRowAction::ConvertToFilter(index) => {

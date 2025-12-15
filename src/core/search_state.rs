@@ -1,0 +1,160 @@
+// LogCrab - GPL-3.0-or-later
+// This file is part of LogCrab.
+//
+// Copyright (C) 2025 Daniel Freiermuth
+//
+// LogCrab is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// LogCrab is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
+
+//! Shared search state used by both filters and highlights.
+//!
+//! This module provides the core regex-based search functionality
+//! with background filtering support via the global filter worker.
+
+use crate::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
+use crate::core::LogStore;
+use fancy_regex::{Error, Regex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
+
+/// Global counter for assigning unique search IDs
+static NEXT_SEARCH_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Core search state shared between filters and highlights.
+///
+/// Handles regex compilation, background filtering, and result caching.
+pub struct SearchState {
+    /// Unique identifier for this search instance
+    id: usize,
+    /// The search pattern text
+    pub search_text: String,
+    /// Whether the search is case-sensitive
+    pub case_sensitive: bool,
+    /// Cached indices of matching lines
+    filtered_indices: Vec<usize>,
+
+    /// LogStore version this cache was computed for
+    cached_for_version: u64,
+    cached_for_text: String,
+    cached_for_case: bool,
+
+    /// Channel for receiving background filter results
+    filter_result_rx: Receiver<FilterResult>,
+    /// Sender kept to create new requests
+    filter_result_tx: Sender<FilterResult>,
+}
+
+impl SearchState {
+    /// Create a new search state with empty search text.
+    pub fn new() -> Self {
+        let (result_tx, result_rx) = channel();
+        let id = NEXT_SEARCH_ID.fetch_add(1, Ordering::Relaxed);
+
+        Self {
+            id,
+            search_text: String::new(),
+            cached_for_text: String::new(),
+            case_sensitive: false,
+            cached_for_case: false,
+            filtered_indices: Vec::new(),
+            cached_for_version: 0,
+            filter_result_rx: result_rx,
+            filter_result_tx: result_tx,
+        }
+    }
+
+    /// Get the unique identifier for this search.
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn get_filtered_indices(&mut self, store: &Arc<LogStore>) -> &Vec<usize> {
+        self.ensure_cache_valid(store);
+        self.check_filter_results();
+        &self.filtered_indices
+    }
+
+    pub fn get_regex(&self) -> Result<Regex, Box<Error>> {
+        let pattern = if self.case_sensitive {
+            &self.search_text
+        } else {
+            &format!("(?i){}", self.search_text)
+        };
+        Regex::new(pattern).map_err(Box::new)
+    }
+
+    /// Request a background filter update for the given store.
+    fn request_filter_update(&mut self, store: Arc<LogStore>) {
+        if !self.search_text.is_empty() {
+            log::trace!(
+                "Search {}: requesting background filter for '{}'",
+                self.id,
+                self.search_text
+            );
+        }
+
+        let request = FilterRequest {
+            filter_id: self.id,
+            regex: self.get_regex().ok(),
+            store,
+            result_tx: self.filter_result_tx.clone(),
+        };
+
+        GlobalFilterWorker::send_request(request);
+    }
+
+    /// Check for completed filter results from background thread.
+    /// Returns true if new results were received.
+    fn check_filter_results(&mut self) -> bool {
+        if let Ok(result) = self.filter_result_rx.try_recv() {
+            self.filtered_indices = result.filtered_indices;
+            log::trace!(
+                "Search {}: completed filtering ({} matches)",
+                self.id,
+                self.filtered_indices.len()
+            );
+            return true;
+        }
+        false
+    }
+
+    /// Check if cache is valid for the given store version, request update if not.
+    fn ensure_cache_valid(&mut self, store: &Arc<LogStore>) {
+        if self.cached_for_version != store.version() ||
+           self.cached_for_text != self.search_text ||
+           self.cached_for_case != self.case_sensitive
+        {
+            self.request_filter_update(Arc::clone(store));
+            self.cached_for_version = store.version();
+            self.cached_for_text = self.search_text.clone();
+            self.cached_for_case = self.case_sensitive;
+        }
+
+    }
+
+    /// Find the closest line index in filtered results to the target.
+    pub fn find_closest_index(&self, target_idx: usize) -> usize {
+        let mut closest_idx = 0;
+        let mut min_diff = i64::MAX;
+
+        for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
+            let diff = (line_idx as i64 - target_idx as i64).abs();
+            if diff < min_diff {
+                min_diff = diff;
+                closest_idx = filtered_idx;
+            }
+        }
+        closest_idx
+    }
+}

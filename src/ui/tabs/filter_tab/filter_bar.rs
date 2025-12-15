@@ -160,7 +160,13 @@ impl FilterBar {
         if self.editing_favorite && current_favorite.is_some() {
             self.render_favorite_editor(ui, filter, global_config);
         } else {
-            self.render_favorite_selector(ui, filter.get_id(), global_config, current_favorite, events);
+            self.render_favorite_selector(
+                ui,
+                filter.get_id(),
+                global_config,
+                current_favorite,
+                events,
+            );
         }
     }
 
@@ -249,7 +255,7 @@ impl FilterBar {
     ) {
         let search_id = ui.id().with("search_input");
         let search_response = ui.add(
-            egui::TextEdit::singleline(&mut filter.search_text)
+            egui::TextEdit::singleline(&mut filter.search.search_text)
                 .hint_text("Enter regex pattern (e.g., ERROR|FATAL, \\d+\\.\\d+\\.\\d+\\.\\d+)")
                 .desired_width(300.0)
                 .id(search_id),
@@ -270,7 +276,7 @@ impl FilterBar {
 
         if search_response.lost_focus() {
             self.history_index = None;
-            log_view_state.add_to_filter_history(filter.search_text.clone());
+            log_view_state.add_to_filter_history(filter.search.search_text.clone());
         }
 
         if search_response.changed() {
@@ -315,13 +321,13 @@ impl FilterBar {
     ) {
         let new_index = match self.history_index {
             None => {
-                self.pre_history_text.clone_from(&filter.search_text);
-                usize::from(!(filter_history[0] != filter.search_text || filter_history.len() == 1))
+                self.pre_history_text.clone_from(&filter.search.search_text);
+                usize::from(!(filter_history[0] != filter.search.search_text || filter_history.len() == 1))
             }
             Some(idx) => (idx + 1).min(filter_history.len() - 1),
         };
         self.history_index = Some(new_index);
-        filter.search_text.clone_from(&filter_history[new_index]);
+        filter.search.search_text.clone_from(&filter_history[new_index]);
         events.push(FilterInternalEvent::SearchChanged);
     }
 
@@ -333,11 +339,11 @@ impl FilterBar {
     ) {
         if let Some(idx) = self.history_index {
             if idx == 0 {
-                filter.search_text.clone_from(&self.pre_history_text);
+                filter.search.search_text.clone_from(&self.pre_history_text);
                 self.history_index = None;
             } else {
                 self.history_index = Some(idx - 1);
-                filter.search_text.clone_from(&filter_history[idx - 1]);
+                filter.search.search_text.clone_from(&filter_history[idx - 1]);
             }
             events.push(FilterInternalEvent::SearchChanged);
         }
@@ -350,7 +356,7 @@ impl FilterBar {
         events: &mut Vec<FilterInternalEvent>,
     ) {
         let toggle_response = ui
-            .toggle_value(&mut filter.case_sensitive, "Aa")
+            .toggle_value(&mut filter.search.case_sensitive, "Aa")
             .on_hover_text("Toggle case insensitive matching");
         if toggle_response.changed() {
             events.push(FilterInternalEvent::CaseInsensitiveToggled);
@@ -388,7 +394,7 @@ impl FilterBar {
     }
 
     fn render_validation_status(ui: &mut Ui, filter: &FilterState) {
-        match &filter.search_regex {
+        match &filter.search.get_regex() {
             Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
             Err(err) => ui.colored_label(Color32::RED, format!("❌ {err}")),
         };

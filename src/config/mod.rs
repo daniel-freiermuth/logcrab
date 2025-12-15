@@ -97,7 +97,7 @@ impl FavoriteFilter {
     }
 
     pub fn matches(&self, filter: &FilterState) -> bool {
-        self.search_text == filter.search_text && self.case_sensitive == filter.case_sensitive
+        self.search_text == filter.search.search_text && self.case_sensitive == filter.search.case_sensitive
     }
 }
 

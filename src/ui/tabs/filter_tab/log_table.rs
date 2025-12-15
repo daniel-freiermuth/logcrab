@@ -16,6 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::Arc;
+
 use crate::{
     core::LogStore,
     parser::line::LogLine,
@@ -157,7 +159,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         ui: &mut Ui,
-        store: &LogStore,
+        store: &Arc<LogStore>,
         filter: &mut FilterState,
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
@@ -182,7 +184,7 @@ impl LogTable {
                 Self::render_table_with_header(
                     table,
                     store,
-                    filter.filtered_indices.as_slice(),
+                    filter.search.get_filtered_indices(store),
                     selected_line_index,
                     bookmarked_lines,
                     all_filter_highlights,

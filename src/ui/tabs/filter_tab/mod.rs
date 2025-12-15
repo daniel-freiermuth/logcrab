@@ -106,16 +106,14 @@ impl FilterView {
             match event {
                 FilterInternalEvent::SearchChanged
                 | FilterInternalEvent::CaseInsensitiveToggled => {
-                    self.state.request_filter_update(Arc::clone(store));
                     log_view_state.modified = true;
                 }
                 FilterInternalEvent::FavoriteSelected {
                     search_text,
                     case_sensitive,
                 } => {
-                    self.state.search_text = search_text;
-                    self.state.case_sensitive = case_sensitive;
-                    self.state.request_filter_update(Arc::clone(store));
+                    self.state.search.search_text = search_text;
+                    self.state.search.case_sensitive = case_sensitive;
                     log_view_state.modified = true;
                 }
                 FilterInternalEvent::FilterNameEditRequested => {
@@ -133,20 +131,13 @@ impl FilterView {
             }
         }
 
-        // Check if we need to recompute based on version (Step 9)
-        if self.state.cached_for_version != store.version() {
-            log::trace!("Filter cache invalid for version {}", store.version());
-            self.state.request_filter_update(Arc::clone(store));
-        }
-
         ui.separator();
 
         // Check for completed filter results from background thread
-        self.state.check_filter_results();
         let scroll_to_row = if self.state.last_rendered_selection != Some(selected_line_index) {
             self.state.last_rendered_selection = Some(selected_line_index);
             // Mark as processed so we don't keep checking on every render
-            Some(self.state.find_closest_timestamp_index(selected_line_index))
+            Some(self.state.search.find_closest_index(selected_line_index))
         } else {
             None
         };
@@ -155,7 +146,7 @@ impl FilterView {
         if let Some(hist_event) = Histogram::render(
             ui,
             store,
-            &self.state.filtered_indices,
+            self.state.search.get_filtered_indices(store),
             selected_line_index,
             global_config.hide_epoch_in_histogram,
             histogram_markers,
@@ -236,8 +227,8 @@ impl FilterView {
                         Some(ChangeFilternameWindow::new(self.state.name.clone()));
                 }
                 FilterViewEvent::FavoriteToggled => {
-                    let search_text = self.state.search_text.clone();
-                    let case_sensitive = self.state.case_sensitive;
+                    let search_text = self.state.search.search_text.clone();
+                    let case_sensitive = self.state.search.case_sensitive;
 
                     // Check if this filter is already a favorite
                     if let Some(pos) = global_config.favorite_filters.iter().position(|f| {
@@ -254,7 +245,7 @@ impl FilterView {
                                 search_text,
                                 case_sensitive,
                             ));
-                        log::info!("Added favorite: '{}'", self.state.search_text);
+                        log::info!("Added favorite: '{}'", self.state.search.search_text);
                     }
 
                     // Save global config
@@ -265,8 +256,8 @@ impl FilterView {
                     data_state.pending_filter_to_highlight = Some(FilterToHighlightData {
                         filter_uuid: self.state.get_id(),
                         name: self.state.name.clone(),
-                        search_text: self.state.search_text.clone(),
-                        case_sensitive: self.state.case_sensitive,
+                        search_text: self.state.search.search_text.clone(),
+                        case_sensitive: self.state.search.case_sensitive,
                         color: self.state.color,
                         globally_visible: self.state.globally_visible,
                         show_in_histogram: self.state.show_in_histogram,
@@ -296,38 +287,42 @@ impl FilterView {
 
     /// Move selection within a filtered view (only through matched indices)
     pub fn move_selection_in_filter(&mut self, delta: i32, data_state: &mut LogViewState) {
-        let filter = &self.state;
-        if filter.filtered_indices.is_empty() {
-            return;
+        {
+            let indices = self.state.search.get_filtered_indices(&data_state.store);
+            if indices.is_empty() {
+                return;
+            }
         }
 
         // Determine current position within filtered list
         let current_pos = self
             .state
-            .find_closest_timestamp_index(data_state.selected_line_index);
+            .search
+            .find_closest_index(data_state.selected_line_index);
+
+        let indices = self.state.search.get_filtered_indices(&data_state.store);
 
         let new_pos = if delta < 0 {
             current_pos.saturating_sub(delta.unsigned_abs() as usize)
         } else {
-            (current_pos + delta as usize).min(filter.filtered_indices.len().saturating_sub(1))
+            (current_pos + delta as usize).min(indices.len().saturating_sub(1))
         };
 
-        let new_line_index = filter.filtered_indices[new_pos];
+        let new_line_index = indices[new_pos];
         data_state.selected_line_index = new_line_index;
     }
 
     /// Jump to the first line in a filtered view (Vim-style gg)
     pub fn jump_to_top_in_filter(&mut self, data_state: &mut LogViewState) {
-        let filter = &self.state;
-        if let Some(&first_line_index) = filter.filtered_indices.first() {
+        let indices = self.state.search.get_filtered_indices(&data_state.store);
+        if let Some(&first_line_index) = indices.first() {
             data_state.selected_line_index = first_line_index;
         }
     }
 
     /// Jump to the last line in a filtered view (Vim-style G)
     pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut LogViewState) {
-        let filter = &self.state;
-        if let Some(&last_line_index) = filter.filtered_indices.last() {
+        if let Some(&last_line_index) = self.state.search.get_filtered_indices(&data_state.store).last() {
             data_state.selected_line_index = last_line_index;
         }
     }
@@ -380,8 +375,8 @@ impl LogCrabTab for FilterView {
             let mut highlights_with_current = Vec::with_capacity(all_filter_highlights.len() + 1);
 
             // Add this tab's own filter first (if it has a valid regex)
-            if let Ok(regex) = &self.state.search_regex {
-                if !self.state.search_text.is_empty() {
+            if let Ok(regex) = &self.state.search.get_regex() {
+                if !self.state.search.search_text.is_empty() {
                     highlights_with_current.push(FilterHighlight {
                         regex: regex.clone(),
                         color: self.state.color,
@@ -392,7 +387,7 @@ impl LogCrabTab for FilterView {
             // Add all other global filters (excluding this one to avoid duplicates)
             for highlight in all_filter_highlights {
                 // Skip if this is the same filter (compare by checking if regex patterns match)
-                if let Ok(our_regex) = &self.state.search_regex {
+                if let Ok(our_regex) = &self.state.search.get_regex() {
                     if highlight.regex.as_str() != our_regex.as_str() {
                         highlights_with_current.push(highlight.clone());
                     }
@@ -469,27 +464,22 @@ impl LogCrabTab for FilterView {
 
     fn get_filter_highlight(&self) -> Option<FilterHighlight> {
         self.state
-            .search_regex
-            .as_ref()
-            .ok()
-            .filter(|_| !self.state.search_text.is_empty() && self.state.globally_visible)
+            .search.get_regex().ok()
+            .filter(|_| !self.state.search.search_text.is_empty() && self.state.globally_visible)
             .map(|regex| FilterHighlight {
-                regex: regex.clone(),
+                regex,
                 color: self.state.color,
             })
     }
 
     fn get_histogram_marker(&mut self, store: &Arc<LogStore>) -> Option<HistogramMarker> {
-        if !self.state.show_in_histogram || self.state.filtered_indices.is_empty() {
+        let indices = self.state.search.get_filtered_indices(store);
+        if !self.state.show_in_histogram || indices.is_empty() {
             return None;
         }
-        if self.state.cached_for_version != store.version() {
-            self.state.request_filter_update(Arc::clone(store));
-        }
-        self.state.check_filter_results();
         Some(HistogramMarker {
             name: self.state.name.clone(),
-            indices: self.state.filtered_indices.clone(),
+            indices: indices.clone(),
             color: self.state.color,
         })
     }
