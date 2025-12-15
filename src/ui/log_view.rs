@@ -812,26 +812,9 @@ impl LogView {
 
             // Close the filter tab that was converted
             // Find the tab by uuid and remove it
-            let filter_uuid = data.filter_uuid;
-            let mut tab_to_remove = None;
-            for ((surface_idx, node_idx), tab) in self.dock_state.iter_all_tabs() {
-                if tab.get_uuid() == Some(filter_uuid) {
-                    // Find the tab index within this node
-                    if let Node::Leaf(leaf) = &self.dock_state[surface_idx][node_idx] {
-                        for (tab_idx, t) in leaf.tabs.iter().enumerate() {
-                            if t.get_uuid() == Some(filter_uuid) {
-                                tab_to_remove =
-                                    Some((surface_idx, node_idx, egui_dock::TabIndex(tab_idx)));
-                                break;
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-            if let Some((surface_idx, node_idx, tab_idx)) = tab_to_remove {
-                self.dock_state.remove_tab((surface_idx, node_idx, tab_idx));
-            }
+            self.dock_state.retain_tabs(|t| {
+                t.get_uuid() != Some(data.filter_uuid)
+            });
         }
     }
 
