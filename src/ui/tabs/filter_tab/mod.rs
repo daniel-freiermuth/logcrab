@@ -52,7 +52,6 @@ pub enum FilterViewEvent {
 
 /// Orchestrates the filter view UI using reusable components
 pub struct FilterView {
-    uuid: usize,
     should_focus_search: bool,
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
@@ -60,9 +59,8 @@ pub struct FilterView {
 }
 
 impl FilterView {
-    pub const fn new(uuid: usize, state: FilterState) -> Self {
+    pub const fn new(state: FilterState) -> Self {
         Self {
-            uuid,
             should_focus_search: false,
             state,
             change_filtername_window: None,
@@ -94,7 +92,6 @@ impl FilterView {
         let filter_bar_events = self.filter_bar.render(
             ui,
             &mut self.state,
-            self.uuid,
             global_config,
             self.should_focus_search,
             log_view_state,
@@ -175,7 +172,6 @@ impl FilterView {
             ui,
             store,
             &self.state,
-            self.uuid,
             selected_line_index,
             bookmarked_lines,
             scroll_to_row,
@@ -266,7 +262,7 @@ impl FilterView {
                 FilterViewEvent::ConvertToHighlight => {
                     // Request conversion to highlight - LogView will handle it and close this tab
                     data_state.pending_filter_to_highlight = Some(FilterToHighlightData {
-                        filter_uuid: self.uuid,
+                        filter_uuid: self.state.get_id(),
                         name: self.state.name.clone(),
                         search_text: self.state.search_text.clone(),
                         case_sensitive: self.state.case_sensitive,
@@ -512,6 +508,6 @@ impl LogCrabTab for FilterView {
     }
 
     fn get_uuid(&self) -> Option<usize> {
-        Some(self.uuid)
+        Some(self.state.get_id())
     }
 }

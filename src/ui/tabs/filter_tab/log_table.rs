@@ -139,7 +139,6 @@ impl LogTable {
         ui: &mut Ui,
         store: &LogStore,
         filter: &FilterState,
-        ui_salt: usize,
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         scroll_to_row: Option<usize>,
@@ -152,7 +151,7 @@ impl LogTable {
 
         let available_width = ui.available_width();
         egui::ScrollArea::horizontal()
-            .id_salt(format!("filtered_scroll_{ui_salt}"))
+            .id_salt(format!("filtered_scroll_{}", filter.get_id()))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 profiling::scope!("filtered_table");
@@ -164,7 +163,6 @@ impl LogTable {
                     table,
                     store,
                     filter,
-                    ui_salt,
                     selected_line_index,
                     bookmarked_lines,
                     all_filter_highlights,
@@ -206,7 +204,6 @@ impl LogTable {
         table: TableBuilder,
         store: &LogStore,
         filter: &FilterState,
-        ui_salt: usize,
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
@@ -223,7 +220,6 @@ impl LogTable {
                     body,
                     store,
                     filter,
-                    ui_salt,
                     selected_line_index,
                     bookmarked_lines,
                     all_filter_highlights,
@@ -255,7 +251,6 @@ impl LogTable {
         body: egui_extras::TableBody,
         store: &LogStore,
         filter: &FilterState,
-        ui_salt: usize,
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
@@ -269,7 +264,6 @@ impl LogTable {
                 &mut row,
                 store,
                 filter,
-                ui_salt,
                 selected_line_index,
                 bookmarked_lines,
                 all_filter_highlights,
@@ -287,7 +281,6 @@ impl LogTable {
         row: &mut egui_extras::TableRow,
         store: &LogStore,
         filter: &FilterState,
-        ui_salt: usize,
         selected_line_index: usize,
         bookmarked_lines: &std::collections::HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
@@ -308,7 +301,7 @@ impl LogTable {
             row,
             &line,
             line_idx,
-            ui_salt,
+            filter.get_id(),
             is_selected,
             is_bookmarked,
             color,

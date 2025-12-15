@@ -276,4 +276,8 @@ impl FilterState {
         }
         closest_idx
     }
+
+    pub fn get_id(&self) -> usize {
+        self.filter_id
+    }
 }

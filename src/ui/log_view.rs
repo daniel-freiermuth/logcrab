@@ -514,7 +514,7 @@ impl LogView {
                 color,
             )
         });
-        let mut filter = Box::new(FilterView::new(self.monotonic_filter_counter, state));
+        let mut filter = Box::new(FilterView::new(state));
         if focus_search {
             filter.focus_search_next_frame();
         }

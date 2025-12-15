@@ -83,7 +83,6 @@ impl FilterBar {
         &mut self,
         ui: &mut Ui,
         filter: &mut FilterState,
-        filter_uuid: usize,
         global_config: &mut GlobalConfig,
         should_focus_search: bool,
         log_view_state: &mut LogViewState,
@@ -98,7 +97,7 @@ impl FilterBar {
             self.render_histogram_toggle(ui, filter, &mut events);
             Self::render_color_picker(ui, filter);
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
-            self.render_favorites_dropdown(ui, filter, filter_uuid, global_config, &mut events);
+            self.render_favorites_dropdown(ui, filter, global_config, &mut events);
             self.render_search_input(ui, filter, should_focus_search, log_view_state, &mut events);
             self.render_case_checkbox(ui, filter, &mut events);
             Self::render_validation_status(ui, filter);
@@ -146,7 +145,6 @@ impl FilterBar {
         &mut self,
         ui: &mut Ui,
         filter: &mut FilterState,
-        filter_uuid: usize,
         global_config: &mut GlobalConfig,
         events: &mut Vec<FilterInternalEvent>,
     ) {
@@ -162,7 +160,7 @@ impl FilterBar {
         if self.editing_favorite && current_favorite.is_some() {
             self.render_favorite_editor(ui, filter, global_config);
         } else {
-            self.render_favorite_selector(ui, filter_uuid, global_config, current_favorite, events);
+            self.render_favorite_selector(ui, filter.get_id(), global_config, current_favorite, events);
         }
     }
 
