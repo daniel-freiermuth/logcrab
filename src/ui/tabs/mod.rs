@@ -30,10 +30,10 @@ pub use highlights_tab::HighlightsView;
 use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
-use crate::core::LogStore;
+use crate::core::{LogStore, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
-use crate::ui::log_view::{LogViewState, SavedFilter};
+use crate::ui::log_view::LogViewState;
 use crate::ui::tabs::filter_tab::HistogramMarker;
 
 pub trait LogCrabTab {

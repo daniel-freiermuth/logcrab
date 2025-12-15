@@ -16,7 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 use crate::config::GlobalConfig;
-use crate::core::LogStore;
+use crate::core::session::{CRAB_FILE_VERSION, CRAB_FILTERS_VERSION};
+use crate::core::{Bookmark, CrabFile, CrabFilters, LogStore, SavedFilter, SavedHighlight};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
@@ -30,89 +31,21 @@ use egui::Color32;
 
 use chrono::{DateTime, Local};
 use egui_dock::{DockArea, DockState, Node};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Named bookmark with optional description
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bookmark {
-    pub line_index: usize,
-    pub name: String,
-    pub timestamp: DateTime<Local>,
-}
-
-/// Helper to serialize/deserialize Color32
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct SerializableColor {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
-}
-
-impl From<Color32> for SerializableColor {
-    fn from(c: Color32) -> Self {
-        let [r, g, b, a] = c.to_array();
-        Self { r, g, b, a }
-    }
-}
-
-impl From<SerializableColor> for Color32 {
-    fn from(c: SerializableColor) -> Self {
-        Self::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
-    }
-}
-
-fn serialize_color<S>(color: &Color32, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    SerializableColor::from(*color).serialize(serializer)
-}
-
-fn deserialize_color<'de, D>(deserializer: D) -> Result<Color32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    SerializableColor::deserialize(deserializer).map(Color32::from)
-}
-
-const fn default_filter_color() -> Color32 {
-    Color32::YELLOW // Default to yellow if not specified
-}
-
-/// Saved filter configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedFilter {
-    search_text: String,
-    case_sensitive: bool,
-    name: String,
-    #[serde(
-        default = "default_filter_color",
-        serialize_with = "serialize_color",
-        deserialize_with = "deserialize_color"
-    )]
-    color: Color32,
-    #[serde(default = "default_globally_visible")]
-    globally_visible: bool,
-    #[serde(default)]
-    show_in_histogram: bool,
-}
-
-const fn default_globally_visible() -> bool {
-    true
-}
+// ============================================================================
+// Conversion traits between saved and runtime state
+// ============================================================================
 
 impl From<&SavedFilter> for FilterState {
-    fn from(saved_filter: &SavedFilter) -> Self {
-        let mut filter = Self::new(saved_filter.name.clone(), saved_filter.color);
-        filter.search.search_text.clone_from(&saved_filter.search_text);
-        filter.search.case_sensitive = saved_filter.case_sensitive;
-        filter.globally_visible = saved_filter.globally_visible;
-        filter.show_in_histogram = saved_filter.show_in_histogram;
+    fn from(saved: &SavedFilter) -> Self {
+        let mut filter = Self::new(saved.name.clone(), saved.color);
+        filter.search.search_text.clone_from(&saved.search_text);
+        filter.search.case_sensitive = saved.case_sensitive;
+        filter.globally_visible = saved.enabled;
+        filter.show_in_histogram = saved.show_in_histogram;
         filter
     }
 }
@@ -124,32 +57,10 @@ impl From<&FilterState> for SavedFilter {
             case_sensitive: filter.search.case_sensitive,
             name: filter.name.clone(),
             color: filter.color,
-            globally_visible: filter.globally_visible,
+            enabled: filter.globally_visible,
             show_in_histogram: filter.show_in_histogram,
         }
     }
-}
-
-/// Saved highlight configuration for .crab file
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedHighlight {
-    #[serde(default)]
-    name: String,
-    search_text: String,
-    case_sensitive: bool,
-    #[serde(
-        serialize_with = "serialize_color",
-        deserialize_with = "deserialize_color"
-    )]
-    color: Color32,
-    #[serde(default = "default_enabled")]
-    enabled: bool,
-    #[serde(default)]
-    show_in_histogram: bool,
-}
-
-const fn default_enabled() -> bool {
-    true
 }
 
 impl From<&SavedHighlight> for HighlightState {
@@ -174,37 +85,6 @@ impl From<&HighlightState> for SavedHighlight {
             show_in_histogram: highlight.show_in_histogram,
         }
     }
-}
-
-/// Current version of the .crab file format
-const CRAB_FILE_VERSION: u32 = 2;
-
-/// Current version of the .crab-filters file format
-const CRAB_FILTERS_VERSION: u32 = 1;
-
-/// .crab file format - stores all session data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CrabFile {
-    /// File format version for future compatibility
-    #[serde(default = "default_version")]
-    version: u32,
-    bookmarks: Vec<Bookmark>,
-    filters: Vec<SavedFilter>,
-    #[serde(default)]
-    highlights: Vec<SavedHighlight>,
-}
-
-const fn default_version() -> u32 {
-    1 // Treat missing version as v1 for backwards compatibility
-}
-
-/// .crab-filters file format - stores only filters for import/export
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CrabFilters {
-    /// File format version for future compatibility
-    #[serde(default = "default_version")]
-    version: u32,
-    filters: Vec<SavedFilter>,
 }
 
 /// Main log analyse view
@@ -327,8 +207,8 @@ impl LogView {
 
     fn load_crab_file(&mut self) {
         log::debug!("Loading .crab file: {}", self.crab_file.display());
-        if let Ok(file_content) = fs::read_to_string(&self.crab_file) {
-            if let Ok(crab_data) = serde_json::from_str::<CrabFile>(&file_content) {
+        match CrabFile::load(&self.crab_file) {
+            Ok(crab_data) => {
                 log::info!(
                     "Loaded .crab file v{} with {} bookmarks, {} filters, {} highlights",
                     crab_data.version,
@@ -336,15 +216,6 @@ impl LogView {
                     crab_data.filters.len(),
                     crab_data.highlights.len()
                 );
-
-                // Future: handle version migrations here
-                if crab_data.version > CRAB_FILE_VERSION {
-                    log::warn!(
-                        ".crab file version {} is newer than supported version {}. Some features may not work correctly.",
-                        crab_data.version,
-                        CRAB_FILE_VERSION
-                    );
-                }
 
                 // Load bookmarks
                 for bookmark in crab_data.bookmarks {
@@ -365,16 +236,20 @@ impl LogView {
                     // No saved filters - just create one default filter
                     self.add_filter_view(false, None);
                 }
-            } else {
-                log::warn!("Failed to parse .crab file: {}", self.crab_file.display());
+            }
+            Err(crate::core::SessionError::Io(ref e))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                log::info!(
+                    ".crab file does not exist yet: {}",
+                    self.crab_file.display()
+                );
                 self.add_filter_view(false, None);
             }
-        } else {
-            log::info!(
-                ".crab file does not exist yet: {}",
-                self.crab_file.display()
-            );
-            self.add_filter_view(false, None);
+            Err(e) => {
+                log::warn!("Failed to load .crab file: {e}");
+                self.add_filter_view(false, None);
+            }
         }
 
         // Split horizontally: 70% top for filters, 30% bottom for bookmarks and highlights
@@ -402,6 +277,7 @@ impl LogView {
             self.state.highlights.iter().map(|h| h.into()).collect();
         let n_filters = filters.len();
         let n_highlights = highlights.len();
+
         let crab_data = CrabFile {
             version: CRAB_FILE_VERSION,
             bookmarks: self.state.bookmarks.values().cloned().collect(),
@@ -409,20 +285,18 @@ impl LogView {
             highlights,
         };
 
-        if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
-            match fs::write(&self.crab_file, json) {
-                Ok(()) => log::debug!(
-                    "Successfully saved .crab file with {} bookmarks, {} filters, {} highlights",
-                    self.state.bookmarks.len(),
-                    n_filters,
-                    n_highlights,
-                ),
-                Err(e) => log::error!("Failed to save .crab file: {e}"),
-            }
+        match crab_data.save(&self.crab_file) {
+            Ok(()) => log::debug!(
+                "Successfully saved .crab file with {} bookmarks, {} filters, {} highlights",
+                self.state.bookmarks.len(),
+                n_filters,
+                n_highlights,
+            ),
+            Err(e) => log::error!("Failed to save .crab file: {e}"),
         }
     }
 
-    pub fn export_filters(&self, path: &PathBuf) -> Result<(), String> {
+    pub fn export_filters(&self, path: &Path) -> Result<(), String> {
         log::debug!("Exporting filters to: {}", path.display());
         let filters = self
             .dock_state
@@ -435,10 +309,9 @@ impl LogView {
             filters,
         };
 
-        let json = serde_json::to_string_pretty(&filters_data)
-            .map_err(|e| format!("Failed to serialize filters: {e}"))?;
-
-        fs::write(path, json).map_err(|e| format!("Failed to write file: {e}"))?;
+        filters_data
+            .save(path)
+            .map_err(|e| format!("Failed to save filters: {e}"))?;
 
         log::info!(
             "Successfully exported {} filters to {}",
@@ -448,28 +321,17 @@ impl LogView {
         Ok(())
     }
 
-    pub fn import_filters(&mut self, path: &PathBuf) -> Result<usize, String> {
+    pub fn import_filters(&mut self, path: &Path) -> Result<usize, String> {
         log::debug!("Importing filters from: {}", path.display());
-        let file_content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read file: {e}"))?;
 
-        let filters_data: CrabFilters = serde_json::from_str(&file_content)
-            .map_err(|e| format!("Failed to parse filters file: {e}"))?;
+        let filters_data =
+            CrabFilters::load(path).map_err(|e| format!("Failed to load filters: {e}"))?;
 
         log::info!(
             "Importing .crab-filters v{} with {} filters",
             filters_data.version,
             filters_data.filters.len()
         );
-
-        // Future: handle version migrations here
-        if filters_data.version > CRAB_FILTERS_VERSION {
-            log::warn!(
-                ".crab-filters file version {} is newer than supported version {}. Some features may not work correctly.",
-                filters_data.version,
-                CRAB_FILTERS_VERSION
-            );
-        }
 
         let count = filters_data.filters.len();
         for saved_filter in filters_data.filters {
@@ -525,7 +387,10 @@ impl LogView {
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name,
                     color: highlight.color,
-                    indices: highlight.search.get_filtered_indices(&self.state.store).clone(),
+                    indices: highlight
+                        .search
+                        .get_filtered_indices(&self.state.store)
+                        .clone(),
                 });
             }
         }

@@ -23,11 +23,11 @@ use std::sync::Arc;
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
 use crate::{
-    core::LogStore,
+    core::{LogStore, SavedFilter},
     input::ShortcutAction,
     ui::{
         filter_highlight::FilterHighlight,
-        log_view::{LogViewState, SavedFilter},
+        log_view::LogViewState,
         tabs::{filter_tab::HistogramMarker, LogCrabTab},
     },
 };

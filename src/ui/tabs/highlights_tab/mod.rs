@@ -25,10 +25,10 @@ use std::sync::Arc;
 use egui::{Color32, RichText, Ui};
 
 use crate::config::GlobalConfig;
-use crate::core::LogStore;
+use crate::core::{LogStore, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
-use crate::ui::log_view::{LogViewState, SavedFilter};
+use crate::ui::log_view::LogViewState;
 use crate::ui::tabs::filter_tab::HistogramMarker;
 use crate::ui::tabs::LogCrabTab;
 

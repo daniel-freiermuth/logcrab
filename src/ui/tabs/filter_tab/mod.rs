@@ -26,10 +26,10 @@ pub use histogram::{Histogram, HistogramMarker};
 pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
-use crate::core::LogStore;
+use crate::core::{LogStore, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
-use crate::ui::log_view::{FilterToHighlightData, LogViewState, SavedFilter};
+use crate::ui::log_view::{FilterToHighlightData, LogViewState};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
@@ -322,7 +322,12 @@ impl FilterView {
 
     /// Jump to the last line in a filtered view (Vim-style G)
     pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut LogViewState) {
-        if let Some(&last_line_index) = self.state.search.get_filtered_indices(&data_state.store).last() {
+        if let Some(&last_line_index) = self
+            .state
+            .search
+            .get_filtered_indices(&data_state.store)
+            .last()
+        {
             data_state.selected_line_index = last_line_index;
         }
     }
@@ -464,7 +469,9 @@ impl LogCrabTab for FilterView {
 
     fn get_filter_highlight(&self) -> Option<FilterHighlight> {
         self.state
-            .search.get_regex().ok()
+            .search
+            .get_regex()
+            .ok()
             .filter(|_| !self.state.search.search_text.is_empty() && self.state.globally_visible)
             .map(|regex| FilterHighlight {
                 regex,
