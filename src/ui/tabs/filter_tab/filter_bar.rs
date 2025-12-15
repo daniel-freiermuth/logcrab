@@ -36,6 +36,8 @@ pub enum FilterInternalEvent {
     FavoriteToggled,
     /// Histogram or globally visible toggle changed
     DisplaySettingsChanged,
+    /// Convert this filter to a highlight
+    ConvertToHighlight,
 }
 
 /// Reusable filter search bar component with internal state for inline editing
@@ -100,6 +102,7 @@ impl FilterBar {
             self.render_search_input(ui, filter, should_focus_search, log_view_state, &mut events);
             self.render_case_checkbox(ui, filter, &mut events);
             Self::render_validation_status(ui, filter);
+            Self::render_convert_to_highlight_button(ui, &mut events);
         });
 
         events
@@ -391,5 +394,15 @@ impl FilterBar {
             Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
             Err(err) => ui.colored_label(Color32::RED, format!("❌ {err}")),
         };
+    }
+
+    fn render_convert_to_highlight_button(ui: &mut Ui, events: &mut Vec<FilterInternalEvent>) {
+        if ui
+            .button("→ Highlight")
+            .on_hover_text("Convert this filter to a highlight")
+            .clicked()
+        {
+            events.push(FilterInternalEvent::ConvertToHighlight);
+        }
     }
 }

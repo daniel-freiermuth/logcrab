@@ -19,8 +19,10 @@ use crate::config::GlobalConfig;
 use crate::core::LogStore;
 use crate::input::ShortcutAction;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
+use crate::ui::tabs::highlights_tab::HighlightState;
 use crate::ui::tabs::{
-    navigation, BookmarksView, FilterView, LogCrabTab, LogCrabTabViewer, PendingTabAdd,
+    navigation, BookmarksView, FilterView, HighlightsView, LogCrabTab, LogCrabTabViewer,
+    PendingTabAdd,
 };
 use crate::ui::PaneDirection;
 use egui::text::LayoutJob;
@@ -324,8 +326,55 @@ impl From<&FilterState> for SavedFilter {
     }
 }
 
+/// Saved highlight configuration for .crab file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedHighlight {
+    #[serde(default)]
+    name: String,
+    search_text: String,
+    case_sensitive: bool,
+    #[serde(
+        serialize_with = "serialize_color",
+        deserialize_with = "deserialize_color"
+    )]
+    color: Color32,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+    #[serde(default)]
+    show_in_histogram: bool,
+}
+
+const fn default_enabled() -> bool {
+    true
+}
+
+impl From<&SavedHighlight> for HighlightState {
+    fn from(saved: &SavedHighlight) -> Self {
+        let mut highlight = Self::new(saved.name.clone(), saved.color);
+        highlight.search_text.clone_from(&saved.search_text);
+        highlight.case_sensitive = saved.case_sensitive;
+        highlight.enabled = saved.enabled;
+        highlight.show_in_histogram = saved.show_in_histogram;
+        highlight.update_search_regex();
+        highlight
+    }
+}
+
+impl From<&HighlightState> for SavedHighlight {
+    fn from(highlight: &HighlightState) -> Self {
+        Self {
+            name: highlight.name.clone(),
+            search_text: highlight.search_text.clone(),
+            case_sensitive: highlight.case_sensitive,
+            color: highlight.color,
+            enabled: highlight.enabled,
+            show_in_histogram: highlight.show_in_histogram,
+        }
+    }
+}
+
 /// Current version of the .crab file format
-const CRAB_FILE_VERSION: u32 = 1;
+const CRAB_FILE_VERSION: u32 = 2;
 
 /// Current version of the .crab-filters file format
 const CRAB_FILTERS_VERSION: u32 = 1;
@@ -338,6 +387,8 @@ struct CrabFile {
     version: u32,
     bookmarks: Vec<Bookmark>,
     filters: Vec<SavedFilter>,
+    #[serde(default)]
+    highlights: Vec<SavedHighlight>,
 }
 
 const fn default_version() -> u32 {
@@ -384,6 +435,26 @@ pub struct LogViewState {
 
     /// Global filter history (shared across all filter tabs)
     pub filter_history: Vec<String>,
+
+    /// Highlight rules that apply across all tabs
+    pub highlights: Vec<HighlightState>,
+
+    /// Pending conversion requests (highlight index to convert to filter)
+    pub pending_highlight_to_filter: Option<usize>,
+    /// Pending conversion requests (filter data to convert to highlight)
+    pub pending_filter_to_highlight: Option<FilterToHighlightData>,
+}
+
+/// Data needed to convert a filter to a highlight
+#[derive(Debug, Clone)]
+pub struct FilterToHighlightData {
+    pub filter_uuid: usize,
+    pub name: String,
+    pub search_text: String,
+    pub case_sensitive: bool,
+    pub color: Color32,
+    pub globally_visible: bool,
+    pub show_in_histogram: bool,
 }
 
 impl LogViewState {
@@ -417,6 +488,9 @@ impl LogView {
                 bookmarks: HashMap::new(),
                 modified: false,
                 last_saved: None,
+                highlights: Vec::new(),
+                pending_highlight_to_filter: None,
+                pending_filter_to_highlight: None,
             },
         };
         view.load_crab_file();
@@ -453,10 +527,11 @@ impl LogView {
         if let Ok(file_content) = fs::read_to_string(&self.crab_file) {
             if let Ok(crab_data) = serde_json::from_str::<CrabFile>(&file_content) {
                 log::info!(
-                    "Loaded .crab file v{} with {} bookmarks, {} filters",
+                    "Loaded .crab file v{} with {} bookmarks, {} filters, {} highlights",
                     crab_data.version,
                     crab_data.bookmarks.len(),
-                    crab_data.filters.len()
+                    crab_data.filters.len(),
+                    crab_data.highlights.len()
                 );
 
                 // Future: handle version migrations here
@@ -471,6 +546,11 @@ impl LogView {
                 // Load bookmarks
                 for bookmark in crab_data.bookmarks {
                     self.state.bookmarks.insert(bookmark.line_index, bookmark);
+                }
+
+                // Load highlights
+                for saved_highlight in &crab_data.highlights {
+                    self.state.highlights.push(saved_highlight.into());
                 }
 
                 if !crab_data.filters.is_empty() {
@@ -494,11 +574,14 @@ impl LogView {
             self.add_filter_view(false, None);
         }
 
-        // Split horizontally: 70% top for filters, 30% bottom for bookmarks
+        // Split horizontally: 70% top for filters, 30% bottom for bookmarks and highlights
         let [top, _bottom] = self.dock_state.main_surface_mut().split_below(
             egui_dock::NodeIndex::root(),
             0.7,
-            vec![Box::new(BookmarksView::default())],
+            vec![
+                Box::new(HighlightsView::new()),
+                Box::new(BookmarksView::default()),
+            ],
         );
 
         // Focus top pane for adding remaining filters
@@ -512,19 +595,24 @@ impl LogView {
             .iter_all_tabs()
             .filter_map(|((_surface, _node), tab)| tab.try_into_stored_filter())
             .collect::<Vec<SavedFilter>>();
+        let highlights: Vec<SavedHighlight> =
+            self.state.highlights.iter().map(|h| h.into()).collect();
         let n_filters = filters.len();
+        let n_highlights = highlights.len();
         let crab_data = CrabFile {
             version: CRAB_FILE_VERSION,
             bookmarks: self.state.bookmarks.values().cloned().collect(),
             filters,
+            highlights,
         };
 
         if let Ok(json) = serde_json::to_string_pretty(&crab_data) {
             match fs::write(&self.crab_file, json) {
                 Ok(()) => log::debug!(
-                    "Successfully saved .crab file with {} bookmarks, {} filters",
+                    "Successfully saved .crab file with {} bookmarks, {} filters, {} highlights",
                     self.state.bookmarks.len(),
                     n_filters,
+                    n_highlights,
                 ),
                 Err(e) => log::error!("Failed to save .crab file: {e}"),
             }
@@ -596,19 +684,54 @@ impl LogView {
     pub fn render(&mut self, ui: &mut egui::Ui, global_config: &mut GlobalConfig) {
         profiling::scope!("LogView::render");
 
+        // Update highlight caches and check for results
+        for highlight in &mut self.state.highlights {
+            highlight.check_filter_results();
+            highlight.ensure_cache_valid(&self.state.store);
+        }
+
         // Collect all filter highlights from all tabs
-        let all_filter_highlights: Vec<FilterHighlight> = self
+        let mut all_filter_highlights: Vec<FilterHighlight> = self
             .dock_state
             .iter_all_tabs()
             .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
             .collect();
 
+        // Add highlights from LogViewState
+        for highlight in &self.state.highlights {
+            if highlight.enabled && !highlight.search_text.is_empty() {
+                if let Ok(regex) = &highlight.search_regex {
+                    all_filter_highlights.push(FilterHighlight {
+                        regex: regex.clone(),
+                        color: highlight.color,
+                    });
+                }
+            }
+        }
+
         // Collect histogram markers from all tabs
-        let histogram_markers: Vec<_> = self
+        let mut histogram_markers: Vec<_> = self
             .dock_state
             .iter_all_tabs()
             .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker())
             .collect();
+
+        // Add histogram markers from highlights (using cached indices)
+        for highlight in &self.state.highlights {
+            if highlight.show_in_histogram && !highlight.search_text.is_empty() {
+                // Use name if set, otherwise fall back to search text
+                let name = if highlight.name.is_empty() {
+                    highlight.search_text.clone()
+                } else {
+                    highlight.name.clone()
+                };
+                histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
+                    name,
+                    color: highlight.color,
+                    indices: highlight.filtered_indices.clone(),
+                });
+            }
+        }
 
         // Use dock area for VS Code-like draggable/tiling layout
         {
@@ -644,10 +767,70 @@ impl LogView {
                 PendingTabAdd::Filter => {
                     self.add_filter_view(false, None);
                 }
+                PendingTabAdd::Highlights => {
+                    self.dock_state
+                        .push_to_focused_leaf(Box::new(HighlightsView::new()));
+                }
                 PendingTabAdd::Bookmarks => {
                     self.dock_state
                         .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 }
+            }
+        }
+
+        // Handle highlight-to-filter conversion
+        if let Some(highlight_index) = self.state.pending_highlight_to_filter.take() {
+            if let Some(highlight) = self.state.highlights.get(highlight_index) {
+                // Create a new filter with the highlight's settings
+                let mut filter_state = FilterState::new(highlight.name.clone(), highlight.color);
+                filter_state.search_text = highlight.search_text.clone();
+                filter_state.case_sensitive = highlight.case_sensitive;
+                filter_state.globally_visible = highlight.enabled;
+                filter_state.show_in_histogram = highlight.show_in_histogram;
+                filter_state.update_search_regex();
+
+                self.add_filter_view(false, Some(filter_state));
+
+                // Remove the highlight
+                self.state.highlights.remove(highlight_index);
+                self.state.modified = true;
+            }
+        }
+
+        // Handle filter-to-highlight conversion
+        if let Some(data) = self.state.pending_filter_to_highlight.take() {
+            let mut highlight = HighlightState::new(data.name, data.color);
+            highlight.search_text = data.search_text;
+            highlight.case_sensitive = data.case_sensitive;
+            highlight.enabled = data.globally_visible;
+            highlight.show_in_histogram = data.show_in_histogram;
+            highlight.update_search_regex();
+            highlight.request_filter_update(Arc::clone(&self.state.store));
+
+            self.state.highlights.push(highlight);
+            self.state.modified = true;
+
+            // Close the filter tab that was converted
+            // Find the tab by uuid and remove it
+            let filter_uuid = data.filter_uuid;
+            let mut tab_to_remove = None;
+            for ((surface_idx, node_idx), tab) in self.dock_state.iter_all_tabs() {
+                if tab.get_uuid() == Some(filter_uuid) {
+                    // Find the tab index within this node
+                    if let Node::Leaf(leaf) = &self.dock_state[surface_idx][node_idx] {
+                        for (tab_idx, t) in leaf.tabs.iter().enumerate() {
+                            if t.get_uuid() == Some(filter_uuid) {
+                                tab_to_remove =
+                                    Some((surface_idx, node_idx, egui_dock::TabIndex(tab_idx)));
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+            if let Some((surface_idx, node_idx, tab_idx)) = tab_to_remove {
+                self.dock_state.remove_tab((surface_idx, node_idx, tab_idx));
             }
         }
     }

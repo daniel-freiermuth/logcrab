@@ -291,7 +291,10 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            let timestamp_str = bookmark.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            let timestamp_str = bookmark
+                .timestamp
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
 
             let response = ui.interact(

@@ -7,7 +7,7 @@ use crate::config::GlobalConfig;
 use crate::core::{LogFileLoader, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::filter_tab::filter_state::GlobalFilterWorker;
-use crate::ui::tabs::BookmarksView;
+use crate::ui::tabs::{BookmarksView, HighlightsView};
 use crate::ui::LogView;
 use egui::text::LayoutJob;
 use egui::{Color32, Id, LayerId, Order, TextStyle};
@@ -322,6 +322,13 @@ impl LogCrabApp {
                     log_view
                         .dock_state
                         .push_to_focused_leaf(Box::new(BookmarksView::default()));
+                    ui.close();
+                }
+
+                if ui.button("Add Highlights Tab").clicked() {
+                    log_view
+                        .dock_state
+                        .push_to_focused_leaf(Box::new(HighlightsView::new()));
                     ui.close();
                 }
 

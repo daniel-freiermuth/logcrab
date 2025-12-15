@@ -18,10 +18,12 @@
 
 pub mod bookmarks_tab;
 pub mod filter_tab;
+pub mod highlights_tab;
 pub mod navigation;
 
 pub use bookmarks_tab::BookmarksView;
 pub use filter_tab::FilterView;
+pub use highlights_tab::HighlightsView;
 
 use egui_dock::TabViewer;
 
@@ -48,6 +50,10 @@ pub trait LogCrabTab {
     fn context_menu(&mut self, _ui: &mut egui::Ui) {
         // Default implementation does nothing
     }
+    /// Get the unique identifier for this tab (for filter tabs)
+    fn get_uuid(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Pending tab addition request from the add button
@@ -55,6 +61,7 @@ pub trait LogCrabTab {
 pub enum PendingTabAdd {
     Filter,
     Bookmarks,
+    Highlights,
 }
 
 /// `TabViewer` implementation for dock system
@@ -107,6 +114,11 @@ impl TabViewer for LogCrabTabViewer<'_> {
 
         if ui.button("➕ Filter Tab").clicked() {
             *self.pending_tab_add = Some(PendingTabAdd::Filter);
+            ui.close();
+        }
+
+        if ui.button("🎨 Highlights Tab").clicked() {
+            *self.pending_tab_add = Some(PendingTabAdd::Highlights);
             ui.close();
         }
 

@@ -27,16 +27,16 @@ use std::sync::{Arc, OnceLock};
 
 /// Request to compute filtered indices in background
 #[derive(Clone)]
-struct FilterRequest {
-    filter_id: usize, // Unique identifier for each filter instance
-    regex: Option<Regex>,
-    store: Arc<LogStore>,            // Shared read-only access to log store
-    result_tx: Sender<FilterResult>, // Each filter has its own result channel
+pub struct FilterRequest {
+    pub filter_id: usize, // Unique identifier for each filter/highlight instance
+    pub regex: Option<Regex>,
+    pub store: Arc<LogStore>,            // Shared read-only access to log store
+    pub result_tx: Sender<FilterResult>, // Each filter has its own result channel
 }
 
 /// Result from background filtering
-struct FilterResult {
-    filtered_indices: Vec<usize>,
+pub struct FilterResult {
+    pub filtered_indices: Vec<usize>,
 }
 
 /// Global filter worker channels
@@ -63,6 +63,12 @@ impl GlobalFilterWorker {
                 is_filtering,
             }
         })
+    }
+
+    /// Send a filter request to the background worker
+    /// Can be used by both FilterState and HighlightState
+    pub fn send_request(request: FilterRequest) {
+        let _ = Self::get().request_tx.send(request);
     }
 
     /// Single background worker that processes all filter requests

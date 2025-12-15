@@ -27,7 +27,7 @@ pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
 use crate::input::ShortcutAction;
-use crate::ui::log_view::{FilterHighlight, LogViewState, SavedFilter};
+use crate::ui::log_view::{FilterHighlight, FilterToHighlightData, LogViewState, SavedFilter};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
@@ -38,10 +38,16 @@ use std::sync::Arc;
 /// Events that can be emitted by the filter view
 #[derive(Debug, Clone)]
 pub enum FilterViewEvent {
-    LineSelected { line_index: usize },
-    BookmarkToggled { line_index: usize },
+    LineSelected {
+        line_index: usize,
+    },
+    BookmarkToggled {
+        line_index: usize,
+    },
     FilterNameEditRequested,
     FavoriteToggled,
+    /// Convert this filter to a highlight
+    ConvertToHighlight,
 }
 
 /// Orchestrates the filter view UI using reusable components
@@ -121,6 +127,9 @@ impl FilterView {
                 }
                 FilterInternalEvent::DisplaySettingsChanged => {
                     log_view_state.modified = true;
+                }
+                FilterInternalEvent::ConvertToHighlight => {
+                    events.push(FilterViewEvent::ConvertToHighlight);
                 }
             }
         }
@@ -253,6 +262,18 @@ impl FilterView {
 
                     // Save global config
                     let _ = global_config.save();
+                }
+                FilterViewEvent::ConvertToHighlight => {
+                    // Request conversion to highlight - LogView will handle it and close this tab
+                    data_state.pending_filter_to_highlight = Some(FilterToHighlightData {
+                        filter_uuid: self.uuid,
+                        name: self.state.name.clone(),
+                        search_text: self.state.search_text.clone(),
+                        case_sensitive: self.state.case_sensitive,
+                        color: self.state.color,
+                        globally_visible: self.state.globally_visible,
+                        show_in_histogram: self.state.show_in_histogram,
+                    });
                 }
             }
         }
@@ -484,5 +505,9 @@ impl LogCrabTab for FilterView {
             self.state.globally_visible = !self.state.globally_visible;
             ui.close();
         }
+    }
+
+    fn get_uuid(&self) -> Option<usize> {
+        Some(self.uuid)
     }
 }
