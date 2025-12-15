@@ -34,6 +34,8 @@ pub enum FilterInternalEvent {
     },
     FilterNameEditRequested,
     FavoriteToggled,
+    /// Histogram or globally visible toggle changed
+    DisplaySettingsChanged,
 }
 
 /// Reusable filter search bar component with internal state for inline editing
@@ -90,8 +92,8 @@ impl FilterBar {
 
         ui.horizontal(|ui| {
             Self::render_edit_button(ui, &mut events);
-            self.render_globally_visible_toggle(ui, filter);
-            self.render_histogram_toggle(ui, filter);
+            self.render_globally_visible_toggle(ui, filter, &mut events);
+            self.render_histogram_toggle(ui, filter, &mut events);
             Self::render_color_picker(ui, filter);
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, filter_uuid, global_config, &mut events);
@@ -354,14 +356,34 @@ impl FilterBar {
         }
     }
 
-    fn render_globally_visible_toggle(&self, ui: &mut Ui, filter: &mut FilterState) {
-        ui.toggle_value(&mut filter.globally_visible, "👁")
-            .on_hover_text("Show highlights from this filter in all tabs");
+    fn render_globally_visible_toggle(
+        &self,
+        ui: &mut Ui,
+        filter: &mut FilterState,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        if ui
+            .toggle_value(&mut filter.globally_visible, "👁")
+            .on_hover_text("Show highlights from this filter in all tabs")
+            .changed()
+        {
+            events.push(FilterInternalEvent::DisplaySettingsChanged);
+        }
     }
 
-    fn render_histogram_toggle(&self, ui: &mut Ui, filter: &mut FilterState) {
-        ui.toggle_value(&mut filter.show_in_histogram, "📊")
-            .on_hover_text("Show filter matches as vertical lines in histogram");
+    fn render_histogram_toggle(
+        &self,
+        ui: &mut Ui,
+        filter: &mut FilterState,
+        events: &mut Vec<FilterInternalEvent>,
+    ) {
+        if ui
+            .toggle_value(&mut filter.show_in_histogram, "📊")
+            .on_hover_text("Show filter matches as vertical lines in histogram")
+            .changed()
+        {
+            events.push(FilterInternalEvent::DisplaySettingsChanged);
+        }
     }
 
     fn render_validation_status(ui: &mut Ui, filter: &FilterState) {

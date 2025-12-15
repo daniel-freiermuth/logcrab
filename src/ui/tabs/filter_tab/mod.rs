@@ -42,7 +42,6 @@ pub enum FilterViewEvent {
     BookmarkToggled { line_index: usize },
     FilterNameEditRequested,
     FavoriteToggled,
-    FilterModified, // Filter search text or case sensitivity changed
 }
 
 /// Orchestrates the filter view UI using reusable components
@@ -103,7 +102,7 @@ impl FilterView {
                 FilterInternalEvent::SearchChanged
                 | FilterInternalEvent::CaseInsensitiveToggled => {
                     self.state.request_filter_update(Arc::clone(store));
-                    events.push(FilterViewEvent::FilterModified);
+                    log_view_state.modified = true;
                 }
                 FilterInternalEvent::FavoriteSelected {
                     search_text,
@@ -112,13 +111,16 @@ impl FilterView {
                     self.state.search_text = search_text;
                     self.state.case_sensitive = case_sensitive;
                     self.state.request_filter_update(Arc::clone(store));
-                    events.push(FilterViewEvent::FilterModified);
+                    log_view_state.modified = true;
                 }
                 FilterInternalEvent::FilterNameEditRequested => {
                     events.push(FilterViewEvent::FilterNameEditRequested);
                 }
                 FilterInternalEvent::FavoriteToggled => {
                     events.push(FilterViewEvent::FavoriteToggled);
+                }
+                FilterInternalEvent::DisplaySettingsChanged => {
+                    log_view_state.modified = true;
                 }
             }
         }
@@ -251,10 +253,6 @@ impl FilterView {
 
                     // Save global config
                     let _ = global_config.save();
-                }
-                FilterViewEvent::FilterModified => {
-                    // Filter search text or case sensitivity changed, save to .crab file
-                    data_state.modified = true;
                 }
             }
         }
