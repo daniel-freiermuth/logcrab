@@ -21,7 +21,7 @@ use crate::ui::log_view::{FilterHighlight, LogViewState};
 use crate::ui::tabs::filter_tab::log_table::{
     bookmarked_row_color, score_to_color, selected_row_color,
 };
-use chrono::DateTime;
+use chrono::{DateTime, Local};
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -116,7 +116,7 @@ impl BookmarkPanel {
             .min_scrolled_height(body_height)
             .max_scroll_height(body_height)
             .column(Column::initial(60.0).resizable(true).clip(true))
-            .column(Column::initial(110.0).resizable(true).clip(true))
+            .column(Column::initial(175.0).resizable(true).clip(true))
             .column(Column::initial(200.0).resizable(true).clip(true))
             .column(Column::remainder().resizable(true).clip(true))
             .column(Column::initial(40.0).resizable(false).clip(true))
@@ -125,7 +125,9 @@ impl BookmarkPanel {
                     ui.strong("Line");
                 });
                 header.col(|ui| {
-                    ui.strong("Timestamp");
+                    let now = Local::now();
+                    let offset = now.offset();
+                    ui.strong(format!("Timestamp (UTC{offset})"));
                 });
                 header.col(|ui| {
                     ui.strong("Name");
@@ -289,7 +291,7 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            let timestamp_str = bookmark.timestamp.format("%H:%M:%S%.3f").to_string();
+            let timestamp_str = bookmark.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
 
             let response = ui.interact(

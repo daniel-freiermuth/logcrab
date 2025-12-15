@@ -21,6 +21,7 @@ use crate::{
     parser::line::LogLine,
     ui::{log_view::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
+use chrono::Local;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -189,7 +190,7 @@ impl LogTable {
             .min_scrolled_height(body_height)
             .max_scroll_height(body_height)
             .column(Column::initial(60.0).resizable(true).clip(true))
-            .column(Column::initial(110.0).resizable(true).clip(true))
+            .column(Column::initial(175.0).resizable(true).clip(true))
             .column(Column::remainder().resizable(true).clip(true))
             .column(Column::initial(70.0).resizable(true).clip(true));
 
@@ -237,7 +238,9 @@ impl LogTable {
             ui.strong("Line");
         });
         header.col(|ui| {
-            ui.strong("Timestamp");
+            let now = Local::now();
+            let offset = now.offset();
+            ui.strong(format!("Timestamp (UTC{offset})"));
         });
         header.col(|ui| {
             ui.strong("Message");
@@ -508,7 +511,7 @@ impl LogTable {
                 );
             }
 
-            let timestamp_str = line.timestamp.format("%H:%M:%S%.3f").to_string();
+            let timestamp_str = line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
 
             let job = FilterHighlight::highlight_text_with_filters(
                 &timestamp_str,
