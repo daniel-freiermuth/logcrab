@@ -179,14 +179,21 @@ impl LogCrabApp {
                 }
 
                 if ui.button("Import Filters...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
+                    if let Some(paths) = rfd::FileDialog::new()
                         .add_filter("Crab Filters", &["crab-filters"])
                         .add_filter("All Files", &["*"])
-                        .pick_file()
+                        .pick_files()
                     {
-                        match log_view.import_filters(&path) {
-                            Ok(count) => log::info!("Successfully imported {count} filters"),
-                            Err(e) => log::error!("Failed to import filters: {e}"),
+                        for path in paths {
+                            match log_view.import_filters(&path) {
+                                Ok(count) => {
+                                    log::info!("Imported {count} filters from {}", path.display())
+                                }
+                                Err(e) => log::error!(
+                                    "Failed to import filters from {}: {e}",
+                                    path.display()
+                                ),
+                            }
                         }
                     }
                     ui.close();
