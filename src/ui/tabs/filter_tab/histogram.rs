@@ -181,12 +181,11 @@ impl Histogram {
     ) -> Option<HistogramClickEvent> {
         let max_count = *cache.buckets.iter().max().unwrap_or(&1);
 
-        let selected_bucket = Self::calculate_selected_bucket(
+        let selected_x_fraction = Self::calculate_selected_x_fraction(
             store,
             selected_line_index,
             cache.time_range.unwrap().0,
             cache.time_range.unwrap().1,
-            cache.bucket_size,
         );
 
         let dark_mode = ui.visuals().dark_mode;
@@ -196,7 +195,7 @@ impl Histogram {
             ui,
             cache,
             max_count,
-            selected_bucket,
+            selected_x_fraction,
             store,
             markers,
             dark_mode,
@@ -265,18 +264,24 @@ impl Histogram {
         (buckets, anomaly_distributions)
     }
 
-    fn calculate_selected_bucket(
+    fn calculate_selected_x_fraction(
         store: &LogStore,
         selected_line_index: usize,
         start_time: chrono::DateTime<chrono::Local>,
         end_time: chrono::DateTime<chrono::Local>,
-        bucket_size: f64,
-    ) -> Option<usize> {
+    ) -> Option<f32> {
         let sel_ts = store.get_by_id(selected_line_index).unwrap().timestamp;
-        let elapsed = (sel_ts.timestamp() - start_time.timestamp()) as f64;
+        let total_duration = (end_time.timestamp() - start_time.timestamp()) as f64;
+        
+        if total_duration <= 0.0 {
+            return None;
+        }
+        
+        let elapsed = (sel_ts.timestamp_millis() - start_time.timestamp_millis()) as f64;
+        let total_millis = (end_time.timestamp_millis() - start_time.timestamp_millis()) as f64;
 
-        if elapsed >= 0.0 && sel_ts.timestamp() <= end_time.timestamp() {
-            Some(timestamp_to_bucket(sel_ts, start_time, bucket_size))
+        if elapsed >= 0.0 && elapsed <= total_millis {
+            Some((elapsed / total_millis) as f32)
         } else {
             None
         }
@@ -286,7 +291,7 @@ impl Histogram {
         ui: &mut Ui,
         cache: &HistogramCache,
         max_count: usize,
-        selected_bucket: Option<usize>,
+        selected_x_fraction: Option<f32>,
         store: &LogStore,
         markers: &[HistogramMarker],
         dark_mode: bool,
@@ -321,7 +326,7 @@ impl Histogram {
             cache.bucket_size,
             markers,
         );
-        Self::draw_selected_indicator(&painter, rect, selected_bucket, bar_width);
+        Self::draw_selected_indicator(&painter, rect, selected_x_fraction);
 
         // Handle hover tooltip for markers
         Self::handle_marker_hover(
@@ -511,11 +516,10 @@ impl Histogram {
     fn draw_selected_indicator(
         painter: &egui::Painter,
         rect: egui::Rect,
-        selected_bucket: Option<usize>,
-        bar_width: f32,
+        selected_x_fraction: Option<f32>,
     ) {
-        if let Some(bucket_idx) = selected_bucket {
-            let x = rect.min.x + bucket_idx as f32 * bar_width + bar_width / 2.0;
+        if let Some(fraction) = selected_x_fraction {
+            let x = rect.min.x + fraction * rect.width();
             painter.vline(x, rect.y_range(), (2.0, Color32::RED));
         }
     }
