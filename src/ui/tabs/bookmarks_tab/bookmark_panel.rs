@@ -65,10 +65,12 @@ impl BookmarkPanel {
             return events;
         }
 
+        let available_width = ui.available_width();
         egui::ScrollArea::horizontal()
             .id_salt("bookmarks_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_min_width(available_width);
                 Self::render_bookmark_table(
                     ui,
                     log_view_state,

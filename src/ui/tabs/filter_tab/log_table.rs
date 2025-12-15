@@ -149,11 +149,13 @@ impl LogTable {
         let mut events = Vec::new();
         let dark_mode = ui.visuals().dark_mode;
 
+        let available_width = ui.available_width();
         egui::ScrollArea::horizontal()
             .id_salt(format!("filtered_scroll_{ui_salt}"))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 profiling::scope!("filtered_table");
+                ui.set_min_width(available_width);
 
                 let table = Self::create_table(ui, scroll_to_row);
 
