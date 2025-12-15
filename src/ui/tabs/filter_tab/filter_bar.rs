@@ -20,7 +20,7 @@ use egui::{Color32, Ui};
 
 use crate::{
     config::GlobalConfig,
-    ui::{log_view::LogViewState, tabs::filter_tab::filter_state::FilterState},
+    ui::{session_state::SessionState, tabs::filter_tab::filter_state::FilterState},
 };
 
 /// Events emitted by the filter bar
@@ -85,7 +85,7 @@ impl FilterBar {
         filter: &mut FilterState,
         global_config: &mut GlobalConfig,
         should_focus_search: bool,
-        log_view_state: &mut LogViewState,
+        log_view_state: &mut SessionState,
     ) -> Vec<FilterInternalEvent> {
         profiling::scope!("FilterBar::render");
 
@@ -250,7 +250,7 @@ impl FilterBar {
         ui: &mut Ui,
         filter: &mut FilterState,
         should_focus_search: bool,
-        log_view_state: &mut LogViewState,
+        log_view_state: &mut SessionState,
         events: &mut Vec<FilterInternalEvent>,
     ) {
         let search_id = ui.id().with("search_input");
@@ -291,7 +291,7 @@ impl FilterBar {
         search_response: &egui::Response,
         search_id: egui::Id,
         filter: &mut FilterState,
-        log_view_state: &LogViewState,
+        log_view_state: &SessionState,
         events: &mut Vec<FilterInternalEvent>,
     ) {
         if !search_response.has_focus() {
@@ -322,12 +322,17 @@ impl FilterBar {
         let new_index = match self.history_index {
             None => {
                 self.pre_history_text.clone_from(&filter.search.search_text);
-                usize::from(!(filter_history[0] != filter.search.search_text || filter_history.len() == 1))
+                usize::from(
+                    !(filter_history[0] != filter.search.search_text || filter_history.len() == 1),
+                )
             }
             Some(idx) => (idx + 1).min(filter_history.len() - 1),
         };
         self.history_index = Some(new_index);
-        filter.search.search_text.clone_from(&filter_history[new_index]);
+        filter
+            .search
+            .search_text
+            .clone_from(&filter_history[new_index]);
         events.push(FilterInternalEvent::SearchChanged);
     }
 
@@ -343,7 +348,10 @@ impl FilterBar {
                 self.history_index = None;
             } else {
                 self.history_index = Some(idx - 1);
-                filter.search.search_text.clone_from(&filter_history[idx - 1]);
+                filter
+                    .search
+                    .search_text
+                    .clone_from(&filter_history[idx - 1]);
             }
             events.push(FilterInternalEvent::SearchChanged);
         }

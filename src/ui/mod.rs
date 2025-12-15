@@ -1,6 +1,7 @@
 pub mod app;
 pub mod filter_highlight;
 pub mod log_view;
+pub mod session_state;
 pub mod tabs;
 pub mod toasts;
 pub mod windows;

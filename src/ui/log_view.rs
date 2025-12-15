@@ -15,11 +15,13 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
+
 use crate::config::GlobalConfig;
 use crate::core::session::{CRAB_FILE_VERSION, CRAB_FILTERS_VERSION};
-use crate::core::{Bookmark, CrabFile, CrabFilters, LogStore, SavedFilter, SavedHighlight};
+use crate::core::{CrabFile, CrabFilters, LogStore, SavedFilter, SavedHighlight};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
+use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::highlights_tab::HighlightState;
 use crate::ui::tabs::{
@@ -27,82 +29,33 @@ use crate::ui::tabs::{
     PendingTabAdd,
 };
 use crate::ui::{PaneDirection, DEFAULT_PALETTE};
-use egui::Color32;
 
-use chrono::{DateTime, Local};
+use chrono::Local;
 use egui_dock::{DockArea, DockState, Node};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Main log analyse view
-///   Exists per opened file
+/// Main log viewing session for an opened file.
+///
 /// Responsibilities:
-/// - Managing view and tabs
+/// - Managing dock layout and tabs
 /// - Loading/saving .crab session file
-/// - Keeping state about global selection, filters, bookmarks
+/// - Coordinating keyboard input across tabs
 pub struct CrabSession {
-    // .crab file path
+    /// Path to the .crab session file
     pub crab_file: PathBuf,
 
     /// Dock state for VS Code-like tiling layout
     pub dock_state: DockState<Box<dyn LogCrabTab>>,
 
+    /// Counter for assigning unique filter names/colors
     monotonic_filter_counter: usize,
-    pub state: LogViewState,
+
+    /// Shared state passed to all tabs
+    pub state: SessionState,
 
     /// Pending tab add request (set by add button callback)
     pending_tab_add: Option<PendingTabAdd>,
-}
-
-pub struct LogViewState {
-    pub store: Arc<LogStore>,
-    // Selected line tracking
-    pub selected_line_index: usize,
-    // Bookmarks with names
-    pub bookmarks: HashMap<usize, Bookmark>,
-    pub modified: bool,
-    last_saved: Option<DateTime<Local>>,
-
-    /// Global filter history (shared across all filter tabs)
-    pub filter_history: Vec<String>,
-
-    /// Highlight rules that apply across all tabs
-    pub highlights: Vec<HighlightState>,
-
-    /// Pending conversion requests (highlight index to convert to filter)
-    pub pending_highlight_to_filter: Option<usize>,
-    /// Pending conversion requests (filter data to convert to highlight)
-    pub pending_filter_to_highlight: Option<FilterToHighlightData>,
-}
-
-/// Data needed to convert a filter to a highlight
-#[derive(Debug, Clone)]
-pub struct FilterToHighlightData {
-    pub filter_uuid: usize,
-    pub name: String,
-    pub search_text: String,
-    pub case_sensitive: bool,
-    pub color: Color32,
-    pub globally_visible: bool,
-    pub show_in_histogram: bool,
-}
-
-impl LogViewState {
-    /// Add a filter pattern to the global history (called when filter is committed)
-    pub fn add_to_filter_history(&mut self, pattern: String) {
-        if pattern.is_empty() {
-            return;
-        }
-        // Remove if already exists to avoid duplicates
-        self.filter_history.retain(|p| p != &pattern);
-        // Add to front (most recent first)
-        self.filter_history.insert(0, pattern);
-        // Keep only last 50 entries
-        if self.filter_history.len() > 50 {
-            self.filter_history.truncate(50);
-        }
-    }
 }
 
 impl CrabSession {
@@ -112,17 +65,7 @@ impl CrabSession {
             dock_state: DockState::new(Vec::new()),
             monotonic_filter_counter: 0,
             pending_tab_add: None,
-            state: LogViewState {
-                filter_history: Vec::new(),
-                store,
-                selected_line_index: 0,
-                bookmarks: HashMap::new(),
-                modified: false,
-                last_saved: None,
-                highlights: Vec::new(),
-                pending_highlight_to_filter: None,
-                pending_filter_to_highlight: None,
-            },
+            state: SessionState::new(store),
         };
         view.load_crab_file();
         view
@@ -517,33 +460,6 @@ impl CrabSession {
                 tree.set_focused_node(neighbor_idx);
             }
         }
-    }
-}
-
-impl LogViewState {
-    pub fn toggle_bookmark(&mut self, line_index: usize) {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.bookmarks.entry(line_index) {
-            let line = self.store.get_by_id(line_index).unwrap();
-            let timestamp = line.timestamp;
-            let line_number = line.line_number;
-
-            let bookmark_name = format!("Line {}", line_number);
-
-            log::debug!("Adding bookmark: {bookmark_name}");
-            e.insert(Bookmark {
-                line_index,
-                name: bookmark_name,
-                timestamp,
-            });
-        } else {
-            log::debug!("Removing bookmark at line {line_index}");
-            self.bookmarks.remove(&line_index);
-        }
-    }
-
-    /// Toggle bookmark for the currently selected line
-    pub fn toggle_bookmark_for_selected(&mut self) {
-        self.toggle_bookmark(self.selected_line_index);
     }
 }
 

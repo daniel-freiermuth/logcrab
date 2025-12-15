@@ -27,7 +27,7 @@ use crate::{
     input::ShortcutAction,
     ui::{
         filter_highlight::FilterHighlight,
-        log_view::LogViewState,
+        session_state::SessionState,
         tabs::{filter_tab::HistogramMarker, LogCrabTab},
     },
 };
@@ -57,7 +57,7 @@ impl BookmarksView {
     /// Returns events that occurred during rendering
     pub fn render(
         ui: &mut Ui,
-        log_view_state: &LogViewState,
+        session_state: &SessionState,
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
@@ -65,7 +65,7 @@ impl BookmarksView {
     ) -> Vec<BookmarksViewEvent> {
         let panel_events = BookmarkPanel::render(
             ui,
-            log_view_state,
+            session_state,
             bookmarks,
             editing_bookmark,
             bookmark_name_input,
@@ -97,7 +97,7 @@ impl BookmarksView {
             .collect()
     }
 
-    fn start_renaming_bookmark(&mut self, line_index: usize, data_state: &LogViewState) {
+    fn start_renaming_bookmark(&mut self, line_index: usize, data_state: &SessionState) {
         if let Some(bookmark) = data_state.bookmarks.get(&line_index) {
             self.edited_line_index = Some(line_index);
             self.bookmark_name_input.clone_from(&bookmark.name);
@@ -107,7 +107,7 @@ impl BookmarksView {
     pub fn render_bookmarks(
         &mut self,
         ui: &mut Ui,
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
         all_filter_highlights: &[FilterHighlight],
     ) {
         // Check if Enter was pressed this frame (when not editing)
@@ -170,7 +170,7 @@ impl BookmarksView {
     }
 
     /// Move selection in bookmarks view
-    pub fn move_selection_in_bookmarks(delta: i32, data_state: &mut LogViewState) {
+    pub fn move_selection_in_bookmarks(delta: i32, data_state: &mut SessionState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -203,7 +203,7 @@ impl BookmarksView {
     }
 
     /// Jump to the first bookmark (Vim-style gg)
-    pub fn jump_to_top_in_bookmarks(data_state: &mut LogViewState) {
+    pub fn jump_to_top_in_bookmarks(data_state: &mut SessionState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -213,7 +213,7 @@ impl BookmarksView {
     }
 
     /// Jump to the last bookmark (Vim-style G)
-    pub fn jump_to_bottom_in_bookmarks(data_state: &mut LogViewState) {
+    pub fn jump_to_bottom_in_bookmarks(data_state: &mut SessionState) {
         if data_state.bookmarks.is_empty() {
             return;
         }
@@ -224,13 +224,13 @@ impl BookmarksView {
     }
 
     /// Move selection up by one page in bookmarks view
-    pub fn page_up_in_bookmarks(data_state: &mut LogViewState) {
+    pub fn page_up_in_bookmarks(data_state: &mut SessionState) {
         const PAGE_SIZE: i32 = 25;
         Self::move_selection_in_bookmarks(-PAGE_SIZE, data_state);
     }
 
     /// Move selection down by one page in bookmarks view
-    pub fn page_down_in_bookmarks(data_state: &mut LogViewState) {
+    pub fn page_down_in_bookmarks(data_state: &mut SessionState) {
         const PAGE_SIZE: i32 = 25;
         Self::move_selection_in_bookmarks(PAGE_SIZE, data_state);
     }
@@ -244,7 +244,7 @@ impl LogCrabTab for BookmarksView {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
         _global_config: &mut crate::config::GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
         _histogram_markers: &[HistogramMarker],
@@ -255,7 +255,7 @@ impl LogCrabTab for BookmarksView {
     fn process_events(
         &mut self,
         actions: &[ShortcutAction],
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
     ) -> bool {
         // Handle Enter key for starting bookmark rename (when not already editing)
         // enter_pressed_this_frame is set during render when we have UI context

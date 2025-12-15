@@ -28,7 +28,7 @@ use crate::config::GlobalConfig;
 use crate::core::{LogStore, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
-use crate::ui::log_view::LogViewState;
+use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::HistogramMarker;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::DEFAULT_PALETTE;
@@ -215,7 +215,7 @@ impl LogCrabTab for HighlightsView {
     fn render(
         &mut self,
         ui: &mut Ui,
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
         _global_config: &mut GlobalConfig,
         _all_filter_highlights: &[FilterHighlight],
         _histogram_markers: &[HistogramMarker],
@@ -294,7 +294,7 @@ impl LogCrabTab for HighlightsView {
     fn process_events(
         &mut self,
         _actions: &[ShortcutAction],
-        _data_state: &mut LogViewState,
+        _data_state: &mut SessionState,
     ) -> bool {
         false
     }

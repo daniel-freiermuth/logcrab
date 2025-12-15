@@ -29,7 +29,7 @@ use crate::config::GlobalConfig;
 use crate::core::{LogStore, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
-use crate::ui::log_view::{FilterToHighlightData, LogViewState};
+use crate::ui::session_state::{FilterToHighlightData, SessionState};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
@@ -79,7 +79,7 @@ impl FilterView {
     pub fn render(
         &mut self,
         ui: &mut Ui,
-        log_view_state: &mut LogViewState,
+        log_view_state: &mut SessionState,
         global_config: &mut GlobalConfig,
         bookmarked_lines: &HashMap<usize, String>,
         all_filter_highlights: &[FilterHighlight],
@@ -189,7 +189,7 @@ impl FilterView {
     fn render_filter(
         &mut self,
         ui: &mut Ui,
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
         global_config: &mut GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
         histogram_markers: &[HistogramMarker],
@@ -286,7 +286,7 @@ impl FilterView {
     }
 
     /// Move selection within a filtered view (only through matched indices)
-    pub fn move_selection_in_filter(&mut self, delta: i32, data_state: &mut LogViewState) {
+    pub fn move_selection_in_filter(&mut self, delta: i32, data_state: &mut SessionState) {
         {
             let indices = self.state.search.get_filtered_indices(&data_state.store);
             if indices.is_empty() {
@@ -313,7 +313,7 @@ impl FilterView {
     }
 
     /// Jump to the first line in a filtered view (Vim-style gg)
-    pub fn jump_to_top_in_filter(&mut self, data_state: &mut LogViewState) {
+    pub fn jump_to_top_in_filter(&mut self, data_state: &mut SessionState) {
         let indices = self.state.search.get_filtered_indices(&data_state.store);
         if let Some(&first_line_index) = indices.first() {
             data_state.selected_line_index = first_line_index;
@@ -321,7 +321,7 @@ impl FilterView {
     }
 
     /// Jump to the last line in a filtered view (Vim-style G)
-    pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut LogViewState) {
+    pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut SessionState) {
         if let Some(&last_line_index) = self
             .state
             .search
@@ -333,14 +333,14 @@ impl FilterView {
     }
 
     /// Move selection up by one page in a filtered view
-    pub fn page_up_in_filter(&mut self, data_state: &mut LogViewState) {
+    pub fn page_up_in_filter(&mut self, data_state: &mut SessionState) {
         // A page is approximately 20-30 lines in typical terminal views
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_filter(-PAGE_SIZE, data_state);
     }
 
     /// Move selection down by one page in a filtered view
-    pub fn page_down_in_filter(&mut self, data_state: &mut LogViewState) {
+    pub fn page_down_in_filter(&mut self, data_state: &mut SessionState) {
         const PAGE_SIZE: i32 = 25;
         self.move_selection_in_filter(PAGE_SIZE, data_state);
     }
@@ -367,7 +367,7 @@ impl LogCrabTab for FilterView {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
         global_config: &mut GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
         histogram_markers: &[HistogramMarker],
@@ -414,7 +414,7 @@ impl LogCrabTab for FilterView {
     fn process_events(
         &mut self,
         actions: &[ShortcutAction],
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
     ) -> bool {
         let mut should_save = false;
         for action in actions {

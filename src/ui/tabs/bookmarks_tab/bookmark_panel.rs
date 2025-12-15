@@ -18,7 +18,7 @@
 
 use crate::parser::line::LogLine;
 use crate::ui::filter_highlight::FilterHighlight;
-use crate::ui::log_view::LogViewState;
+use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::log_table::{
     bookmarked_row_color, score_to_color, selected_row_color,
 };
@@ -53,7 +53,7 @@ impl BookmarkPanel {
     /// Returns events that occurred (clicks, deletes, renames)
     pub fn render(
         ui: &mut Ui,
-        log_view_state: &LogViewState,
+        log_view_state: &SessionState,
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
@@ -96,7 +96,7 @@ impl BookmarkPanel {
 
     fn render_bookmark_table(
         ui: &mut Ui,
-        log_view_state: &LogViewState,
+        log_view_state: &SessionState,
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,
@@ -158,7 +158,7 @@ impl BookmarkPanel {
 
     fn render_bookmark_row(
         row: &mut egui_extras::TableRow<'_, '_>,
-        log_view_state: &LogViewState,
+        log_view_state: &SessionState,
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<usize>,
         bookmark_name_input: &mut String,

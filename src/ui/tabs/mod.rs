@@ -33,7 +33,7 @@ use crate::config::GlobalConfig;
 use crate::core::{LogStore, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
-use crate::ui::log_view::LogViewState;
+use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::HistogramMarker;
 
 pub trait LogCrabTab {
@@ -41,12 +41,12 @@ pub trait LogCrabTab {
     fn render(
         &mut self,
         ui: &mut egui::Ui,
-        data_state: &mut LogViewState,
+        data_state: &mut SessionState,
         global_config: &mut GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
         histogram_markers: &[HistogramMarker],
     );
-    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut LogViewState)
+    fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut SessionState)
         -> bool;
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
     fn get_filter_highlight(&self) -> Option<FilterHighlight>;
@@ -70,7 +70,7 @@ pub enum PendingTabAdd {
 
 /// `TabViewer` implementation for dock system
 pub struct LogCrabTabViewer<'a> {
-    pub log_view: &'a mut LogViewState,
+    pub log_view: &'a mut SessionState,
     pub global_config: &'a mut GlobalConfig,
     pub pending_tab_add: &'a mut Option<PendingTabAdd>,
     pub all_filter_highlights: &'a [FilterHighlight],
