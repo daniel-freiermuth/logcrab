@@ -272,11 +272,11 @@ impl Histogram {
     ) -> Option<f32> {
         let sel_ts = store.get_by_id(selected_line_index).unwrap().timestamp;
         let total_duration = (end_time.timestamp() - start_time.timestamp()) as f64;
-        
+
         if total_duration <= 0.0 {
             return None;
         }
-        
+
         let elapsed = (sel_ts.timestamp_millis() - start_time.timestamp_millis()) as f64;
         let total_millis = (end_time.timestamp_millis() - start_time.timestamp_millis()) as f64;
 
@@ -299,10 +299,7 @@ impl Histogram {
     ) -> Option<HistogramClickEvent> {
         profiling::scope!("Histogram::draw_bars");
         let desired_size = egui::vec2(ui.available_width(), 60.0);
-        let (response, painter) = ui.allocate_painter(
-            desired_size,
-            egui::Sense::hover().union(egui::Sense::click()),
-        );
+        let (response, painter) = ui.allocate_painter(desired_size, egui::Sense::click_and_drag());
         let rect = response.rect;
 
         painter.rect_filled(rect, 0.0, bg_color);
@@ -533,7 +530,8 @@ impl Histogram {
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
     ) -> Option<HistogramClickEvent> {
-        if !response.clicked() {
+        // Handle both click and drag - timeline acts like a scrubber
+        if !response.clicked() && !response.dragged() {
             return None;
         }
 
