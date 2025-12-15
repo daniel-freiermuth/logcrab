@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::core::SearchState;
+use crate::core::{SavedFilter, SearchState};
 use crate::ui::tabs::filter_tab::histogram::HistogramCache;
 use crate::ui::tabs::filter_tab::log_table::ColumnWidths;
 use egui::Color32;
@@ -68,5 +68,33 @@ impl FilterState {
     /// Get the unique filter ID
     pub fn get_id(&self) -> usize {
         self.search.id()
+    }
+}
+
+// ============================================================================
+// Conversion traits for session persistence
+// ============================================================================
+
+impl From<&SavedFilter> for FilterState {
+    fn from(saved: &SavedFilter) -> Self {
+        let mut filter = Self::new(saved.name.clone(), saved.color);
+        filter.search.search_text.clone_from(&saved.search_text);
+        filter.search.case_sensitive = saved.case_sensitive;
+        filter.globally_visible = saved.enabled;
+        filter.show_in_histogram = saved.show_in_histogram;
+        filter
+    }
+}
+
+impl From<&FilterState> for SavedFilter {
+    fn from(filter: &FilterState) -> Self {
+        Self {
+            search_text: filter.search.search_text.clone(),
+            case_sensitive: filter.search.case_sensitive,
+            name: filter.name.clone(),
+            color: filter.color,
+            enabled: filter.globally_visible,
+            show_in_histogram: filter.show_in_histogram,
+        }
     }
 }

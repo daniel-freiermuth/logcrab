@@ -35,58 +35,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-// ============================================================================
-// Conversion traits between saved and runtime state
-// ============================================================================
-
-impl From<&SavedFilter> for FilterState {
-    fn from(saved: &SavedFilter) -> Self {
-        let mut filter = Self::new(saved.name.clone(), saved.color);
-        filter.search.search_text.clone_from(&saved.search_text);
-        filter.search.case_sensitive = saved.case_sensitive;
-        filter.globally_visible = saved.enabled;
-        filter.show_in_histogram = saved.show_in_histogram;
-        filter
-    }
-}
-
-impl From<&FilterState> for SavedFilter {
-    fn from(filter: &FilterState) -> Self {
-        Self {
-            search_text: filter.search.search_text.clone(),
-            case_sensitive: filter.search.case_sensitive,
-            name: filter.name.clone(),
-            color: filter.color,
-            enabled: filter.globally_visible,
-            show_in_histogram: filter.show_in_histogram,
-        }
-    }
-}
-
-impl From<&SavedHighlight> for HighlightState {
-    fn from(saved: &SavedHighlight) -> Self {
-        let mut highlight = Self::new(saved.name.clone(), saved.color);
-        highlight.search.search_text.clone_from(&saved.search_text);
-        highlight.search.case_sensitive = saved.case_sensitive;
-        highlight.enabled = saved.enabled;
-        highlight.show_in_histogram = saved.show_in_histogram;
-        highlight
-    }
-}
-
-impl From<&HighlightState> for SavedHighlight {
-    fn from(highlight: &HighlightState) -> Self {
-        Self {
-            name: highlight.name.clone(),
-            search_text: highlight.search.search_text.clone(),
-            case_sensitive: highlight.search.case_sensitive,
-            color: highlight.color,
-            enabled: highlight.enabled,
-            show_in_histogram: highlight.show_in_histogram,
-        }
-    }
-}
-
 /// Main log analyse view
 ///   Exists per opened file
 /// Responsibilities:

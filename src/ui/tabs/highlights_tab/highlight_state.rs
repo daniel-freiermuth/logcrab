@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::core::SearchState;
+use crate::core::{SavedHighlight, SearchState};
 use egui::Color32;
 
 /// State for a single highlight rule.
@@ -48,6 +48,34 @@ impl HighlightState {
             color,
             enabled: true,
             show_in_histogram: false,
+        }
+    }
+}
+
+// ============================================================================
+// Conversion traits for session persistence
+// ============================================================================
+
+impl From<&SavedHighlight> for HighlightState {
+    fn from(saved: &SavedHighlight) -> Self {
+        let mut highlight = Self::new(saved.name.clone(), saved.color);
+        highlight.search.search_text.clone_from(&saved.search_text);
+        highlight.search.case_sensitive = saved.case_sensitive;
+        highlight.enabled = saved.enabled;
+        highlight.show_in_histogram = saved.show_in_histogram;
+        highlight
+    }
+}
+
+impl From<&HighlightState> for SavedHighlight {
+    fn from(highlight: &HighlightState) -> Self {
+        Self {
+            name: highlight.name.clone(),
+            search_text: highlight.search.search_text.clone(),
+            case_sensitive: highlight.search.case_sensitive,
+            color: highlight.color,
+            enabled: highlight.enabled,
+            show_in_histogram: highlight.show_in_histogram,
         }
     }
 }
