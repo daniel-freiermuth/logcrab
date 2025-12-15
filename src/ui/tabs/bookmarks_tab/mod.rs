@@ -18,12 +18,17 @@
 
 pub mod bookmark_panel;
 
+use std::sync::Arc;
+
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
 use crate::{
+    core::LogStore,
     input::ShortcutAction,
     ui::{
-        filter_highlight::FilterHighlight, log_view::{LogViewState, SavedFilter}, tabs::{LogCrabTab, filter_tab::HistogramMarker}
+        filter_highlight::FilterHighlight,
+        log_view::{LogViewState, SavedFilter},
+        tabs::{filter_tab::HistogramMarker, LogCrabTab},
     },
 };
 use egui::Ui;
@@ -301,7 +306,7 @@ impl LogCrabTab for BookmarksView {
         None
     }
 
-    fn get_histogram_marker(&self) -> Option<HistogramMarker> {
+    fn get_histogram_marker(&mut self, _store: &Arc<LogStore>) -> Option<HistogramMarker> {
         None
     }
 }

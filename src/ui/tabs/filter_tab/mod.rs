@@ -26,6 +26,7 @@ pub use histogram::{Histogram, HistogramMarker};
 pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
+use crate::core::LogStore;
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::log_view::{FilterToHighlightData, LogViewState, SavedFilter};
@@ -141,10 +142,9 @@ impl FilterView {
         ui.separator();
 
         // Check for completed filter results from background thread
-        let needs_scroll = self.state.check_filter_results()
-            || self.state.last_rendered_selection != selected_line_index;
-        let scroll_to_row = if needs_scroll {
-            self.state.last_rendered_selection = selected_line_index;
+        self.state.check_filter_results();
+        let scroll_to_row = if self.state.last_rendered_selection != Some(selected_line_index) {
+            self.state.last_rendered_selection = Some(selected_line_index);
             // Mark as processed so we don't keep checking on every render
             Some(self.state.find_closest_timestamp_index(selected_line_index))
         } else {
@@ -479,10 +479,14 @@ impl LogCrabTab for FilterView {
             })
     }
 
-    fn get_histogram_marker(&self) -> Option<HistogramMarker> {
+    fn get_histogram_marker(&mut self, store: &Arc<LogStore>) -> Option<HistogramMarker> {
         if !self.state.show_in_histogram || self.state.filtered_indices.is_empty() {
             return None;
         }
+        if self.state.cached_for_version != store.version() {
+            self.state.request_filter_update(Arc::clone(store));
+        }
+        self.state.check_filter_results();
         Some(HistogramMarker {
             name: self.state.name.clone(),
             indices: self.state.filtered_indices.clone(),

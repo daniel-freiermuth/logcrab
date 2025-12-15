@@ -25,6 +25,7 @@ use std::sync::Arc;
 use egui::{Color32, RichText, Ui};
 
 use crate::config::GlobalConfig;
+use crate::core::LogStore;
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::log_view::{LogViewState, SavedFilter};
@@ -328,7 +329,7 @@ impl LogCrabTab for HighlightsView {
         None // Highlights are stored separately in LogViewState
     }
 
-    fn get_histogram_marker(&self) -> Option<HistogramMarker> {
+    fn get_histogram_marker(&mut self, _store: &Arc<LogStore>) -> Option<HistogramMarker> {
         None // Highlights provide their markers via LogViewState
     }
 }

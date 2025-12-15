@@ -517,8 +517,8 @@ impl LogView {
         // Collect histogram markers from all tabs
         let mut histogram_markers: Vec<_> = self
             .dock_state
-            .iter_all_tabs()
-            .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker())
+            .iter_all_tabs_mut()
+            .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker(&self.state.store))
             .collect();
 
         // Add histogram markers from highlights (using cached indices)

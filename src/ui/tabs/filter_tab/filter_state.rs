@@ -34,7 +34,7 @@ pub struct FilterState {
     pub search_regex: Result<Regex, Error>,
     pub case_sensitive: bool,
     pub filtered_indices: Vec<usize>,
-    pub last_rendered_selection: usize,
+    pub last_rendered_selection: Option<usize>,
     pub name: String,
     pub color: Color32,
     pub globally_visible: bool, // Whether this filter's highlights should be shown in all tabs
@@ -68,7 +68,7 @@ impl FilterState {
             search_regex: initial_regex,
             case_sensitive: false,
             filtered_indices: Vec::new(),
-            last_rendered_selection: 0,
+            last_rendered_selection: None,
             name,
             color,
             globally_visible: true,
@@ -121,19 +121,18 @@ impl FilterState {
     }
 
     /// Check for completed filter results from background thread
-    pub fn check_filter_results(&mut self) -> bool {
+    pub fn check_filter_results(&mut self) {
         profiling::function_scope!();
 
         if let Ok(result) = self.filter_result_rx.try_recv() {
             self.filtered_indices = result.filtered_indices;
+            self.last_rendered_selection = None;
             log::debug!(
                 "Filter {}: Completed background filtering (found {} matches)",
                 self.filter_id,
                 self.filtered_indices.len()
             );
-            return true;
         }
-        false
     }
 
     /// Find the closest line by timestamp in the filtered results
