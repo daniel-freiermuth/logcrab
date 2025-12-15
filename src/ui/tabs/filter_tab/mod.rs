@@ -375,39 +375,43 @@ impl LogCrabTab for FilterView {
         all_filter_highlights: &[FilterHighlight],
         histogram_markers: &[HistogramMarker],
     ) {
-        // Create a new highlights list with this tab's filter at the front (for priority)
-        // This ensures the current tab's filter is always visible and takes precedence
-        let mut highlights_with_current = Vec::with_capacity(all_filter_highlights.len() + 1);
+        // Push unique filter ID to avoid UI state conflicts between tabs with same name
+        let filter_id = self.state.get_id();
+        ui.push_id(filter_id, |ui| {
+            // Create a new highlights list with this tab's filter at the front (for priority)
+            // This ensures the current tab's filter is always visible and takes precedence
+            let mut highlights_with_current = Vec::with_capacity(all_filter_highlights.len() + 1);
 
-        // Add this tab's own filter first (if it has a valid regex)
-        if let Ok(regex) = &self.state.search_regex {
-            if !self.state.search_text.is_empty() {
-                highlights_with_current.push(FilterHighlight {
-                    regex: regex.clone(),
-                    color: self.state.color,
-                });
+            // Add this tab's own filter first (if it has a valid regex)
+            if let Ok(regex) = &self.state.search_regex {
+                if !self.state.search_text.is_empty() {
+                    highlights_with_current.push(FilterHighlight {
+                        regex: regex.clone(),
+                        color: self.state.color,
+                    });
+                }
             }
-        }
 
-        // Add all other global filters (excluding this one to avoid duplicates)
-        for highlight in all_filter_highlights {
-            // Skip if this is the same filter (compare by checking if regex patterns match)
-            if let Ok(our_regex) = &self.state.search_regex {
-                if highlight.regex.as_str() != our_regex.as_str() {
+            // Add all other global filters (excluding this one to avoid duplicates)
+            for highlight in all_filter_highlights {
+                // Skip if this is the same filter (compare by checking if regex patterns match)
+                if let Ok(our_regex) = &self.state.search_regex {
+                    if highlight.regex.as_str() != our_regex.as_str() {
+                        highlights_with_current.push(highlight.clone());
+                    }
+                } else {
                     highlights_with_current.push(highlight.clone());
                 }
-            } else {
-                highlights_with_current.push(highlight.clone());
             }
-        }
 
-        self.render_filter(
-            ui,
-            data_state,
-            global_config,
-            &highlights_with_current,
-            histogram_markers,
-        );
+            self.render_filter(
+                ui,
+                data_state,
+                global_config,
+                &highlights_with_current,
+                histogram_markers,
+            );
+        });
     }
 
     fn process_events(
