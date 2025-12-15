@@ -8,7 +8,7 @@ use crate::core::{LogFileLoader, LogStore};
 use crate::filter_worker::GlobalFilterWorker;
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
-use crate::ui::LogView;
+use crate::ui::CrabSession;
 use egui::text::LayoutJob;
 use egui::{Color32, Id, LayerId, Order, TextStyle};
 use std::fmt::Write;
@@ -21,7 +21,7 @@ use std::fmt::Write;
 /// - Keyboard shortcut processing
 pub struct LogCrabApp {
     /// The main log view component
-    log_view: Option<LogView>,
+    session: Option<CrabSession>,
 
     /// Currently loaded file path
     current_file: Option<PathBuf>,
@@ -61,7 +61,7 @@ impl LogCrabApp {
         }
 
         let mut app = Self {
-            log_view: None,
+            session: None,
             current_file: None,
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
@@ -123,7 +123,7 @@ impl LogCrabApp {
             "{}.crab",
             path.file_name().unwrap().to_string_lossy()
         ));
-        self.log_view = Some(LogView::new(store, crab_path));
+        self.session = Some(CrabSession::new(store, crab_path));
     }
 
     /// Show file dialog and load selected file
@@ -195,7 +195,7 @@ impl LogCrabApp {
 
         // Import filter files if we have a log view
         if !filter_files.is_empty() {
-            if let Some(ref mut log_view) = self.log_view {
+            if let Some(ref mut log_view) = self.session {
                 for path in &filter_files {
                     log::info!("Importing dropped filter file: {}", path.display());
                     match log_view.import_filters(path) {
@@ -248,7 +248,7 @@ impl LogCrabApp {
 
             ui.separator();
 
-            if let Some(ref mut log_view) = &mut self.log_view {
+            if let Some(ref mut log_view) = &mut self.session {
                 if ui.button("Export Filters...").clicked() {
                     let mut dialog = rfd::FileDialog::new()
                         .add_filter("Crab Filters", &["crab-filters"])
@@ -312,7 +312,7 @@ impl LogCrabApp {
         });
 
         ui.menu_button("View", |ui| {
-            if let Some(ref mut log_view) = &mut self.log_view {
+            if let Some(ref mut log_view) = &mut self.session {
                 if ui.button("Add Filter Tab").clicked() {
                     log_view.add_filter_view(false, None);
                     ui.close();
@@ -410,7 +410,7 @@ impl LogCrabApp {
             }
         });
 
-        if let Some(ref mut log_view) = self.log_view {
+        if let Some(ref mut log_view) = self.session {
             log_view.render(ui, &mut self.global_config);
         } else {
             ui.vertical_centered(|ui| {
@@ -481,7 +481,7 @@ impl LogCrabApp {
             let _ = self.global_config.save();
         }
 
-        if let Some(ref mut log_view) = self.log_view {
+        if let Some(ref mut log_view) = self.session {
             log_view.process_keyboard_input(&actions);
         }
 

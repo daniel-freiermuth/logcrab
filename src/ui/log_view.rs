@@ -93,7 +93,7 @@ impl From<&HighlightState> for SavedHighlight {
 /// - Managing view and tabs
 /// - Loading/saving .crab session file
 /// - Keeping state about global selection, filters, bookmarks
-pub struct LogView {
+pub struct CrabSession {
     // .crab file path
     pub crab_file: PathBuf,
 
@@ -157,7 +157,7 @@ impl LogViewState {
     }
 }
 
-impl LogView {
+impl CrabSession {
     pub fn new(store: Arc<LogStore>, crab_file: PathBuf) -> Self {
         let mut view = Self {
             crab_file,
@@ -607,7 +607,7 @@ impl LogViewState {
     }
 }
 
-impl Drop for LogView {
+impl Drop for CrabSession {
     fn drop(&mut self) {
         log::debug!("Dropping LogView for file: {}", self.crab_file.display());
         self.save_crab_file();
