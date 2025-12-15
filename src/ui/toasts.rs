@@ -202,6 +202,18 @@ impl ToastManager {
         });
     }
 
+    /// Show a warning toast (auto-dismisses after timeout)
+    pub fn show_warning(&mut self, message: impl Into<String>) {
+        self.toasts.add(Toast {
+            text: message.into().into(),
+            kind: ToastKind::Warning,
+            options: ToastOptions::default()
+                .duration_in_seconds(5.0)
+                .show_progress(true),
+            ..Default::default()
+        });
+    }
+
     /// Render all toasts - call this in the update loop
     pub fn show(&mut self, ctx: &egui::Context) {
         // Render progress toasts manually (not using egui-toast for these)

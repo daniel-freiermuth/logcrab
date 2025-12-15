@@ -41,8 +41,8 @@ pub struct LogCrabApp {
     /// Pending key rebind action
     pending_rebind: Option<ShortcutAction>,
 
-    /// Pending dropped file to load
-    pending_drop_file: Option<PathBuf>,
+    /// Pending dropped files to load
+    pending_drop_files: Vec<PathBuf>,
 
     /// Toast notification manager
     toast_manager: ToastManager,
@@ -68,7 +68,7 @@ impl LogCrabApp {
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
-            pending_drop_file: None,
+            pending_drop_files: Vec::new(),
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
         };
 
@@ -145,6 +145,84 @@ impl LogCrabApp {
             self.load_file(path, ctx.clone());
         }
     }
+
+    /// Process multiple dropped files
+    /// - First .crab or log file is loaded as main file
+    /// - All .crab-filters files are imported
+    /// - Additional log/crab files are ignored with a warning
+    fn process_dropped_files(&mut self, files: Vec<PathBuf>, ctx: &egui::Context) {
+        let mut main_file: Option<PathBuf> = None;
+        let mut filter_files: Vec<PathBuf> = Vec::new();
+        let mut ignored_files: Vec<PathBuf> = Vec::new();
+
+        for path in files {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+            if ext == "crab-filters" {
+                filter_files.push(path);
+            } else if main_file.is_none() {
+                // First log/crab file becomes the main file
+                main_file = Some(path);
+            } else {
+                // Additional log/crab files are ignored
+                ignored_files.push(path);
+            }
+        }
+
+        // Warn about ignored files
+        if !ignored_files.is_empty() {
+            let names: Vec<_> = ignored_files
+                .iter()
+                .filter_map(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .collect();
+            log::warn!(
+                "Ignored {} additional log file(s): {}",
+                ignored_files.len(),
+                names.join(", ")
+            );
+            self.toast_manager.show_warning(format!(
+                "Ignored {} additional file(s) - only one log file can be loaded at a time",
+                ignored_files.len()
+            ));
+        }
+
+        // Load main file if present
+        if let Some(path) = main_file {
+            log::info!("Loading dropped file: {}", path.display());
+            self.load_file(path, ctx.clone());
+        }
+
+        // Import filter files if we have a log view
+        if !filter_files.is_empty() {
+            if let Some(ref mut log_view) = self.log_view {
+                for path in &filter_files {
+                    log::info!("Importing dropped filter file: {}", path.display());
+                    match log_view.import_filters(path) {
+                        Ok(count) => {
+                            log::info!("Imported {count} filters from {}", path.display());
+                        }
+                        Err(e) => {
+                            log::error!("Failed to import filters from {}: {e}", path.display());
+                            self.toast_manager.show_error(format!(
+                                "Failed to import {}: {e}",
+                                path.file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| "filters".to_string())
+                            ));
+                        }
+                    }
+                }
+            } else {
+                log::warn!(
+                    "Cannot import filter files - no log file is open. Open a log file first."
+                );
+                self.toast_manager
+                    .show_warning("Cannot import filters - open a log file first");
+            }
+        }
+    }
+
     /// Update window title to show current file
     fn update_window_title(&self, ctx: &egui::Context) {
         let title = if let Some(ref path) = self.current_file {
@@ -317,11 +395,11 @@ impl LogCrabApp {
         Self::preview_files_being_dropped(ctx);
 
         // Collect dropped files (store for later processing)
-        self.pending_drop_file = ctx.input(|i| {
-            if let Some(f) = i.raw.dropped_files.first() {
-                f.path.clone()
-            } else {
-                None
+        ctx.input(|i| {
+            for file in &i.raw.dropped_files {
+                if let Some(path) = &file.path {
+                    self.pending_drop_files.push(path.clone());
+                }
             }
         });
 
@@ -441,10 +519,10 @@ impl eframe::App for LogCrabApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         profiling::function_scope!();
 
-        // Process pending dropped file
-        if let Some(path) = self.pending_drop_file.take() {
-            log::info!("Loading dropped file: {}", path.display());
-            self.load_file(path, ctx.clone());
+        // Process pending dropped files
+        if !self.pending_drop_files.is_empty() {
+            let files = std::mem::take(&mut self.pending_drop_files);
+            self.process_dropped_files(files, ctx);
         }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
