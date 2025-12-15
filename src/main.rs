@@ -20,7 +20,6 @@ mod core;
 mod input;
 mod parser;
 mod ui;
-mod filter_worker;
 
 use clap::Parser;
 use egui::IconData;

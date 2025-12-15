@@ -4,8 +4,7 @@ use super::ToastManager;
 use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
-use crate::core::{LogFileLoader, LogStore};
-use crate::filter_worker::GlobalFilterWorker;
+use crate::core::{GlobalFilterWorker, LogFileLoader, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
 use crate::ui::CrabSession;

@@ -33,7 +33,7 @@ use std::sync::{Arc, OnceLock};
 pub struct FilterRequest {
     pub filter_id: usize, // Unique identifier for each filter/highlight instance
     pub regex: Option<Regex>,
-    pub store: Arc<LogStore>,            // Shared read-only access to log store
+    pub store: Arc<LogStore>, // Shared read-only access to log store
     pub result_tx: Sender<FilterResult>, // Each filter has its own result channel
 }
 

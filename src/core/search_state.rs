@@ -21,8 +21,8 @@
 //! This module provides the core regex-based search functionality
 //! with background filtering support via the global filter worker.
 
-use crate::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
 use crate::core::LogStore;
+use crate::core::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
 use fancy_regex::{Error, Regex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -131,16 +131,15 @@ impl SearchState {
 
     /// Check if cache is valid for the given store version, request update if not.
     fn ensure_cache_valid(&mut self, store: &Arc<LogStore>) {
-        if self.cached_for_version != store.version() ||
-           self.cached_for_text != self.search_text ||
-           self.cached_for_case != self.case_sensitive
+        if self.cached_for_version != store.version()
+            || self.cached_for_text != self.search_text
+            || self.cached_for_case != self.case_sensitive
         {
             self.request_filter_update(Arc::clone(store));
             self.cached_for_version = store.version();
             self.cached_for_text = self.search_text.clone();
             self.cached_for_case = self.case_sensitive;
         }
-
     }
 
     /// Find the closest line index in filtered results to the target.
