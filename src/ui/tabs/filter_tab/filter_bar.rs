@@ -23,19 +23,16 @@ use crate::{
     ui::{session_state::SessionState, tabs::filter_tab::filter_state::FilterState},
 };
 
-/// Events emitted by the filter bar
+/// Events emitted by the filter bar that need to bubble up to the parent.
+/// Events that only set `modified = true` are handled directly.
 #[derive(Debug, Clone)]
 pub enum FilterInternalEvent {
-    SearchChanged,
-    CaseInsensitiveToggled,
     FavoriteSelected {
         search_text: String,
         case_sensitive: bool,
     },
     FilterNameEditRequested,
     FavoriteToggled,
-    /// Histogram or globally visible toggle changed
-    DisplaySettingsChanged,
     /// Convert this filter to a highlight
     ConvertToHighlight,
 }
@@ -93,13 +90,13 @@ impl FilterBar {
 
         ui.horizontal(|ui| {
             Self::render_edit_button(ui, &mut events);
-            self.render_globally_visible_toggle(ui, filter, &mut events);
-            self.render_histogram_toggle(ui, filter, &mut events);
+            self.render_globally_visible_toggle(ui, filter, log_view_state);
+            self.render_histogram_toggle(ui, filter, log_view_state);
             Self::render_color_picker(ui, filter);
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, global_config, &mut events);
-            self.render_search_input(ui, filter, should_focus_search, log_view_state, &mut events);
-            self.render_case_checkbox(ui, filter, &mut events);
+            self.render_search_input(ui, filter, should_focus_search, log_view_state);
+            self.render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
         });
@@ -250,8 +247,7 @@ impl FilterBar {
         ui: &mut Ui,
         filter: &mut FilterState,
         should_focus_search: bool,
-        log_view_state: &mut SessionState,
-        events: &mut Vec<FilterInternalEvent>,
+        session_state: &mut SessionState,
     ) {
         let search_id = ui.id().with("search_input");
         let search_response = ui.add(
@@ -265,23 +261,16 @@ impl FilterBar {
             search_response.request_focus();
         }
 
-        self.handle_history_navigation(
-            ui,
-            &search_response,
-            search_id,
-            filter,
-            log_view_state,
-            events,
-        );
+        self.handle_history_navigation(ui, &search_response, search_id, filter, session_state);
 
         if search_response.lost_focus() {
             self.history_index = None;
-            log_view_state.add_to_filter_history(filter.search.search_text.clone());
+            session_state.add_to_filter_history(filter.search.search_text.clone());
         }
 
         if search_response.changed() {
             self.history_index = None;
-            events.push(FilterInternalEvent::SearchChanged);
+            session_state.modified = true;
         }
     }
 
@@ -291,21 +280,21 @@ impl FilterBar {
         search_response: &egui::Response,
         search_id: egui::Id,
         filter: &mut FilterState,
-        log_view_state: &SessionState,
-        events: &mut Vec<FilterInternalEvent>,
+        session_state: &mut SessionState,
     ) {
         if !search_response.has_focus() {
             return;
         }
 
-        let filter_history = &log_view_state.filter_history;
         let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
         let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
 
-        if up_pressed && !filter_history.is_empty() {
-            self.navigate_backward(filter, filter_history, events);
+        if up_pressed && !session_state.filter_history.is_empty() {
+            let filter_history = session_state.filter_history.clone();
+            self.navigate_backward(filter, &filter_history, session_state);
         } else if down_pressed {
-            self.navigate_forward(filter, filter_history, events);
+            let filter_history = session_state.filter_history.clone();
+            self.navigate_forward(filter, &filter_history, session_state);
         }
 
         if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -317,7 +306,7 @@ impl FilterBar {
         &mut self,
         filter: &mut FilterState,
         filter_history: &[String],
-        events: &mut Vec<FilterInternalEvent>,
+        session_state: &mut SessionState,
     ) {
         let new_index = match self.history_index {
             None => {
@@ -333,14 +322,14 @@ impl FilterBar {
             .search
             .search_text
             .clone_from(&filter_history[new_index]);
-        events.push(FilterInternalEvent::SearchChanged);
+        session_state.modified = true;
     }
 
     fn navigate_forward(
         &mut self,
         filter: &mut FilterState,
         filter_history: &[String],
-        events: &mut Vec<FilterInternalEvent>,
+        session_state: &mut SessionState,
     ) {
         if let Some(idx) = self.history_index {
             if idx == 0 {
@@ -353,7 +342,7 @@ impl FilterBar {
                     .search_text
                     .clone_from(&filter_history[idx - 1]);
             }
-            events.push(FilterInternalEvent::SearchChanged);
+            session_state.modified = true;
         }
     }
 
@@ -361,13 +350,13 @@ impl FilterBar {
         &self,
         ui: &mut Ui,
         filter: &mut FilterState,
-        events: &mut Vec<FilterInternalEvent>,
+        session_state: &mut SessionState,
     ) {
         let toggle_response = ui
             .toggle_value(&mut filter.search.case_sensitive, "Aa")
             .on_hover_text("Toggle case insensitive matching");
         if toggle_response.changed() {
-            events.push(FilterInternalEvent::CaseInsensitiveToggled);
+            session_state.modified = true;
         }
     }
 
@@ -375,14 +364,14 @@ impl FilterBar {
         &self,
         ui: &mut Ui,
         filter: &mut FilterState,
-        events: &mut Vec<FilterInternalEvent>,
+        session_state: &mut SessionState,
     ) {
         if ui
             .toggle_value(&mut filter.globally_visible, "👁")
             .on_hover_text("Show highlights from this filter in all tabs")
             .changed()
         {
-            events.push(FilterInternalEvent::DisplaySettingsChanged);
+            session_state.modified = true;
         }
     }
 
@@ -390,14 +379,14 @@ impl FilterBar {
         &self,
         ui: &mut Ui,
         filter: &mut FilterState,
-        events: &mut Vec<FilterInternalEvent>,
+        session_state: &mut SessionState,
     ) {
         if ui
             .toggle_value(&mut filter.show_in_histogram, "📊")
             .on_hover_text("Show filter matches as vertical lines in histogram")
             .changed()
         {
-            events.push(FilterInternalEvent::DisplaySettingsChanged);
+            session_state.modified = true;
         }
     }
 

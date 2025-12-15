@@ -101,13 +101,9 @@ impl FilterView {
         self.should_focus_search = false;
 
         let store = &log_view_state.store;
-        // Handle filter bar events
+        // Handle filter bar events that need to bubble up
         for event in filter_bar_events {
             match event {
-                FilterInternalEvent::SearchChanged
-                | FilterInternalEvent::CaseInsensitiveToggled => {
-                    log_view_state.modified = true;
-                }
                 FilterInternalEvent::FavoriteSelected {
                     search_text,
                     case_sensitive,
@@ -121,9 +117,6 @@ impl FilterView {
                 }
                 FilterInternalEvent::FavoriteToggled => {
                     events.push(FilterViewEvent::FavoriteToggled);
-                }
-                FilterInternalEvent::DisplaySettingsChanged => {
-                    log_view_state.modified = true;
                 }
                 FilterInternalEvent::ConvertToHighlight => {
                     events.push(FilterViewEvent::ConvertToHighlight);
