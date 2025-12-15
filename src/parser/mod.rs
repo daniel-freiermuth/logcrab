@@ -3,8 +3,8 @@ pub mod generic;
 pub mod line;
 pub mod logcat;
 
+use chrono::Datelike;
 use fancy_regex::Regex;
-use line::LogLine;
 use std::sync::LazyLock;
 
 // Normalization patterns
@@ -18,13 +18,64 @@ static UUID_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 static URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://[^\s]+").unwrap());
 static WHITESPACE_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 
-pub fn parse_line(raw: String, line_number: usize) -> Option<LogLine> {
-    logcat::parse_logcat(raw.clone(), line_number)
-        .or_else(|| generic::parse_generic(raw, line_number))
-        .map(|mut line| {
-            line.template_key = normalize_message(&line.message);
-            line
-        })
+/// Detected log format for a file
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogFormat {
+    /// Android bugreport file (contains dumpstate header with year)
+    Bugreport { year: i32 },
+    /// Pure logcat output (MM-DD HH:MM:SS.mmm, no year - uses current year)
+    Logcat { year: i32 },
+    /// Generic format (various timestamp formats with year)
+    Generic,
+}
+
+/// Detect the log format by sampling the first lines of content
+/// Returns the detected format, or Generic as fallback
+pub fn detect_format(content: &str) -> LogFormat {
+    // First check for bugreport dumpstate header - this indicates a bugreport file
+    if let Some(year) = logcat::detect_year_from_header(content) {
+        log::info!("Detected bugreport dumpstate header with year {year}");
+        return LogFormat::Bugreport { year };
+    }
+
+    // Otherwise, sample lines to detect pure logcat format
+    let mut logcat_matches = 0;
+    let mut total_checked = 0;
+
+    for line in content.lines().take(500) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Check if line matches logcat timestamp pattern (MM-DD HH:MM:SS.mmm)
+        if logcat::is_logcat_line(trimmed) {
+            logcat_matches += 1;
+        }
+        total_checked += 1;
+
+        // Stop after finding enough logcat lines (at least 10 matches)
+        if logcat_matches >= 10 {
+            break;
+        }
+
+        // Also stop if we've checked too many without finding logcat
+        if total_checked >= 100 && logcat_matches == 0 {
+            break;
+        }
+    }
+
+    // If we found logcat lines, treat as pure logcat (use current year)
+    if logcat_matches > 0 {
+        let year = chrono::Local::now().year();
+        log::info!(
+            "Detected {logcat_matches} logcat lines, using logcat format with current year {year}"
+        );
+        return LogFormat::Logcat { year };
+    }
+
+    log::info!("Using generic log format");
+    LogFormat::Generic
 }
 
 /// Normalize a log message to create a template key

@@ -18,7 +18,7 @@
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
 use crate::core::log_store::SourceData;
-use crate::parser::{dlt, parse_line};
+use crate::parser::{detect_format, dlt, generic, logcat, LogFormat};
 use crate::ui::ProgressToastHandle;
 use std::fs::File;
 use std::io::Read;
@@ -106,26 +106,57 @@ impl LogFileLoader {
         let file_size = metadata.unwrap().len();
         log::info!("File size: {file_size} bytes");
 
-        // Check if this is a DLT binary file by extension or magic bytes
+        // Check if this is a DLT binary file by extension
         let is_dlt_file = path
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"));
 
-        // Load file - both DLT and generic files use progressive loading now
+        // Load file based on detected format
         let source_added = if is_dlt_file {
-            // DLT files use incremental loading with chunks
             Self::read_dlt_file(path.clone(), data_source.clone(), &toast, ctx.clone())
         } else {
-            // Generic files use progressive loading, add to store directly
-            Self::read_generic_file(
-                path.clone(),
-                data_source.clone(),
-                &toast,
-                ctx.clone(),
-                start_time,
-                file_size,
-            )
+            // Read file content first to detect format
+            let content = match Self::read_file_content(&path, &toast) {
+                Some(c) => c,
+                None => return,
+            };
+
+            // Detect format and dispatch to appropriate parser
+            let format = detect_format(&content);
+            log::info!("Detected format: {:?}", format);
+
+            match format {
+                LogFormat::Bugreport { year } => Self::read_bugreport_file(
+                    &path,
+                    content,
+                    year,
+                    data_source.clone(),
+                    &toast,
+                    ctx.clone(),
+                    start_time,
+                    file_size,
+                ),
+                LogFormat::Logcat { year } => Self::read_logcat_file(
+                    &path,
+                    content,
+                    year,
+                    data_source.clone(),
+                    &toast,
+                    ctx.clone(),
+                    start_time,
+                    file_size,
+                ),
+                LogFormat::Generic => Self::read_generic_file(
+                    &path,
+                    content,
+                    data_source.clone(),
+                    &toast,
+                    ctx.clone(),
+                    start_time,
+                    file_size,
+                ),
+            }
         };
 
         if source_added && !data_source.is_empty() {
@@ -138,29 +169,22 @@ impl LogFileLoader {
         toast.dismiss();
     }
 
-    fn read_generic_file(
-        path: PathBuf,
-        source: Arc<SourceData>,
-        toast: &ProgressToastHandle,
-        ctx: egui::Context,
-        start_time: std::time::Instant,
-        file_size: u64,
-    ) -> bool {
-        let file = File::open(&path);
+    /// Read file content and handle errors
+    fn read_file_content(path: &Path, toast: &ProgressToastHandle) -> Option<String> {
+        let file = File::open(path);
         if let Err(e) = file {
             log::error!("Cannot open file: {e}");
             toast.set_error(format!("Cannot open file: {e}"));
-            return false;
+            return None;
         }
 
-        // Read file with lossy UTF-8 conversion to handle non-UTF8 characters
         let read_start = std::time::Instant::now();
         let mut file = file.unwrap();
         let mut buffer = Vec::new();
         if let Err(e) = file.read_to_end(&mut buffer) {
             log::error!("Cannot read file content: {e}");
             toast.set_error(format!("Cannot read file: {e}"));
-            return false;
+            return None;
         }
 
         let read_duration = read_start.elapsed();
@@ -170,17 +194,15 @@ impl LogFileLoader {
             buffer.len()
         );
 
-        // Convert to UTF-8 with lossy conversion (replaces invalid UTF-8 with � character)
+        // Convert to UTF-8 with lossy conversion
         let utf8_start = std::time::Instant::now();
         let mut content = String::from_utf8_lossy(&buffer).to_string();
         let content_len = content.len();
 
-        // Check for and remove null bytes which can cause string processing issues
+        // Check for and remove null bytes
         let null_count = content.bytes().filter(|&b| b == 0).count();
         if null_count > 0 {
-            log::warn!(
-                "File contains {null_count} null bytes which will be removed to prevent parsing issues"
-            );
+            log::warn!("File contains {null_count} null bytes which will be removed");
             content = content.replace('\0', "");
         }
 
@@ -192,18 +214,102 @@ impl LogFileLoader {
             null_count
         );
 
+        Some(content)
+    }
+
+    fn read_bugreport_file(
+        path: &Path,
+        content: String,
+        year: i32,
+        source: Arc<SourceData>,
+        toast: &ProgressToastHandle,
+        ctx: egui::Context,
+        start_time: std::time::Instant,
+        file_size: u64,
+    ) -> bool {
+        log::info!("Parsing as bugreport format with year {year}");
+        Self::parse_text_file(
+            path,
+            content,
+            source,
+            toast,
+            ctx,
+            start_time,
+            file_size,
+            |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
+        )
+    }
+
+    fn read_logcat_file(
+        path: &Path,
+        content: String,
+        year: i32,
+        source: Arc<SourceData>,
+        toast: &ProgressToastHandle,
+        ctx: egui::Context,
+        start_time: std::time::Instant,
+        file_size: u64,
+    ) -> bool {
+        log::info!("Parsing as logcat format with year {year}");
+        Self::parse_text_file(
+            path,
+            content,
+            source,
+            toast,
+            ctx,
+            start_time,
+            file_size,
+            |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
+        )
+    }
+
+    fn read_generic_file(
+        path: &Path,
+        content: String,
+        source: Arc<SourceData>,
+        toast: &ProgressToastHandle,
+        ctx: egui::Context,
+        start_time: std::time::Instant,
+        file_size: u64,
+    ) -> bool {
+        log::info!("Parsing as generic format");
+        Self::parse_text_file(
+            path,
+            content,
+            source,
+            toast,
+            ctx,
+            start_time,
+            file_size,
+            generic::parse_generic,
+        )
+    }
+
+    /// Common text file parsing logic used by both logcat and generic parsers
+    fn parse_text_file<F>(
+        path: &Path,
+        content: String,
+        source: Arc<SourceData>,
+        toast: &ProgressToastHandle,
+        ctx: egui::Context,
+        start_time: std::time::Instant,
+        file_size: u64,
+        parse_fn: F,
+    ) -> bool
+    where
+        F: Fn(String, usize) -> Option<crate::parser::line::LogLine>,
+    {
         let mut chunk_lines = Vec::new();
         let mut bytes_read: usize = 0;
 
-        // Progressive loading: parse lines in chunks
         profiling::scope!("parse_lines");
 
-        const CHUNK_SIZE: usize = 10_000; // Send update every 10k lines
+        const CHUNK_SIZE: usize = 10_000;
 
         let parse_start = std::time::Instant::now();
         let mut file_line_number = 0;
         let total_lines_in_content = content.lines().count();
-        log::info!("File contains {total_lines_in_content} lines (by line iterator count)");
+        log::info!("File contains {total_lines_in_content} lines");
 
         let file_name = path
             .file_name()
@@ -212,7 +318,7 @@ impl LogFileLoader {
 
         for line_buffer in content.lines() {
             file_line_number += 1;
-            bytes_read += line_buffer.len() + 1; // +1 for newline
+            bytes_read += line_buffer.len() + 1;
 
             if file_line_number % 500 == 0 {
                 let progress = (bytes_read as f32 / file_size as f32).min(1.0);
@@ -230,28 +336,26 @@ impl LogFileLoader {
                 continue;
             }
 
-            let Some(log_line) = parse_line(line_buffer.to_string(), file_line_number) else {
-                continue; // Skip lines without timestamp
+            let Some(mut log_line) = parse_fn(line_buffer.to_string(), file_line_number) else {
+                continue;
             };
 
+            // Normalize template key
+            log_line.template_key = crate::parser::normalize_message(&log_line.message);
             chunk_lines.push(log_line);
 
             if chunk_lines.len() >= CHUNK_SIZE {
-                // Append chunk to store and send partial update
                 source.append_lines(std::mem::take(&mut chunk_lines));
                 let progress = (bytes_read as f32 / file_size as f32).min(1.0);
-
                 toast.update(
                     progress,
                     format!("Loading {}... ({} lines)", file_name, source.len()),
                 );
                 ctx.request_repaint();
-
                 log::debug!("Sent partial load: {} lines", source.len());
             }
         }
 
-        // Append any remaining lines
         if !chunk_lines.is_empty() {
             source.append_lines(chunk_lines);
         }
@@ -263,7 +367,6 @@ impl LogFileLoader {
             source.len(),
             path.display()
         );
-        log::info!("Total bytes read: {bytes_read}");
         log::info!(
             "Line processing stats: file_line_number={}, lines_in_content={}, parsed_lines={}, skipped={}",
             file_line_number,
