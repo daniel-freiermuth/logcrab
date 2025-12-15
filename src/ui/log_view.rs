@@ -324,16 +324,32 @@ impl From<&FilterState> for SavedFilter {
     }
 }
 
+/// Current version of the .crab file format
+const CRAB_FILE_VERSION: u32 = 1;
+
+/// Current version of the .crab-filters file format
+const CRAB_FILTERS_VERSION: u32 = 1;
+
 /// .crab file format - stores all session data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrabFile {
+    /// File format version for future compatibility
+    #[serde(default = "default_version")]
+    version: u32,
     bookmarks: Vec<Bookmark>,
     filters: Vec<SavedFilter>,
+}
+
+const fn default_version() -> u32 {
+    1 // Treat missing version as v1 for backwards compatibility
 }
 
 /// .crab-filters file format - stores only filters for import/export
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CrabFilters {
+    /// File format version for future compatibility
+    #[serde(default = "default_version")]
+    version: u32,
     filters: Vec<SavedFilter>,
 }
 
@@ -437,10 +453,20 @@ impl LogView {
         if let Ok(file_content) = fs::read_to_string(&self.crab_file) {
             if let Ok(crab_data) = serde_json::from_str::<CrabFile>(&file_content) {
                 log::info!(
-                    "Loaded .crab file with {} bookmarks, {} filters",
+                    "Loaded .crab file v{} with {} bookmarks, {} filters",
+                    crab_data.version,
                     crab_data.bookmarks.len(),
                     crab_data.filters.len()
                 );
+
+                // Future: handle version migrations here
+                if crab_data.version > CRAB_FILE_VERSION {
+                    log::warn!(
+                        ".crab file version {} is newer than supported version {}. Some features may not work correctly.",
+                        crab_data.version,
+                        CRAB_FILE_VERSION
+                    );
+                }
 
                 // Load bookmarks
                 for bookmark in crab_data.bookmarks {
@@ -488,6 +514,7 @@ impl LogView {
             .collect::<Vec<SavedFilter>>();
         let n_filters = filters.len();
         let crab_data = CrabFile {
+            version: CRAB_FILE_VERSION,
             bookmarks: self.state.bookmarks.values().cloned().collect(),
             filters,
         };
@@ -512,7 +539,10 @@ impl LogView {
             .filter_map(|((_surface, _node), tab)| tab.try_into_stored_filter())
             .collect::<Vec<SavedFilter>>();
 
-        let filters_data = CrabFilters { filters };
+        let filters_data = CrabFilters {
+            version: CRAB_FILTERS_VERSION,
+            filters,
+        };
 
         let json = serde_json::to_string_pretty(&filters_data)
             .map_err(|e| format!("Failed to serialize filters: {e}"))?;
@@ -534,6 +564,21 @@ impl LogView {
 
         let filters_data: CrabFilters = serde_json::from_str(&file_content)
             .map_err(|e| format!("Failed to parse filters file: {e}"))?;
+
+        log::info!(
+            "Importing .crab-filters v{} with {} filters",
+            filters_data.version,
+            filters_data.filters.len()
+        );
+
+        // Future: handle version migrations here
+        if filters_data.version > CRAB_FILTERS_VERSION {
+            log::warn!(
+                ".crab-filters file version {} is newer than supported version {}. Some features may not work correctly.",
+                filters_data.version,
+                CRAB_FILTERS_VERSION
+            );
+        }
 
         let count = filters_data.filters.len();
         for saved_filter in filters_data.filters {
