@@ -25,10 +25,7 @@ fn parse_logcat_timestamp(s: &str) -> Option<DateTime<Local>> {
 
     // Try parsing with year
     if let Ok(naive) = NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.3f") {
-        return Some(DateTime::from_naive_utc_and_offset(
-            naive,
-            *Local::now().offset(),
-        ));
+        return naive.and_local_timezone(Local).single();
     }
 
     None
