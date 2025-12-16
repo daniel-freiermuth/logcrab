@@ -399,7 +399,7 @@ impl FilterBar {
 
     fn render_convert_to_highlight_button(ui: &mut Ui, events: &mut Vec<FilterInternalEvent>) {
         if ui
-            .button("→ Highlight")
+            .button("into Highlight")
             .on_hover_text("Convert this filter to a highlight")
             .clicked()
         {
