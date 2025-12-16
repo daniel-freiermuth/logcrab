@@ -135,11 +135,13 @@ impl FilterView {
             None
         };
 
+        let indices = self.state.search.get_filtered_indices(store).clone();
+
         // Render histogram
         if let Some(hist_event) = Histogram::render(
             ui,
             store,
-            self.state.search.get_filtered_indices(store),
+            &indices,
             selected_line_index,
             global_config.hide_epoch_in_histogram,
             histogram_markers,
@@ -252,7 +254,7 @@ impl FilterView {
                         search_text: self.state.search.search_text.clone(),
                         case_sensitive: self.state.search.case_sensitive,
                         color: self.state.color,
-                        globally_visible: self.state.globally_visible,
+                        enabled: self.state.enabled,
                         show_in_histogram: self.state.show_in_histogram,
                     });
                 }
@@ -465,7 +467,7 @@ impl LogCrabTab for FilterView {
             .search
             .get_regex()
             .ok()
-            .filter(|_| !self.state.search.search_text.is_empty() && self.state.globally_visible)
+            .filter(|_| !self.state.search.search_text.is_empty() && self.state.enabled)
             .map(|regex| FilterHighlight {
                 regex,
                 color: self.state.color,
@@ -473,31 +475,30 @@ impl LogCrabTab for FilterView {
     }
 
     fn get_histogram_marker(&mut self, store: &Arc<LogStore>) -> Option<HistogramMarker> {
-        let indices = self.state.search.get_filtered_indices(store);
-        if !self.state.show_in_histogram || indices.is_empty() {
+        if !self.state.show_in_histogram {
+            return None;
+        }
+        let indices = self.state.search.get_filtered_indices(store).clone();
+        if indices.is_empty() {
             return None;
         }
         Some(HistogramMarker {
             name: self.state.name.clone(),
-            indices: indices.clone(),
+            indices,
             color: self.state.color,
         })
     }
 
     fn context_menu(&mut self, ui: &mut egui::Ui) {
-        let icon = if self.state.globally_visible {
-            "👁"
-        } else {
-            "🚫"
-        };
-        let text = if self.state.globally_visible {
+        let icon = if self.state.enabled { "👁" } else { "🚫" };
+        let text = if self.state.enabled {
             "Hide in other tabs"
         } else {
             "Show in other tabs"
         };
 
         if ui.button(format!("{icon} {text}")).clicked() {
-            self.state.globally_visible = !self.state.globally_visible;
+            self.state.enabled = !self.state.enabled;
             ui.close();
         }
     }

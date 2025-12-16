@@ -18,12 +18,11 @@
 
 use crate::config::GlobalConfig;
 use crate::core::session::{CRAB_FILE_VERSION, CRAB_FILTERS_VERSION};
-use crate::core::{CrabFile, CrabFilters, LogStore, SavedFilter, SavedHighlight};
+use crate::core::{CrabFile, CrabFilters, LogStore, SavedFilter, SavedHighlight, SearchRule};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
-use crate::ui::tabs::highlights_tab::HighlightState;
 use crate::ui::tabs::{
     navigation, BookmarksView, FilterView, HighlightsView, LogCrabTab, LogCrabTabViewer,
     PendingTabAdd,
@@ -330,7 +329,7 @@ impl CrabSession {
                 let mut filter_state = FilterState::new(highlight.name.clone(), highlight.color);
                 filter_state.search.search_text = highlight.search.search_text.clone();
                 filter_state.search.case_sensitive = highlight.search.case_sensitive;
-                filter_state.globally_visible = highlight.enabled;
+                filter_state.enabled = highlight.enabled;
                 filter_state.show_in_histogram = highlight.show_in_histogram;
 
                 self.add_filter_view(false, Some(filter_state));
@@ -343,10 +342,10 @@ impl CrabSession {
 
         // Handle filter-to-highlight conversion
         if let Some(data) = self.state.pending_filter_to_highlight.take() {
-            let mut highlight = HighlightState::new(data.name, data.color);
+            let mut highlight = SearchRule::new(data.name, data.color);
             highlight.search.search_text = data.search_text;
             highlight.search.case_sensitive = data.case_sensitive;
-            highlight.enabled = data.globally_visible;
+            highlight.enabled = data.enabled;
             highlight.show_in_histogram = data.show_in_histogram;
 
             self.state.highlights.push(highlight);

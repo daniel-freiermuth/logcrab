@@ -171,9 +171,13 @@ impl LogTable {
         let mut events = Vec::new();
         let dark_mode = ui.visuals().dark_mode;
 
+        // Get filtered indices first to avoid borrow conflicts
+        let filtered_indices = filter.search.get_filtered_indices(store).clone();
+        let filter_id = filter.get_id();
+
         let available_width = ui.available_width();
         egui::ScrollArea::horizontal()
-            .id_salt(format!("filtered_scroll_{}", filter.get_id()))
+            .id_salt(format!("filtered_scroll_{}", filter_id))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 profiling::scope!("filtered_table");
@@ -184,7 +188,7 @@ impl LogTable {
                 Self::render_table_with_header(
                     table,
                     store,
-                    filter.search.get_filtered_indices(store),
+                    &filtered_indices,
                     selected_line_index,
                     bookmarked_lines,
                     all_filter_highlights,

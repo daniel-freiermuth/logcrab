@@ -16,8 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::core::SearchRule;
 use crate::input::ShortcutAction;
-use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -96,8 +96,9 @@ impl FavoriteFilter {
         }
     }
 
-    pub fn matches(&self, filter: &FilterState) -> bool {
-        self.search_text == filter.search.search_text && self.case_sensitive == filter.search.case_sensitive
+    /// Check if this favorite matches a search rule's search criteria.
+    pub fn matches(&self, rule: &SearchRule) -> bool {
+        rule.matches_search(&self.search_text, self.case_sensitive)
     }
 }
 

@@ -27,8 +27,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Local};
 use egui::Color32;
 
-use crate::core::{Bookmark, LogStore};
-use crate::ui::tabs::highlights_tab::HighlightState;
+use crate::core::{Bookmark, LogStore, SearchRule};
 
 /// Shared state for a log viewing session.
 ///
@@ -58,7 +57,7 @@ pub struct SessionState {
     pub filter_history: Vec<String>,
 
     /// Highlight rules that apply across all tabs
-    pub highlights: Vec<HighlightState>,
+    pub highlights: Vec<SearchRule>,
 
     /// Pending conversion request: highlight index to convert to filter
     pub pending_highlight_to_filter: Option<usize>,
@@ -75,7 +74,7 @@ pub struct FilterToHighlightData {
     pub search_text: String,
     pub case_sensitive: bool,
     pub color: Color32,
-    pub globally_visible: bool,
+    pub enabled: bool,
     pub show_in_histogram: bool,
 }
 

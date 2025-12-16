@@ -16,16 +16,12 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-mod highlight_state;
-
-pub use highlight_state::HighlightState;
-
 use std::sync::Arc;
 
 use egui::{Color32, RichText, Ui};
 
 use crate::config::GlobalConfig;
-use crate::core::{LogStore, SavedFilter};
+use crate::core::{LogStore, SavedFilter, SearchRule};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -58,7 +54,7 @@ impl HighlightsView {
 
     fn render_highlight_row(
         ui: &mut Ui,
-        highlight: &mut HighlightState,
+        highlight: &mut SearchRule,
         index: usize,
         is_editing_name: bool,
         should_focus: bool,
@@ -229,7 +225,7 @@ impl LogCrabTab for HighlightsView {
             ui.horizontal(|ui| {
                 if ui.button("➕ Add Highlight").clicked() {
                     let (color, name) = self.next_color_and_name();
-                    data_state.highlights.push(HighlightState::new(name, color));
+                    data_state.highlights.push(SearchRule::new(name, color));
                     data_state.modified = true;
                 }
             });

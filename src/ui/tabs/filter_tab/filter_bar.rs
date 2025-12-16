@@ -367,7 +367,7 @@ impl FilterBar {
         session_state: &mut SessionState,
     ) {
         if ui
-            .toggle_value(&mut filter.globally_visible, "👁")
+            .toggle_value(&mut filter.enabled, "👁")
             .on_hover_text("Show highlights from this filter in all tabs")
             .changed()
         {
