@@ -2,6 +2,9 @@
 
 *Design discussion from December 2025*
 
+- Instead of storing indices, store Vec<Arc<LogLine>> ??
+- Store FilterState in CrabSession instead of tabs?
+
 ## Overview
 
 This document captures the architectural decisions for supporting:
