@@ -21,8 +21,9 @@
 //! This module provides the core regex-based search functionality
 //! with background filtering support via the global filter worker.
 
-use crate::core::LogStore;
 use crate::core::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
+use crate::core::log_store::StoreID;
+use crate::core::LogStore;
 use fancy_regex::{Error, Regex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -42,7 +43,7 @@ pub struct SearchState {
     /// Whether the search is case-sensitive
     pub case_sensitive: bool,
     /// Cached indices of matching lines
-    filtered_indices: Vec<usize>,
+    filtered_indices: Vec<StoreID>,
 
     /// LogStore version this cache was computed for
     cached_for_version: u64,
@@ -79,7 +80,7 @@ impl SearchState {
         self.id
     }
 
-    pub fn get_filtered_indices(&mut self, store: &Arc<LogStore>) -> &Vec<usize> {
+    pub fn get_filtered_indices(&mut self, store: &Arc<LogStore>) -> &Vec<StoreID> {
         self.ensure_cache_valid(store);
         self.check_filter_results();
         &self.filtered_indices
@@ -104,14 +105,16 @@ impl SearchState {
             );
         }
 
-        let request = FilterRequest {
-            filter_id: self.id,
-            regex: self.get_regex().ok(),
-            store,
-            result_tx: self.filter_result_tx.clone(),
-        };
+        if let Ok(regex) = self.get_regex() {
+            let request = FilterRequest {
+                filter_id: self.id,
+                regex,
+                store,
+                result_tx: self.filter_result_tx.clone(),
+            };
 
-        GlobalFilterWorker::send_request(request);
+            GlobalFilterWorker::send_request(request);
+        }
     }
 
     /// Check for completed filter results from background thread.
@@ -142,18 +145,17 @@ impl SearchState {
         }
     }
 
-    /// Find the closest line index in filtered results to the target.
-    pub fn find_closest_index(&self, target_idx: usize) -> usize {
-        let mut closest_idx = 0;
-        let mut min_diff = i64::MAX;
-
-        for (filtered_idx, &line_idx) in self.filtered_indices.iter().enumerate() {
-            let diff = (line_idx as i64 - target_idx as i64).abs();
-            if diff < min_diff {
-                min_diff = diff;
-                closest_idx = filtered_idx;
-            }
-        }
-        closest_idx
+    /// Find the row position of the closest line in filtered results to the target.
+    /// Returns the index within the filtered list (for scrolling to that row).
+    pub fn find_closest_row_position(
+        &mut self,
+        target: StoreID,
+        store: &Arc<LogStore>,
+    ) -> Option<usize> {
+        self.get_filtered_indices(store)
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, line_id)| target.distance_to(line_id, store))
+            .map(|(pos, _)| pos)
     }
 }

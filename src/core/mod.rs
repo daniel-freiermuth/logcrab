@@ -10,6 +10,4 @@ pub use log_file::LogFileLoader;
 pub use log_store::LogStore;
 pub use search_rule::SearchRule;
 pub use search_state::SearchState;
-pub use session::{
-    Bookmark, CrabFile, CrabFilters, SavedFilter, SavedHighlight, SavedSearch, SessionError,
-};
+pub use session::{CrabFilters, SavedFilter, SavedHighlight, SavedSearch, SessionError};

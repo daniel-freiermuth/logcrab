@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use crate::{
-    core::LogStore,
+    core::{log_store::StoreID, LogStore},
     parser::line::LogLine,
     ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
@@ -28,10 +28,10 @@ use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
 /// Events emitted by the log table
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum LogTableEvent {
-    LineClicked { line_index: usize },
-    BookmarkToggled { line_index: usize },
+    LineClicked { line_index: StoreID },
+    BookmarkToggled { line_index: StoreID },
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -161,8 +161,8 @@ impl LogTable {
         ui: &mut Ui,
         store: &Arc<LogStore>,
         filter: &mut FilterState,
-        selected_line_index: usize,
-        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        selected_line_index: Option<StoreID>,
+        bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         scroll_to_row: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<LogTableEvent> {
@@ -246,9 +246,9 @@ impl LogTable {
     fn render_table_with_header(
         table: TableBuilder,
         store: &LogStore,
-        filtered_indices: &[usize],
-        selected_line_index: usize,
-        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        filtered_indices: &[StoreID],
+        selected_line_index: Option<StoreID>,
+        bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
@@ -298,9 +298,9 @@ impl LogTable {
     fn render_table_body(
         body: egui_extras::TableBody,
         store: &LogStore,
-        filtered_indices: &[usize],
-        selected_line_index: usize,
-        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        filtered_indices: &[StoreID],
+        selected_line_index: Option<StoreID>,
+        bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
@@ -312,7 +312,7 @@ impl LogTable {
                 &mut row,
                 store,
                 filtered_indices,
-                selected_line_index,
+                selected_line_index.clone(),
                 bookmarked_lines,
                 all_filter_highlights,
                 dark_mode,
@@ -328,17 +328,17 @@ impl LogTable {
     fn render_table_row(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
-        filtered_indices: &[usize],
-        selected_line_index: usize,
-        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        filtered_indices: &[StoreID],
+        selected_line_index: Option<StoreID>,
+        bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         dark_mode: bool,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
-        let line_idx = filtered_indices[row_index];
-        let line = store.get_by_id(line_idx).unwrap();
+        let line_idx = filtered_indices[row_index].clone();
+        let line = store.get_by_id(&line_idx).unwrap();
 
-        let is_selected = selected_line_index == line_idx;
+        let is_selected = selected_line_index.as_ref() == Some(&line_idx);
         let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
         let color = score_to_color(line.anomaly_score, dark_mode);
 
@@ -348,7 +348,7 @@ impl LogTable {
         Self::render_all_columns(
             row,
             &line,
-            line_idx,
+            line_idx.clone(),
             is_selected,
             is_bookmarked,
             color,
@@ -376,11 +376,11 @@ impl LogTable {
     fn render_all_columns(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
-        line_idx: usize,
+        line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
-        bookmarked_lines: &std::collections::HashMap<usize, String>,
+        bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
@@ -389,7 +389,7 @@ impl LogTable {
         Self::render_line_column(
             row,
             line,
-            line_idx,
+            line_idx.clone(),
             is_selected,
             is_bookmarked,
             color,
@@ -404,7 +404,7 @@ impl LogTable {
         Self::render_timestamp_column(
             row,
             line,
-            line_idx,
+            line_idx.clone(),
             is_selected,
             is_bookmarked,
             color,
@@ -417,7 +417,7 @@ impl LogTable {
         Self::render_message_column(
             row,
             line,
-            line_idx,
+            line_idx.clone(),
             is_selected,
             is_bookmarked,
             color,
@@ -444,7 +444,7 @@ impl LogTable {
     fn render_line_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
-        line_idx: usize,
+        line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
@@ -514,7 +514,7 @@ impl LogTable {
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
-        line_idx: usize,
+        line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         bg_color: Color32,
@@ -572,7 +572,7 @@ impl LogTable {
     fn render_message_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
-        line_idx: usize,
+        line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         bg_color: Color32,
@@ -643,7 +643,7 @@ impl LogTable {
     fn render_score_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
-        line_idx: usize,
+        line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,

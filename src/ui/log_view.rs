@@ -17,8 +17,8 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::config::GlobalConfig;
-use crate::core::session::{CRAB_FILE_VERSION, CRAB_FILTERS_VERSION};
-use crate::core::{CrabFile, CrabFilters, LogStore, SavedFilter, SavedHighlight, SearchRule};
+use crate::core::session::CRAB_FILTERS_VERSION;
+use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -27,7 +27,7 @@ use crate::ui::tabs::{
     navigation, BookmarksView, FilterView, HighlightsView, LogCrabTab, LogCrabTabViewer,
     PendingTabAdd,
 };
-use crate::ui::{PaneDirection, DEFAULT_PALETTE};
+use crate::ui::{PaneDirection, ProgressToastHandle, DEFAULT_PALETTE};
 
 use chrono::Local;
 use egui_dock::{DockArea, DockState, Node};
@@ -41,9 +41,6 @@ use std::sync::Arc;
 /// - Loading/saving .crab session file
 /// - Coordinating keyboard input across tabs
 pub struct CrabSession {
-    /// Path to the .crab session file
-    pub crab_file: PathBuf,
-
     /// Dock state for VS Code-like tiling layout
     pub dock_state: DockState<Box<dyn LogCrabTab>>,
 
@@ -58,16 +55,28 @@ pub struct CrabSession {
 }
 
 impl CrabSession {
-    pub fn new(store: Arc<LogStore>, crab_file: PathBuf) -> Self {
-        let mut view = Self {
-            crab_file,
+    pub fn new(store: Arc<LogStore>) -> Self {
+        let mut cs = Self {
             dock_state: DockState::new(Vec::new()),
             monotonic_filter_counter: 0,
             pending_tab_add: None,
             state: SessionState::new(store),
         };
-        view.load_crab_file();
-        view
+        cs.add_filter_view(false, None);
+
+        // Split horizontally: 70% top for filters, 30% bottom for bookmarks and highlights
+        let [top, _bottom] = cs.dock_state.main_surface_mut().split_below(
+            egui_dock::NodeIndex::root(),
+            0.7,
+            vec![
+                Box::new(HighlightsView::new()),
+                Box::new(BookmarksView::default()),
+            ],
+        );
+
+        // Focus top pane for adding remaining filters
+        cs.dock_state.main_surface_mut().set_focused_node(top);
+        cs
     }
 
     pub fn add_filter_view(&mut self, focus_search: bool, state: Option<FilterState>) {
@@ -87,69 +96,53 @@ impl CrabSession {
         self.monotonic_filter_counter += 1;
     }
 
-    fn load_crab_file(&mut self) {
-        log::debug!("Loading .crab file: {}", self.crab_file.display());
-        match CrabFile::load(&self.crab_file) {
-            Ok(crab_data) => {
-                log::info!(
-                    "Loaded .crab file v{} with {} bookmarks, {} filters, {} highlights",
-                    crab_data.version,
-                    crab_data.bookmarks.len(),
-                    crab_data.filters.len(),
-                    crab_data.highlights.len()
-                );
+    /// Add a file to the current session
+    ///
+    /// Loads the file asynchronously and adds it as an additional source to the store.
+    pub fn add_file(&mut self, path: PathBuf, ctx: egui::Context, toast: ProgressToastHandle) {
+        log::info!("Adding file to session: {}", path.display());
 
-                // Load bookmarks
-                for bookmark in crab_data.bookmarks {
-                    self.state.bookmarks.insert(bookmark.line_index, bookmark);
-                }
-
-                // Load highlights
-                for saved_highlight in &crab_data.highlights {
-                    self.state.highlights.push(saved_highlight.into());
-                }
-
-                if !crab_data.filters.is_empty() {
-                    for (i, saved_filter) in crab_data.filters.iter().enumerate() {
-                        self.add_filter_view(false, Some(saved_filter.into()));
-                        log::debug!("Restored filter {}: '{}'", i, saved_filter.search_text);
-                    }
-                } else {
-                    // No saved filters - just create one default filter
-                    self.add_filter_view(false, None);
-                }
-            }
-            Err(crate::core::SessionError::Io(ref e))
-                if e.kind() == std::io::ErrorKind::NotFound =>
-            {
-                log::info!(
-                    ".crab file does not exist yet: {}",
-                    self.crab_file.display()
-                );
-                self.add_filter_view(false, None);
-            }
-            Err(e) => {
-                log::warn!("Failed to load .crab file: {e}");
-                self.add_filter_view(false, None);
-            }
+        let source = LogFileLoader::load_async(path, ctx, toast);
+        let (filters, highlights) = source.load_saved_filters_and_highlights();
+        self.state.store.add_source(source);
+        for saved_filter in &filters {
+            self.add_filter_if_not_exists(saved_filter);
         }
+        for saved_highlight in &highlights {
+            self.add_highlight_if_not_exists(saved_highlight);
+        }
+    }
 
-        // Split horizontally: 70% top for filters, 30% bottom for bookmarks and highlights
-        let [top, _bottom] = self.dock_state.main_surface_mut().split_below(
-            egui_dock::NodeIndex::root(),
-            0.7,
-            vec![
-                Box::new(HighlightsView::new()),
-                Box::new(BookmarksView::default()),
-            ],
-        );
+    fn add_filter_if_not_exists(&mut self, saved_filter: &SavedFilter) {
+        // Check if a filter with the same search text already exists
+        let exists = self
+            .dock_state
+            .iter_all_tabs()
+            .filter_map(|(_, tab)| tab.try_into_stored_filter())
+            .any(|f| f.search_text == saved_filter.search_text);
 
-        // Focus top pane for adding remaining filters
-        self.dock_state.main_surface_mut().set_focused_node(top);
+        if !exists {
+            self.add_filter_view(false, Some(saved_filter.into()));
+            log::debug!("Merged filter: '{}'", saved_filter.search_text);
+        }
+    }
+
+    fn add_highlight_if_not_exists(&mut self, saved_highlight: &SavedHighlight) {
+        // Check if a highlight with the same search text already exists
+        let exists = self
+            .state
+            .highlights
+            .iter()
+            .any(|h| h.search.search_text == saved_highlight.search_text);
+
+        if !exists {
+            self.state.highlights.push(saved_highlight.into());
+            log::debug!("Merged highlight: '{}'", saved_highlight.search_text);
+        }
     }
 
     pub fn save_crab_file(&self) {
-        log::debug!("Saving .crab file: {}", self.crab_file.display());
+        log::debug!("Saving .crab files for all sources");
         let filters = self
             .dock_state
             .iter_all_tabs()
@@ -157,25 +150,16 @@ impl CrabSession {
             .collect::<Vec<SavedFilter>>();
         let highlights: Vec<SavedHighlight> =
             self.state.highlights.iter().map(|h| h.into()).collect();
-        let n_filters = filters.len();
-        let n_highlights = highlights.len();
 
-        let crab_data = CrabFile {
-            version: CRAB_FILE_VERSION,
-            bookmarks: self.state.bookmarks.values().cloned().collect(),
-            filters,
-            highlights,
-        };
+        // Save to all sources' .crab files
+        // Each source saves its own bookmarks + shared filters/highlights
+        self.state.store.save_all_crab_files(&filters, &highlights);
 
-        match crab_data.save(&self.crab_file) {
-            Ok(()) => log::debug!(
-                "Successfully saved .crab file with {} bookmarks, {} filters, {} highlights",
-                self.state.bookmarks.len(),
-                n_filters,
-                n_highlights,
-            ),
-            Err(e) => log::error!("Failed to save .crab file: {e}"),
-        }
+        log::debug!(
+            "Saved .crab files with {} filters, {} highlights",
+            filters.len(),
+            highlights.len(),
+        );
     }
 
     pub fn export_filters(&self, path: &Path) -> Result<(), String> {
@@ -464,7 +448,7 @@ impl CrabSession {
 
 impl Drop for CrabSession {
     fn drop(&mut self) {
-        log::debug!("Dropping LogView for file: {}", self.crab_file.display());
+        log::debug!("Dropping LogView");
         self.save_crab_file();
     }
 }

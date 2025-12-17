@@ -42,7 +42,7 @@ impl LogFileLoader {
         ctx: egui::Context,
         toast: ProgressToastHandle,
     ) -> Arc<SourceData> {
-        let data_source = Arc::new(SourceData::new());
+        let data_source = Arc::new(SourceData::new(Some(path.clone())));
         let source_clone = data_source.clone();
 
         thread::spawn(move || {

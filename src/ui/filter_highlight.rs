@@ -1,6 +1,5 @@
-use egui::{Color32, TextFormat, text::LayoutJob};
+use egui::{text::LayoutJob, Color32, TextFormat};
 use fancy_regex::Regex;
-
 
 /// A filter pattern with its associated color for highlighting
 #[derive(Debug, Clone)]

@@ -21,11 +21,12 @@
 //! This module handles serialization and deserialization of session data,
 //! including filters, highlights, and bookmarks.
 
-use chrono::{DateTime, Local};
 use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
+use crate::core::log_store::Bookmark;
 
 /// Current version of the .crab file format
 pub const CRAB_FILE_VERSION: u32 = 2;
@@ -87,14 +88,6 @@ const fn default_enabled() -> bool {
 
 const fn default_version() -> u32 {
     1 // Treat missing version as v1 for backwards compatibility
-}
-
-/// Named bookmark with optional description
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bookmark {
-    pub line_index: usize,
-    pub name: String,
-    pub timestamp: DateTime<Local>,
 }
 
 /// Unified saved search configuration for both filters and highlights.
