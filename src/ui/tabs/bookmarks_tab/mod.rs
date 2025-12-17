@@ -23,7 +23,7 @@ use std::sync::Arc;
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
 use crate::{
-    core::{LogStore, SavedFilter},
+    core::{log_store::StoreID, LogStore, SavedFilter},
     input::ShortcutAction,
     ui::{
         filter_highlight::FilterHighlight,
@@ -36,7 +36,7 @@ use egui::Ui;
 /// Orchestrates the bookmarks view UI using the `BookmarkPanel` component
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BookmarksView {
-    edited_line_index: Option<usize>,
+    edited_store_id: Option<StoreID>,
     bookmark_name_input: String,
     enter_pressed_this_frame: bool,
 }
@@ -49,7 +49,7 @@ impl BookmarksView {
         ui: &mut Ui,
         session_state: &SessionState,
         bookmarks: &[BookmarkData],
-        editing_bookmark: Option<usize>,
+        editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<BookmarkPanelEvent> {
@@ -63,9 +63,9 @@ impl BookmarksView {
         )
     }
 
-    fn start_renaming_bookmark(&mut self, line_index: usize, data_state: &SessionState) {
-        if let Some(bookmark) = data_state.bookmarks.get(&line_index) {
-            self.edited_line_index = Some(line_index);
+    fn start_renaming_bookmark(&mut self, store_id: StoreID, data_state: &SessionState) {
+        if let Some(bookmark) = data_state.get_bookmark(&store_id) {
+            self.edited_store_id = Some(store_id);
             self.bookmark_name_input.clone_from(&bookmark.name);
         }
     }
@@ -77,7 +77,7 @@ impl BookmarksView {
         all_filter_highlights: &[FilterHighlight],
     ) {
         // Check if Enter was pressed this frame (when not editing)
-        if self.edited_line_index.is_none() {
+        if self.edited_store_id.is_none() {
             self.enter_pressed_this_frame = ui.input(|i| i.key_pressed(egui::Key::Enter));
         } else {
             self.enter_pressed_this_frame = false;
@@ -85,9 +85,10 @@ impl BookmarksView {
 
         // Convert bookmarks to BookmarkData format
         let mut bookmarks: Vec<BookmarkData> = data_state
-            .bookmarks
-            .values()
-            .map(|b| BookmarkData {
+            .get_all_bookmarks()
+            .into_iter()
+            .map(|(store_id, b)| BookmarkData {
+                store_id,
                 line_index: b.line_index,
                 name: b.name.clone(),
                 timestamp: b.timestamp,
@@ -100,7 +101,7 @@ impl BookmarksView {
             ui,
             data_state,
             &bookmarks,
-            self.edited_line_index,
+            self.edited_store_id.as_ref(),
             &mut self.bookmark_name_input,
             all_filter_highlights,
         );
@@ -108,28 +109,21 @@ impl BookmarksView {
         // Handle events
         for event in events {
             match event {
-                BookmarkPanelEvent::BookmarkClicked { line_index } => {
-                    data_state.selected_line_index = line_index;
+                BookmarkPanelEvent::BookmarkClicked { store_id } => {
+                    data_state.selected_line_index = Some(store_id);
                 }
-                BookmarkPanelEvent::BookmarkDeleted { line_index } => {
-                    data_state.bookmarks.remove(&line_index);
-                    data_state.modified = true;
+                BookmarkPanelEvent::BookmarkDeleted { store_id } => {
+                    data_state.remove_bookmark(&store_id);
                 }
-                BookmarkPanelEvent::BookmarkRenamed {
-                    line_index,
-                    new_name,
-                } => {
-                    if let Some(b) = data_state.bookmarks.get_mut(&line_index) {
-                        b.name = new_name;
-                    }
-                    data_state.modified = true;
-                    self.edited_line_index = None;
+                BookmarkPanelEvent::BookmarkRenamed { store_id, new_name } => {
+                    data_state.rename_bookmark(&store_id, new_name);
+                    self.edited_store_id = None;
                 }
-                BookmarkPanelEvent::StartRenaming { line_index } => {
-                    self.start_renaming_bookmark(line_index, data_state);
+                BookmarkPanelEvent::StartRenaming { store_id } => {
+                    self.start_renaming_bookmark(store_id, data_state);
                 }
                 BookmarkPanelEvent::CancelRenaming => {
-                    self.edited_line_index = None;
+                    self.edited_store_id = None;
                 }
             }
         }
@@ -137,56 +131,60 @@ impl BookmarksView {
 
     /// Move selection in bookmarks view
     pub fn move_selection_in_bookmarks(delta: i32, data_state: &mut SessionState) {
-        if data_state.bookmarks.is_empty() {
+        let bookmarks = data_state.get_all_bookmarks();
+        if bookmarks.is_empty() {
             return;
         }
 
-        // Get sorted list of bookmark indices
-        let mut bookmark_indices: Vec<usize> = data_state.bookmarks.keys().copied().collect();
-        // TODO: We shouldn't sort this every time
-        bookmark_indices.sort_unstable();
+        // Get sorted list of bookmark store IDs
+        let mut bookmark_ids: Vec<StoreID> = bookmarks.into_iter().map(|(id, _)| id).collect();
+        // TODO: We shouldn't sort this every time - maybe sort by timestamp?
+        bookmark_ids.sort_by_key(|id| format!("{:?}", id));
 
         // Find current position in bookmark list
-        // TODO: here we should start from the current selected line, even if not a bookmark
-        // TODO: optimize with option-chaining
-        let current_pos = bookmark_indices
-            .iter()
-            .position(|&idx| idx == data_state.selected_line_index)
+        let current_pos = data_state
+            .selected_line_index
+            .as_ref()
+            .and_then(|selected| bookmark_ids.iter().position(|id| id == selected))
             .unwrap_or(if delta >= 0 {
                 0
             } else {
-                bookmark_indices.len() - 1
+                bookmark_ids.len() - 1
             });
 
         let new_pos = if delta < 0 {
             current_pos.saturating_sub(delta.unsigned_abs() as usize)
         } else {
-            (current_pos + delta as usize).min(bookmark_indices.len() - 1)
+            (current_pos + delta as usize).min(bookmark_ids.len() - 1)
         };
 
-        let new_line_index = bookmark_indices[new_pos];
-        data_state.selected_line_index = new_line_index;
+        data_state.selected_line_index = Some(bookmark_ids[new_pos].clone());
     }
 
     /// Jump to the first bookmark (Vim-style gg)
     pub fn jump_to_top_in_bookmarks(data_state: &mut SessionState) {
-        if data_state.bookmarks.is_empty() {
+        let bookmarks = data_state.get_all_bookmarks();
+        if bookmarks.is_empty() {
             return;
         }
 
-        let first_index = *data_state.bookmarks.keys().min().unwrap();
-        data_state.selected_line_index = first_index;
+        // Get the first bookmark by some ordering
+        if let Some((first_id, _)) = bookmarks.into_iter().next() {
+            data_state.selected_line_index = Some(first_id);
+        }
     }
 
     /// Jump to the last bookmark (Vim-style G)
     pub fn jump_to_bottom_in_bookmarks(data_state: &mut SessionState) {
-        if data_state.bookmarks.is_empty() {
+        let bookmarks = data_state.get_all_bookmarks();
+        if bookmarks.is_empty() {
             return;
         }
 
-        // TODO
-        let last_index = data_state.bookmarks.keys().max().unwrap();
-        data_state.selected_line_index = *last_index;
+        // Get the last bookmark by some ordering
+        if let Some((last_id, _)) = bookmarks.into_iter().last() {
+            data_state.selected_line_index = Some(last_id);
+        }
     }
 
     /// Move selection up by one page in bookmarks view
@@ -225,9 +223,10 @@ impl LogCrabTab for BookmarksView {
     ) -> bool {
         // Handle Enter key for starting bookmark rename (when not already editing)
         // enter_pressed_this_frame is set during render when we have UI context
-        if self.enter_pressed_this_frame && self.edited_line_index.is_none() {
-            let selected_line_index = data_state.selected_line_index;
-            self.start_renaming_bookmark(selected_line_index, data_state);
+        if self.enter_pressed_this_frame && self.edited_store_id.is_none() {
+            if let Some(selected) = data_state.selected_line_index.clone() {
+                self.start_renaming_bookmark(selected, data_state);
+            }
         }
 
         for action in actions {

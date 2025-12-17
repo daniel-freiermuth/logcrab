@@ -21,6 +21,7 @@
 //! This module provides a shared worker thread that processes filter requests
 //! from both FilterState and HighlightState, avoiding duplicate threading logic.
 
+use crate::core::log_store::StoreID;
 use crate::core::LogStore;
 use fancy_regex::Regex;
 use std::collections::HashMap;
@@ -32,14 +33,14 @@ use std::sync::{Arc, OnceLock};
 #[derive(Clone)]
 pub struct FilterRequest {
     pub filter_id: usize, // Unique identifier for each filter/highlight instance
-    pub regex: Option<Regex>,
+    pub regex: Regex,
     pub store: Arc<LogStore>, // Shared read-only access to log store
     pub result_tx: Sender<FilterResult>, // Each filter has its own result channel
 }
 
 /// Result from background filtering
 pub struct FilterResult {
-    pub filtered_indices: Vec<usize>,
+    pub filtered_indices: Vec<StoreID>,
 }
 
 /// Global filter worker channels
@@ -116,16 +117,11 @@ impl GlobalFilterWorker {
                 let filtered_indices = {
                     profiling::scope!("filter_lines");
 
-                    if let Some(ref regex) = request.regex {
-                        // Parallel filtering with rayon
-                        request.store.get_matching_ids(|line| {
-                            regex.is_match(&line.message).unwrap_or(false)
-                                || regex.is_match(&line.raw).unwrap_or(false)
-                        })
-                    } else {
-                        // No filter: all indices match
-                        (0..request.store.total_lines()).collect()
-                    }
+                    // Parallel filtering with rayon
+                    request.store.get_matching_ids(|line| {
+                        request.regex.is_match(&line.message).unwrap_or(false)
+                            || request.regex.is_match(&line.raw).unwrap_or(false)
+                    })
                 };
 
                 log::trace!(

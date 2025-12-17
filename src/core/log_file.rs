@@ -42,7 +42,7 @@ impl LogFileLoader {
         ctx: egui::Context,
         toast: ProgressToastHandle,
     ) -> Arc<SourceData> {
-        let data_source = Arc::new(SourceData::new());
+        let data_source = Arc::new(SourceData::new(Some(path.clone())));
         let source_clone = data_source.clone();
 
         thread::spawn(move || {
@@ -160,7 +160,10 @@ impl LogFileLoader {
         };
 
         if source_added && !data_source.is_empty() {
-            Self::score_lines(data_source, &path, &toast, start_time);
+            Self::score_lines(data_source.clone(), &path, &toast, start_time);
+            
+            // Load bookmarks from .crab file if it exists
+            data_source.load_bookmarks();
         } else if data_source.is_empty() {
             toast.set_error("No log lines found in file");
         }

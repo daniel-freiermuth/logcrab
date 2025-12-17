@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::core::LogStore;
+use crate::core::{log_store::StoreID, LogStore};
 use crate::ui::tabs::filter_tab::log_table;
 use chrono::{DateTime, Datelike, Local};
 use egui::{Color32, Ui};
@@ -28,10 +28,10 @@ const NUM_BUCKETS: usize = 100;
 const SCORE_BUCKETS: usize = 20;
 
 /// Marker data for showing filter matches in histogram
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HistogramMarker {
     pub name: String,
-    pub indices: Vec<usize>,
+    pub indices: Vec<StoreID>,
     pub color: Color32,
 }
 
@@ -42,18 +42,18 @@ struct AnomalyDistribution {
 }
 
 /// Event emitted when histogram is clicked
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HistogramClickEvent {
-    pub line_index: usize,
+    pub line_index: StoreID,
 }
 
 /// Cached histogram computation results
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct HistogramCache {
     /// Cache key: (store_version, indices_len, hide_epoch)
     key: (u64, usize, bool),
     /// Filtered indices after epoch removal (if hide_epoch is true)
-    effective_indices: Vec<usize>,
+    effective_indices: Vec<StoreID>,
     /// Time range of the histogram
     time_range: Option<(DateTime<Local>, DateTime<Local>)>,
     /// Bucket size in seconds
@@ -91,8 +91,8 @@ impl Histogram {
     pub fn render(
         ui: &mut Ui,
         store: &LogStore,
-        filtered_indices: &[usize],
-        selected_line_index: usize,
+        filtered_indices: &[StoreID],
+        selected_line_index: Option<StoreID>,
         hide_epoch: bool,
         markers: &[HistogramMarker],
         cache: &mut HistogramCache,
@@ -114,16 +114,16 @@ impl Histogram {
             profiling::scope!("Histogram::recompute_cache");
 
             // Filter out January 1st timestamps if requested
-            let effective_indices: Vec<usize> = if hide_epoch {
+            let effective_indices: Vec<StoreID> = if hide_epoch {
                 profiling::scope!("Histogram::filter_epoch");
                 filtered_indices
                     .iter()
                     .filter_map(|idx| {
-                        store.get_by_id(*idx).and_then(|line| {
+                        store.get_by_id(idx).and_then(|line| {
                             let ts = line.timestamp;
                             // Exclude all timestamps that are January 1st (any year)
                             if !(ts.month0() == 0 && ts.day0() == 0) {
-                                Some(*idx)
+                                Some(idx.clone())
                             } else {
                                 None
                             }
@@ -176,14 +176,14 @@ impl Histogram {
         ui: &mut Ui,
         store: &LogStore,
         cache: &HistogramCache,
-        selected_line_index: usize,
+        selected_line_index: Option<StoreID>,
         markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
         let max_count = *cache.buckets.iter().max().unwrap_or(&1);
 
         let selected_x_fraction = Self::calculate_selected_x_fraction(
             store,
-            selected_line_index,
+            selected_line_index.clone(),
             cache.time_range.unwrap().0,
             cache.time_range.unwrap().1,
         );
@@ -215,7 +215,7 @@ impl Histogram {
 
     fn calculate_time_range(
         store: &LogStore,
-        filtered_indices: &[usize],
+        filtered_indices: &[StoreID],
     ) -> Option<(
         chrono::DateTime<chrono::Local>,
         chrono::DateTime<chrono::Local>,
@@ -223,12 +223,12 @@ impl Histogram {
         profiling::scope!("Histogram::calculate_time_range");
         let first_ts = filtered_indices
             .iter()
-            .map(|&idx| store.get_by_id(idx).unwrap().timestamp)
+            .map(|idx| store.get_by_id(idx).unwrap().timestamp)
             .next();
         let last_ts = filtered_indices
             .iter()
             .rev()
-            .map(|&idx| store.get_by_id(idx).unwrap().timestamp)
+            .map(|idx| store.get_by_id(idx).unwrap().timestamp)
             .next();
 
         match (first_ts, last_ts) {
@@ -239,7 +239,7 @@ impl Histogram {
 
     fn create_buckets(
         store: &LogStore,
-        filtered_indices: &[usize],
+        filtered_indices: &[StoreID],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
     ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
@@ -247,7 +247,7 @@ impl Histogram {
         let mut buckets = vec![0usize; NUM_BUCKETS];
         let mut anomaly_distributions = vec![AnomalyDistribution::default(); NUM_BUCKETS];
 
-        for &line_idx in filtered_indices {
+        for line_idx in filtered_indices {
             let line = store.get_by_id(line_idx).unwrap();
             let ts = line.timestamp;
             let bucket_idx = timestamp_to_bucket(ts, start_time, bucket_size);
@@ -266,11 +266,12 @@ impl Histogram {
 
     fn calculate_selected_x_fraction(
         store: &LogStore,
-        selected_line_index: usize,
+        selected_line_index: Option<StoreID>,
         start_time: chrono::DateTime<chrono::Local>,
         end_time: chrono::DateTime<chrono::Local>,
     ) -> Option<f32> {
-        let sel_ts = store.get_by_id(selected_line_index).unwrap().timestamp;
+        let selected_line_index = selected_line_index?;
+        let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp;
         let total_duration = (end_time.timestamp() - start_time.timestamp()) as f64;
 
         if total_duration <= 0.0 {
@@ -440,7 +441,7 @@ impl Histogram {
         let total_time = NUM_BUCKETS as f64 * bucket_size;
 
         for marker in markers {
-            for &line_idx in &marker.indices {
+            for line_idx in &marker.indices {
                 let ts = store.get_by_id(line_idx).unwrap().timestamp;
                 let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
 
@@ -477,7 +478,7 @@ impl Histogram {
         let mut closest_match: Option<MarkerMatch> = None;
 
         for marker in markers {
-            for &line_idx in &marker.indices {
+            for line_idx in &marker.indices {
                 let ts = store.get_by_id(line_idx).unwrap().timestamp;
                 let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
                 let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
@@ -526,7 +527,7 @@ impl Histogram {
         rect: egui::Rect,
         bar_width: f32,
         store: &LogStore,
-        filtered_indices: &[usize],
+        filtered_indices: &[StoreID],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
     ) -> Option<HistogramClickEvent> {
@@ -561,16 +562,16 @@ impl Histogram {
 
     fn find_closest_line_in_bucket(
         store: &LogStore,
-        filtered_indices: &[usize],
+        filtered_indices: &[StoreID],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
         clicked_bucket: usize,
         click_time_in_bucket: i64,
-    ) -> Option<usize> {
+    ) -> Option<StoreID> {
         let mut closest_idx = None;
         let mut min_diff = i64::MAX;
 
-        for &line_idx in filtered_indices {
+        for line_idx in filtered_indices {
             let ts = store.get_by_id(line_idx).unwrap().timestamp;
             let line_bucket = timestamp_to_bucket(ts, start_time, bucket_size);
 
@@ -578,7 +579,7 @@ impl Histogram {
                 let diff = (ts.timestamp() - click_time_in_bucket).abs();
                 if diff < min_diff {
                     min_diff = diff;
-                    closest_idx = Some(line_idx);
+                    closest_idx = Some(line_idx.clone());
                 }
             }
         }
@@ -587,12 +588,12 @@ impl Histogram {
         if closest_idx.is_none() {
             let bucket_center_time =
                 start_time.timestamp() + ((clicked_bucket as f64 + 0.5) * bucket_size) as i64;
-            for &line_idx in filtered_indices {
+            for line_idx in filtered_indices {
                 let ts = store.get_by_id(line_idx).unwrap().timestamp;
                 let diff = (ts.timestamp() - bucket_center_time).abs();
                 if diff < min_diff {
                     min_diff = diff;
-                    closest_idx = Some(line_idx);
+                    closest_idx = Some(line_idx.clone());
                 }
             }
         }
@@ -605,7 +606,7 @@ impl Histogram {
         start_time: chrono::DateTime<chrono::Local>,
         end_time: chrono::DateTime<chrono::Local>,
         store: &LogStore,
-        selected_line_index: usize,
+        selected_line_index: Option<StoreID>,
     ) {
         profiling::scope!("Histogram::render_timeline_labels");
         let dark_mode = ui.visuals().dark_mode;
@@ -621,12 +622,14 @@ impl Histogram {
                 start_time.format("%H:%M:%S"),
                 end_time.format("%H:%M:%S")
             ));
-            let sel_ts = store.get_by_id(selected_line_index).unwrap().timestamp;
-            ui.separator();
-            ui.colored_label(
-                selected_color,
-                format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
-            );
+            if let Some(selected_line_index) = selected_line_index {
+                let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp;
+                ui.separator();
+                ui.colored_label(
+                    selected_color,
+                    format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
+                );
+            }
         });
     }
 }

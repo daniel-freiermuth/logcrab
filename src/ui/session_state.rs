@@ -21,20 +21,19 @@
 //! This module contains the state that is shared across all tabs in a session,
 //! including bookmarks, highlights, selection state, and filter history.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Local};
 use egui::Color32;
 
+use crate::core::log_store::StoreID;
 use crate::core::{Bookmark, LogStore, SearchRule};
 
 /// Shared state for a log viewing session.
 ///
 /// This state is passed to all tabs and contains:
-/// - The log store with all parsed lines
+/// - The log store with all parsed lines (including bookmarks)
 /// - Current selection
-/// - Bookmarks
 /// - Highlights (which apply across all tabs)
 /// - Filter history
 /// - Pending conversion requests between filters and highlights
@@ -42,10 +41,7 @@ pub struct SessionState {
     pub store: Arc<LogStore>,
 
     /// Currently selected line index
-    pub selected_line_index: usize,
-
-    /// Bookmarks with names, keyed by line index
-    pub bookmarks: HashMap<usize, Bookmark>,
+    pub selected_line_index: Option<StoreID>,
 
     /// Whether the session has unsaved modifications
     pub modified: bool,
@@ -83,8 +79,7 @@ impl SessionState {
     pub fn new(store: Arc<LogStore>) -> Self {
         Self {
             store,
-            selected_line_index: 0,
-            bookmarks: HashMap::new(),
+            selected_line_index: None,
             modified: false,
             last_saved: None,
             filter_history: Vec::new(),
@@ -109,29 +104,49 @@ impl SessionState {
         }
     }
 
+    // ========================================================================
+    // Bookmark Management (delegates to LogStore)
+    // ========================================================================
+
+    /// Get a bookmark by StoreID
+    pub fn get_bookmark(&self, id: &StoreID) -> Option<Bookmark> {
+        self.store.get_bookmark(id)
+    }
+
+    /// Get all bookmarks
+    pub fn get_all_bookmarks(&self) -> Vec<(StoreID, Bookmark)> {
+        self.store.get_all_bookmarks()
+    }
+
     /// Toggle bookmark at the given line index
-    pub fn toggle_bookmark(&mut self, line_index: usize) {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.bookmarks.entry(line_index) {
-            let line = self.store.get_by_id(line_index).unwrap();
-            let timestamp = line.timestamp;
-            let line_number = line.line_number;
-
-            let bookmark_name = format!("Line {}", line_number);
-
+    pub fn toggle_bookmark(&mut self, line_index: StoreID) {
+        if self.store.has_bookmark(&line_index) {
+            log::debug!("Removing bookmark at line {:?}", line_index);
+            self.store.remove_bookmark(&line_index);
+        } else if let Some(line) = self.store.get_by_id(&line_index) {
+            let bookmark_name = format!("Line {}", line.line_number);
             log::debug!("Adding bookmark: {bookmark_name}");
-            e.insert(Bookmark {
-                line_index,
-                name: bookmark_name,
-                timestamp,
-            });
-        } else {
-            log::debug!("Removing bookmark at line {line_index}");
-            self.bookmarks.remove(&line_index);
+            self.store.set_bookmark(&line_index, bookmark_name);
         }
+        self.modified = true;
     }
 
     /// Toggle bookmark for the currently selected line
     pub fn toggle_bookmark_for_selected(&mut self) {
-        self.toggle_bookmark(self.selected_line_index);
+        if let Some(line_index) = self.selected_line_index.clone() {
+            self.toggle_bookmark(line_index);
+        }
+    }
+
+    /// Rename a bookmark
+    pub fn rename_bookmark(&mut self, id: &StoreID, new_name: String) {
+        self.store.set_bookmark(id, new_name);
+        self.modified = true;
+    }
+
+    /// Remove a bookmark
+    pub fn remove_bookmark(&mut self, id: &StoreID) {
+        self.store.remove_bookmark(id);
+        self.modified = true;
     }
 }

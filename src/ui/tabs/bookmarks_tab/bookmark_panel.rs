@@ -16,6 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::core::log_store::StoreID;
 use crate::parser::line::LogLine;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -29,6 +30,7 @@ use egui_extras::{Column, TableBuilder};
 /// Bookmark data
 #[derive(Debug, Clone)]
 pub struct BookmarkData {
+    pub store_id: StoreID,
     pub line_index: usize,
     pub name: String,
     pub timestamp: DateTime<chrono::Local>,
@@ -37,10 +39,10 @@ pub struct BookmarkData {
 /// Events emitted by the bookmark panel
 #[derive(Debug, Clone)]
 pub enum BookmarkPanelEvent {
-    BookmarkClicked { line_index: usize },
-    BookmarkDeleted { line_index: usize },
-    BookmarkRenamed { line_index: usize, new_name: String },
-    StartRenaming { line_index: usize },
+    BookmarkClicked { store_id: StoreID },
+    BookmarkDeleted { store_id: StoreID },
+    BookmarkRenamed { store_id: StoreID, new_name: String },
+    StartRenaming { store_id: StoreID },
     CancelRenaming,
 }
 
@@ -55,7 +57,7 @@ impl BookmarkPanel {
         ui: &mut Ui,
         log_view_state: &SessionState,
         bookmarks: &[BookmarkData],
-        editing_bookmark: Option<usize>,
+        editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<BookmarkPanelEvent> {
@@ -98,7 +100,7 @@ impl BookmarkPanel {
         ui: &mut Ui,
         log_view_state: &SessionState,
         bookmarks: &[BookmarkData],
-        editing_bookmark: Option<usize>,
+        editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<BookmarkPanelEvent>,
@@ -160,7 +162,7 @@ impl BookmarkPanel {
         row: &mut egui_extras::TableRow<'_, '_>,
         log_view_state: &SessionState,
         bookmarks: &[BookmarkData],
-        editing_bookmark: Option<usize>,
+        editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<BookmarkPanelEvent>,
@@ -168,11 +170,14 @@ impl BookmarkPanel {
     ) {
         let row_index = row.index();
         let bookmark = &bookmarks[row_index];
-        let line_idx = bookmark.line_index;
+        let store_id = &bookmark.store_id;
 
-        let is_selected = log_view_state.selected_line_index == line_idx;
+        let is_selected = log_view_state
+            .selected_line_index
+            .as_ref()
+            .is_some_and(|s| s == store_id);
 
-        let line = if let Some(line) = log_view_state.store.get_by_id(line_idx) {
+        let line = if let Some(line) = log_view_state.store.get_by_id(store_id) {
             line
         } else {
             row.col(|ui| {
@@ -192,7 +197,7 @@ impl BookmarkPanel {
         // Line number column
         Self::render_line_column(
             row,
-            line_idx,
+            store_id,
             is_selected,
             color,
             &mut row_clicked,
@@ -203,7 +208,7 @@ impl BookmarkPanel {
         // Timestamp column
         Self::render_timestamp_column(
             row,
-            line_idx,
+            store_id,
             is_selected,
             color,
             bookmark,
@@ -214,7 +219,7 @@ impl BookmarkPanel {
         // Name column
         Self::render_name_column(
             row,
-            line_idx,
+            store_id,
             is_selected,
             color,
             bookmark,
@@ -228,7 +233,7 @@ impl BookmarkPanel {
         // Message column
         Self::render_message_column(
             row,
-            line_idx,
+            store_id,
             is_selected,
             color,
             &line,
@@ -238,18 +243,18 @@ impl BookmarkPanel {
         );
 
         // Delete button column
-        Self::render_delete_column(row, line_idx, is_selected, events, dark_mode);
+        Self::render_delete_column(row, store_id, is_selected, events, dark_mode);
 
         if row_clicked {
             events.push(BookmarkPanelEvent::BookmarkClicked {
-                line_index: line_idx,
+                store_id: store_id.clone(),
             });
         }
     }
 
     fn render_line_column(
         row: &mut egui_extras::TableRow<'_, '_>,
-        line_idx: usize,
+        store_id: &StoreID,
         is_selected: bool,
         color: Color32,
         row_clicked: &mut bool,
@@ -271,7 +276,7 @@ impl BookmarkPanel {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with("bm_line"),
+                ui.id().with(store_id).with("bm_line"),
                 egui::Sense::click(),
             );
             if response.clicked() {
@@ -282,7 +287,7 @@ impl BookmarkPanel {
 
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow<'_, '_>,
-        line_idx: usize,
+        store_id: &StoreID,
         is_selected: bool,
         color: Color32,
         bookmark: &BookmarkData,
@@ -300,7 +305,7 @@ impl BookmarkPanel {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with("bm_ts"),
+                ui.id().with(store_id).with("bm_ts"),
                 egui::Sense::click(),
             );
             if response.clicked() {
@@ -311,11 +316,11 @@ impl BookmarkPanel {
 
     fn render_name_column(
         row: &mut egui_extras::TableRow<'_, '_>,
-        line_idx: usize,
+        store_id: &StoreID,
         is_selected: bool,
         color: Color32,
         bookmark: &BookmarkData,
-        editing_bookmark: Option<usize>,
+        editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
         events: &mut Vec<BookmarkPanelEvent>,
         row_clicked: &mut bool,
@@ -324,19 +329,19 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            if editing_bookmark == Some(line_idx) {
-                Self::render_name_editor(ui, line_idx, bookmark_name_input, events);
+            if editing_bookmark == Some(store_id) {
+                Self::render_name_editor(ui, store_id, bookmark_name_input, events);
             } else {
                 ui.label(RichText::new(&bookmark.name).color(color).strong());
                 let response = ui.interact(
                     ui.max_rect(),
-                    ui.id().with(line_idx).with("bm_name"),
+                    ui.id().with(store_id).with("bm_name"),
                     egui::Sense::click(),
                 );
 
                 if response.double_clicked() {
                     events.push(BookmarkPanelEvent::StartRenaming {
-                        line_index: line_idx,
+                        store_id: store_id.clone(),
                     });
                 } else if response.clicked() {
                     *row_clicked = true;
@@ -347,14 +352,14 @@ impl BookmarkPanel {
 
     fn render_name_editor(
         ui: &mut Ui,
-        line_idx: usize,
+        store_id: &StoreID,
         bookmark_name_input: &mut String,
         events: &mut Vec<BookmarkPanelEvent>,
     ) {
         let text_edit =
             egui::TextEdit::singleline(bookmark_name_input).desired_width(ui.available_width());
 
-        let id = ui.id().with("bm_edit").with(line_idx);
+        let id = ui.id().with("bm_edit").with(store_id);
         let response = ui.add(text_edit.id(id));
 
         // Request focus and select all on first frame
@@ -377,7 +382,7 @@ impl BookmarkPanel {
         // Save on Enter
         if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !bookmark_name_input.is_empty() {
             events.push(BookmarkPanelEvent::BookmarkRenamed {
-                line_index: line_idx,
+                store_id: store_id.clone(),
                 new_name: bookmark_name_input.clone(),
             });
         }
@@ -388,7 +393,7 @@ impl BookmarkPanel {
 
     fn render_message_column(
         row: &mut egui_extras::TableRow<'_, '_>,
-        line_idx: usize,
+        store_id: &StoreID,
         is_selected: bool,
         color: Color32,
         line: &LogLine,
@@ -410,7 +415,7 @@ impl BookmarkPanel {
 
             let response = ui.interact(
                 ui.max_rect(),
-                ui.id().with(line_idx).with("bm_msg"),
+                ui.id().with(store_id).with("bm_msg"),
                 egui::Sense::click(),
             );
             if response.clicked() {
@@ -421,7 +426,7 @@ impl BookmarkPanel {
 
     fn render_delete_column(
         row: &mut egui_extras::TableRow<'_, '_>,
-        line_idx: usize,
+        store_id: &StoreID,
         is_selected: bool,
         events: &mut Vec<BookmarkPanelEvent>,
         dark_mode: bool,
@@ -431,7 +436,7 @@ impl BookmarkPanel {
 
             if ui.small_button("🗑").on_hover_text("Delete").clicked() {
                 events.push(BookmarkPanelEvent::BookmarkDeleted {
-                    line_index: line_idx,
+                    store_id: store_id.clone(),
                 });
             }
         });

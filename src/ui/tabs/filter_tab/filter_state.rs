@@ -16,6 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::core::log_store::StoreID;
 use crate::core::{SavedFilter, SearchRule};
 use crate::ui::tabs::filter_tab::histogram::HistogramCache;
 use crate::ui::tabs::filter_tab::log_table::ColumnWidths;
@@ -30,7 +31,7 @@ pub struct FilterState {
     pub rule: SearchRule,
 
     /// Last rendered selection for scroll tracking
-    pub last_rendered_selection: Option<usize>,
+    pub last_rendered_selection: Option<StoreID>,
 
     /// Histogram cache for expensive bucket computations
     pub histogram_cache: HistogramCache,

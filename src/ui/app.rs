@@ -145,51 +145,78 @@ impl LogCrabApp {
         }
     }
 
+    /// Show file dialog and add selected file(s) to the current workspace
+    fn add_file_dialog(&mut self, ctx: &egui::Context) {
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Log Files", &["log", "txt", "dlt"])
+            .add_filter("All Files", &["*"]);
+
+        if let Some(ref dir) = self.global_config.last_log_directory {
+            dialog = dialog.set_directory(dir);
+        }
+
+        if let Some(paths) = dialog.pick_files() {
+            // Remember the directory from the first file
+            if let Some(first) = paths.first() {
+                if let Some(parent) = first.parent() {
+                    self.global_config.last_log_directory = Some(parent.to_path_buf());
+                    let _ = self.global_config.save();
+                }
+            }
+
+            for path in paths {
+                self.add_file_to_session(path, ctx.clone());
+            }
+        }
+    }
+
+    /// Add a file to the current session
+    fn add_file_to_session(&mut self, path: PathBuf, ctx: egui::Context) {
+        if let Some(ref mut session) = self.session {
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".to_string());
+            let toast_handle = self
+                .toast_manager
+                .create_progress_toast(file_name, "Starting...");
+
+            session.add_file(path, ctx, toast_handle);
+        }
+    }
+
     /// Process multiple dropped files
-    /// - First .crab or log file is loaded as main file
+    /// - If no session exists, first log file is loaded as main file
+    /// - If session exists, additional log files are added to the workspace
     /// - All .crab-filters files are imported
-    /// - Additional log/crab files are ignored with a warning
     fn process_dropped_files(&mut self, files: Vec<PathBuf>, ctx: &egui::Context) {
-        let mut main_file: Option<PathBuf> = None;
+        let mut log_files: Vec<PathBuf> = Vec::new();
         let mut filter_files: Vec<PathBuf> = Vec::new();
-        let mut ignored_files: Vec<PathBuf> = Vec::new();
 
         for path in files {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
             if ext == "crab-filters" {
                 filter_files.push(path);
-            } else if main_file.is_none() {
-                // First log/crab file becomes the main file
-                main_file = Some(path);
             } else {
-                // Additional log/crab files are ignored
-                ignored_files.push(path);
+                log_files.push(path);
             }
         }
 
-        // Warn about ignored files
-        if !ignored_files.is_empty() {
-            let names: Vec<_> = ignored_files
-                .iter()
-                .filter_map(|p| p.file_name())
-                .map(|n| n.to_string_lossy().to_string())
-                .collect();
-            log::warn!(
-                "Ignored {} additional log file(s): {}",
-                ignored_files.len(),
-                names.join(", ")
-            );
-            self.toast_manager.show_warning(format!(
-                "Ignored {} additional file(s) - only one log file can be loaded at a time",
-                ignored_files.len()
-            ));
+        // If no session exists, the first file creates the session
+        // Otherwise, all files are added to the existing workspace
+        if self.session.is_none() {
+            if let Some(path) = log_files.first().cloned() {
+                log::info!("Loading dropped file: {}", path.display());
+                self.load_file(path, ctx.clone());
+                log_files.remove(0);
+            }
         }
 
-        // Load main file if present
-        if let Some(path) = main_file {
-            log::info!("Loading dropped file: {}", path.display());
-            self.load_file(path, ctx.clone());
+        // Add remaining log files to the workspace
+        for path in log_files {
+            log::info!("Adding dropped file to workspace: {}", path.display());
+            self.add_file_to_session(path, ctx.clone());
         }
 
         // Import filter files if we have a log view
@@ -242,6 +269,11 @@ impl LogCrabApp {
         ui.menu_button("File", |ui| {
             if ui.button("Open Log File...").clicked() {
                 self.open_file_dialog(ctx);
+                ui.close();
+            }
+
+            if self.session.is_some() && ui.button("Add File to session...").clicked() {
+                self.add_file_dialog(ctx);
                 ui.close();
             }
 

@@ -90,8 +90,12 @@ const fn default_version() -> u32 {
 }
 
 /// Named bookmark with optional description
+///
+/// Each bookmark is stored within its source's .crab file.
+/// The `line_index` is the line number within that source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
+    /// Line index within the source (not a global StoreID)
     pub line_index: usize,
     pub name: String,
     pub timestamp: DateTime<Local>,

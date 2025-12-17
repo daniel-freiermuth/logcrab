@@ -26,6 +26,7 @@ pub use histogram::{Histogram, HistogramMarker};
 pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
+use crate::core::log_store::StoreID;
 use crate::core::{LogStore, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
@@ -41,10 +42,10 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub enum FilterViewEvent {
     LineSelected {
-        line_index: usize,
+        store_id: StoreID,
     },
     BookmarkToggled {
-        line_index: usize,
+        store_id: StoreID,
     },
     FilterNameEditRequested,
     FavoriteToggled,
@@ -81,13 +82,13 @@ impl FilterView {
         ui: &mut Ui,
         log_view_state: &mut SessionState,
         global_config: &mut GlobalConfig,
-        bookmarked_lines: &HashMap<usize, String>,
+        bookmarked_lines: &HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         histogram_markers: &[HistogramMarker],
     ) -> Vec<FilterViewEvent> {
         profiling::scope!("FilterView::render");
 
-        let selected_line_index = log_view_state.selected_line_index;
+        let selected_line_index = log_view_state.selected_line_index.clone();
         let mut events = Vec::new();
 
         // Render filter bar
@@ -127,10 +128,15 @@ impl FilterView {
         ui.separator();
 
         // Check for completed filter results from background thread
-        let scroll_to_row = if self.state.last_rendered_selection != Some(selected_line_index) {
-            self.state.last_rendered_selection = Some(selected_line_index);
-            // Mark as processed so we don't keep checking on every render
-            Some(self.state.search.find_closest_index(selected_line_index))
+        let scroll_to_row = if self.state.last_rendered_selection != selected_line_index {
+            self.state.last_rendered_selection = selected_line_index.clone();
+            if let Some(selected_line_index) = selected_line_index.clone() {
+                self.state
+                    .search
+                    .find_closest_row_position(selected_line_index, store)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -142,13 +148,13 @@ impl FilterView {
             ui,
             store,
             &indices,
-            selected_line_index,
+            selected_line_index.clone(),
             global_config.hide_epoch_in_histogram,
             histogram_markers,
             &mut self.state.histogram_cache,
         ) {
             events.push(FilterViewEvent::LineSelected {
-                line_index: hist_event.line_index,
+                store_id: hist_event.line_index,
             });
         }
 
@@ -159,7 +165,7 @@ impl FilterView {
             ui,
             store,
             &mut self.state,
-            selected_line_index,
+            selected_line_index.clone(),
             bookmarked_lines,
             scroll_to_row,
             all_filter_highlights,
@@ -169,10 +175,14 @@ impl FilterView {
         for event in table_events {
             match event {
                 LogTableEvent::LineClicked { line_index } => {
-                    events.push(FilterViewEvent::LineSelected { line_index });
+                    events.push(FilterViewEvent::LineSelected {
+                        store_id: line_index,
+                    });
                 }
                 LogTableEvent::BookmarkToggled { line_index } => {
-                    events.push(FilterViewEvent::BookmarkToggled { line_index });
+                    events.push(FilterViewEvent::BookmarkToggled {
+                        store_id: line_index,
+                    });
                 }
             }
         }
@@ -189,11 +199,11 @@ impl FilterView {
         all_filter_highlights: &[FilterHighlight],
         histogram_markers: &[HistogramMarker],
     ) {
-        // Convert bookmarks HashMap to simple HashMap<usize, String> for the component
-        let bookmarked_lines: HashMap<usize, String> = data_state
-            .bookmarks
-            .iter()
-            .map(|(&idx, bookmark)| (idx, bookmark.name.clone()))
+        // Convert bookmarks to HashMap<StoreID, String> for the component
+        let bookmarked_lines: HashMap<StoreID, String> = data_state
+            .get_all_bookmarks()
+            .into_iter()
+            .map(|(id, bookmark)| (id, bookmark.name.clone()))
             .collect();
 
         // Render using FilterView
@@ -209,11 +219,11 @@ impl FilterView {
         // Handle events
         for event in events {
             match event {
-                FilterViewEvent::LineSelected { line_index } => {
-                    data_state.selected_line_index = line_index;
+                FilterViewEvent::LineSelected { store_id } => {
+                    data_state.selected_line_index = Some(store_id);
                 }
-                FilterViewEvent::BookmarkToggled { line_index } => {
-                    data_state.toggle_bookmark(line_index);
+                FilterViewEvent::BookmarkToggled { store_id } => {
+                    data_state.toggle_bookmark(store_id);
                     data_state.modified = true;
                 }
                 FilterViewEvent::FilterNameEditRequested => {
@@ -282,48 +292,45 @@ impl FilterView {
 
     /// Move selection within a filtered view (only through matched indices)
     pub fn move_selection_in_filter(&mut self, delta: i32, data_state: &mut SessionState) {
-        {
-            let indices = self.state.search.get_filtered_indices(&data_state.store);
-            if indices.is_empty() {
-                return;
-            }
-        }
-
         // Determine current position within filtered list
-        let current_pos = self
-            .state
-            .search
-            .find_closest_index(data_state.selected_line_index);
+        data_state.selected_line_index = data_state
+            .selected_line_index
+            .clone()
+            .and_then(|selected| {
+                self.state
+                    .search
+                    .find_closest_row_position(selected, &data_state.store)
+            })
+            .map(|current_pos| {
+                let indices = self.state.search.get_filtered_indices(&data_state.store);
 
-        let indices = self.state.search.get_filtered_indices(&data_state.store);
-
-        let new_pos = if delta < 0 {
-            current_pos.saturating_sub(delta.unsigned_abs() as usize)
-        } else {
-            (current_pos + delta as usize).min(indices.len().saturating_sub(1))
-        };
-
-        let new_line_index = indices[new_pos];
-        data_state.selected_line_index = new_line_index;
+                let new_pos = if delta < 0 {
+                    current_pos.saturating_sub(delta.unsigned_abs() as usize)
+                } else {
+                    (current_pos + delta as usize).min(indices.len().saturating_sub(1))
+                };
+                indices[new_pos].clone()
+            });
     }
 
     /// Jump to the first line in a filtered view (Vim-style gg)
     pub fn jump_to_top_in_filter(&mut self, data_state: &mut SessionState) {
         let indices = self.state.search.get_filtered_indices(&data_state.store);
-        if let Some(&first_line_index) = indices.first() {
-            data_state.selected_line_index = first_line_index;
+        if let Some(first_line_index) = indices.first().cloned() {
+            data_state.selected_line_index = Some(first_line_index);
         }
     }
 
     /// Jump to the last line in a filtered view (Vim-style G)
     pub fn jump_to_bottom_in_filter(&mut self, data_state: &mut SessionState) {
-        if let Some(&last_line_index) = self
+        if let Some(last_line_index) = self
             .state
             .search
             .get_filtered_indices(&data_state.store)
             .last()
+            .cloned()
         {
-            data_state.selected_line_index = last_line_index;
+            data_state.selected_line_index = Some(last_line_index);
         }
     }
 
