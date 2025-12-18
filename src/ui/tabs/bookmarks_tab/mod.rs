@@ -69,11 +69,15 @@ impl BookmarksView {
     }
 
     fn sort_bookmarks_by_timestamp(bookmarks: &mut [BookmarkData], data_state: &SessionState) {
-        bookmarks.sort_by_key(|b| {
-            data_state
-                .store
-                .get_by_id(&b.store_id)
-                .map_or(chrono::Local::now(), |l| l.timestamp)
+        bookmarks.sort_by(|b1, b2| {
+            let id1 = &b1.store_id;
+            let id2 = &b2.store_id;
+            if data_state.store.get_by_id(id1).is_none()
+                || data_state.store.get_by_id(id2).is_none()
+            {
+                return std::cmp::Ordering::Equal;
+            }
+            id1.cmp(id2, &data_state.store)
         });
     }
 
