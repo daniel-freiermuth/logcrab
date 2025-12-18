@@ -36,7 +36,7 @@ impl LogFileLoader {
     /// Start loading a file in the background.
     ///
     /// The toast handle will be updated with progress and dismissed when complete.
-    /// Returns the SourceData that will be populated with log lines.
+    /// Returns the `SourceData` that will be populated with log lines.
     pub fn load_async(
         path: PathBuf,
         ctx: egui::Context,
@@ -53,10 +53,10 @@ impl LogFileLoader {
     }
 
     fn read_dlt_file(
-        path: PathBuf,
-        data_source: Arc<SourceData>,
+        path: &Path,
+        data_source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: egui::Context,
+        ctx: &egui::Context,
     ) -> bool {
         log::info!("Detected DLT binary file, using dlt-core parser");
         toast.update(
@@ -70,7 +70,7 @@ impl LogFileLoader {
             toast_clone.update(progress, message);
         });
 
-        match dlt::parse_dlt_file_with_progress(&path, &data_source, progress_callback) {
+        match dlt::parse_dlt_file_with_progress(path, data_source, &progress_callback) {
             Ok(total_lines) => {
                 log::info!("Successfully parsed {total_lines} DLT messages");
                 ctx.request_repaint();
@@ -84,6 +84,7 @@ impl LogFileLoader {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)] // Values are moved into thread::spawn closure
     fn process_file_background(
         path: PathBuf,
         data_source: Arc<SourceData>,
@@ -114,45 +115,44 @@ impl LogFileLoader {
 
         // Load file based on detected format
         let source_added = if is_dlt_file {
-            Self::read_dlt_file(path.clone(), data_source.clone(), &toast, ctx.clone())
+            Self::read_dlt_file(&path, &data_source, &toast, &ctx)
         } else {
             // Read file content first to detect format
-            let content = match Self::read_file_content(&path, &toast) {
-                Some(c) => c,
-                None => return,
+            let Some(content) = Self::read_file_content(&path, &toast) else {
+                return;
             };
 
             // Detect format and dispatch to appropriate parser
             let format = detect_format(&content);
-            log::info!("Detected format: {:?}", format);
+            log::info!("Detected format: {format:?}");
 
             match format {
                 LogFormat::Bugreport { year } => Self::read_bugreport_file(
                     &path,
-                    content,
+                    &content,
                     year,
-                    data_source.clone(),
+                    &data_source,
                     &toast,
-                    ctx.clone(),
+                    &ctx,
                     start_time,
                     file_size,
                 ),
                 LogFormat::Logcat { year } => Self::read_logcat_file(
                     &path,
-                    content,
+                    &content,
                     year,
-                    data_source.clone(),
+                    &data_source,
                     &toast,
-                    ctx.clone(),
+                    &ctx,
                     start_time,
                     file_size,
                 ),
                 LogFormat::Generic => Self::read_generic_file(
                     &path,
-                    content,
-                    data_source.clone(),
+                    &content,
+                    &data_source,
                     &toast,
-                    ctx.clone(),
+                    &ctx,
                     start_time,
                     file_size,
                 ),
@@ -160,7 +160,7 @@ impl LogFileLoader {
         };
 
         if source_added && !data_source.is_empty() {
-            Self::score_lines(data_source, &path, &toast, start_time);
+            Self::score_lines(&data_source, &path, &toast, start_time);
         } else if data_source.is_empty() {
             toast.set_error("No log lines found in file");
         }
@@ -219,11 +219,11 @@ impl LogFileLoader {
 
     fn read_bugreport_file(
         path: &Path,
-        content: String,
+        content: &str,
         year: i32,
-        source: Arc<SourceData>,
+        source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: egui::Context,
+        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
@@ -242,11 +242,11 @@ impl LogFileLoader {
 
     fn read_logcat_file(
         path: &Path,
-        content: String,
+        content: &str,
         year: i32,
-        source: Arc<SourceData>,
+        source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: egui::Context,
+        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
@@ -265,10 +265,10 @@ impl LogFileLoader {
 
     fn read_generic_file(
         path: &Path,
-        content: String,
-        source: Arc<SourceData>,
+        content: &str,
+        source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: egui::Context,
+        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
@@ -288,10 +288,10 @@ impl LogFileLoader {
     /// Common text file parsing logic used by both logcat and generic parsers
     fn parse_text_file<F>(
         path: &Path,
-        content: String,
-        source: Arc<SourceData>,
+        content: &str,
+        source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: egui::Context,
+        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
         parse_fn: F,
@@ -382,7 +382,7 @@ impl LogFileLoader {
 
     /// Score lines and update toast with progress
     fn score_lines(
-        data_source: Arc<SourceData>,
+        data_source: &Arc<SourceData>,
         path: &Path,
         toast: &ProgressToastHandle,
         start_time: std::time::Instant,
@@ -414,7 +414,7 @@ impl LogFileLoader {
 
             if idx > N_SKIP_INITIAL - 1 {
                 raw_scores.push(scorer.score(&log_line));
-            };
+            }
             scorer.update(&log_line);
         }
 

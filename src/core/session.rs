@@ -107,17 +107,17 @@ pub struct SavedSearch {
         deserialize_with = "deserialize_color"
     )]
     pub color: Color32,
-    /// Whether this search is active/visible (called "globally_visible" for filters, "enabled" for highlights)
+    /// Whether this search is active/visible (called "`globally_visible`" for filters, "enabled" for highlights)
     #[serde(default = "default_enabled", alias = "globally_visible")]
     pub enabled: bool,
     #[serde(default)]
     pub show_in_histogram: bool,
 }
 
-/// Type alias for backwards compatibility - filters use SavedSearch
+/// Type alias for backwards compatibility - filters use `SavedSearch`
 pub type SavedFilter = SavedSearch;
 
-/// Type alias for backwards compatibility - highlights use SavedSearch
+/// Type alias for backwards compatibility - highlights use `SavedSearch`
 pub type SavedHighlight = SavedSearch;
 
 // ============================================================================

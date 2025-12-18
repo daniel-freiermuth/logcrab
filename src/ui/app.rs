@@ -97,15 +97,14 @@ impl LogCrabApp {
                     log::info!("Loading log file from .crab session: {}", path.display());
                 } else {
                     let err_msg = format!("File not found: {}", path.display());
-                    log::error!("{}", err_msg);
+                    log::error!("{err_msg}");
                     self.toast_manager.show_error(err_msg);
                     return;
                 }
             }
             let file_name = path
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "file".to_string());
+                .map_or_else(|| "file".to_string(), |n| n.to_string_lossy().to_string());
             let toast_handle = self
                 .toast_manager
                 .create_progress_toast(file_name, "Starting...");
@@ -206,9 +205,10 @@ impl LogCrabApp {
                             log::error!("Failed to import filters from {}: {e}", path.display());
                             self.toast_manager.show_error(format!(
                                 "Failed to import {}: {e}",
-                                path.file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| "filters".to_string())
+                                path.file_name().map_or_else(
+                                    || "filters".to_string(),
+                                    |n| n.to_string_lossy().to_string()
+                                )
                             ));
                         }
                     }
@@ -334,7 +334,7 @@ impl LogCrabApp {
             {
                 // Save config when changed
                 if let Err(e) = self.global_config.save() {
-                    log::error!("Failed to save config: {}", e);
+                    log::error!("Failed to save config: {e}");
                 }
             }
 
@@ -352,7 +352,7 @@ impl LogCrabApp {
                 }
                 // Save config when changed
                 if let Err(e) = self.global_config.save() {
-                    log::error!("Failed to save config: {}", e);
+                    log::error!("Failed to save config: {e}");
                 }
             }
         });
@@ -370,7 +370,7 @@ impl LogCrabApp {
     }
 
     /// Render bottom status panel
-    fn render_status_panel(&mut self, ui: &mut egui::Ui) {
+    fn render_status_panel(ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             // Show filtering indicator if any filter is currently processing
             if GlobalFilterWorker::get()
@@ -537,7 +537,7 @@ impl eframe::App for LogCrabApp {
         {
             profiling::scope!("bottom_panel");
             egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-                self.render_status_panel(ui);
+                Self::render_status_panel(ui);
             });
         }
 

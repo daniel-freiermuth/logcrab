@@ -175,9 +175,7 @@ impl BookmarkPanel {
             .as_ref()
             .is_some_and(|s| s == store_id);
 
-        let line = if let Some(line) = log_view_state.store.get_by_id(store_id) {
-            line
-        } else {
+        let Some(line) = log_view_state.store.get_by_id(store_id) else {
             row.col(|ui| {
                 ui.label("Loading...");
             });
@@ -245,7 +243,7 @@ impl BookmarkPanel {
 
         if row_clicked {
             events.push(BookmarkPanelEvent::BookmarkClicked {
-                store_id: store_id.clone(),
+                store_id: *store_id,
             });
         }
     }
@@ -336,7 +334,7 @@ impl BookmarkPanel {
 
                 if response.double_clicked() {
                     events.push(BookmarkPanelEvent::StartRenaming {
-                        store_id: store_id.clone(),
+                        store_id: *store_id,
                     });
                 } else if response.clicked() {
                     *row_clicked = true;
@@ -377,7 +375,7 @@ impl BookmarkPanel {
         // Save on Enter
         if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !bookmark_name_input.is_empty() {
             events.push(BookmarkPanelEvent::BookmarkRenamed {
-                store_id: store_id.clone(),
+                store_id: *store_id,
                 new_name: bookmark_name_input.clone(),
             });
         }
@@ -431,7 +429,7 @@ impl BookmarkPanel {
 
             if ui.small_button("🗑").on_hover_text("Delete").clicked() {
                 events.push(BookmarkPanelEvent::BookmarkDeleted {
-                    store_id: store_id.clone(),
+                    store_id: *store_id,
                 });
             }
         });

@@ -50,6 +50,17 @@ fallible_impl_from = "deny"
 unneeded_field_pattern = "deny"
 fn_params_excessive_bools = "deny"
 must_use_candidate = "deny"
+unused_self = "deny"
+redundant_closure_for_method_calls = "deny"
+doc_markdown = "warn"
+map_unwrap_or = "warn"
+too_many_lines = "warn"
+assigning_clones = "deny"
+if_not_else = "deny"
+needless_pass_by_value = "deny"
+uninlined_format_args = "deny"
+unnecessary_semicolon = "deny"
+manual_let_else = "deny"
 
 # Deny critical issues
 # unwrap_used = "deny"             # Force proper error handling

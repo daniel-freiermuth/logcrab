@@ -19,7 +19,7 @@
 //! Global background worker for filter computations.
 //!
 //! This module provides a shared worker thread that processes filter requests
-//! from both FilterState and HighlightState, avoiding duplicate threading logic.
+//! from both `FilterState` and `HighlightState`, avoiding duplicate threading logic.
 
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
@@ -70,7 +70,7 @@ impl GlobalFilterWorker {
     }
 
     /// Send a filter request to the background worker
-    /// Can be used by both FilterState and HighlightState
+    /// Can be used by both `FilterState` and `HighlightState`
     pub fn send_request(request: FilterRequest) {
         let _ = Self::get().request_tx.send(request);
     }

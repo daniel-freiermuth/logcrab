@@ -27,7 +27,7 @@ use egui::Color32;
 /// Wraps a `SearchRule` (shared with highlights) and adds filter-tab-specific
 /// UI state like scroll tracking, histogram cache, and column widths.
 pub struct FilterState {
-    /// Core search rule (name, color, search, enabled, show_in_histogram)
+    /// Core search rule (name, color, search, enabled, `show_in_histogram`)
     pub rule: SearchRule,
 
     /// Last rendered selection for scroll tracking

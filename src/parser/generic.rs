@@ -35,7 +35,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
         // Format: 2025-11-26-09:58:05 -> convert to "2025-11-26 09:58:05"
         let date_part = &caps[1][..10]; // "2025-11-26"
         let time_part = &caps[1][11..]; // "09:58:05" or "09:58:05.123"
-        let normalized = format!("{} {}", date_part, time_part);
+        let normalized = format!("{date_part} {time_part}");
 
         if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S%.f")

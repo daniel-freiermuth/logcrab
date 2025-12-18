@@ -112,7 +112,7 @@ impl CrabSession {
 
         let source = LogFileLoader::load_async(path, ctx, toast);
         let (filters, highlights) = source.load_saved_filters_and_highlights();
-        self.state.store.add_source(source);
+        self.state.store.add_source(&source);
         for saved_filter in &filters {
             self.add_filter_if_not_exists(saved_filter);
         }
@@ -157,7 +157,7 @@ impl CrabSession {
             .filter_map(|((_surface, _node), tab)| tab.try_into_stored_filter())
             .collect::<Vec<SavedFilter>>();
         let highlights: Vec<SavedHighlight> =
-            self.state.highlights.iter().map(|h| h.into()).collect();
+            self.state.highlights.iter().map(Into::into).collect();
 
         // Save to all sources' .crab files
         // Each source saves its own bookmarks + shared filters/highlights
@@ -226,8 +226,7 @@ impl CrabSession {
         // Collect all filter highlights from all tabs
         let mut all_filter_highlights: Vec<FilterHighlight> = {
             profiling::scope!("collect_filter_highlights");
-            self
-                .dock_state
+            self.dock_state
                 .iter_all_tabs()
                 .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
                 .collect()
@@ -248,8 +247,7 @@ impl CrabSession {
         // Collect histogram markers from all tabs
         let mut histogram_markers: Vec<_> = {
             profiling::scope!("collect_histogram_markers");
-            self
-                .dock_state
+            self.dock_state
                 .iter_all_tabs_mut()
                 .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker())
                 .collect()
@@ -325,7 +323,10 @@ impl CrabSession {
             if let Some(highlight) = self.state.highlights.get(highlight_index) {
                 // Create a new filter with the highlight's settings
                 let mut filter_state = FilterState::new(highlight.name.clone(), highlight.color);
-                filter_state.search.search_text = highlight.search.search_text.clone();
+                filter_state
+                    .search
+                    .search_text
+                    .clone_from(&highlight.search.search_text);
                 filter_state.search.case_sensitive = highlight.search.case_sensitive;
                 filter_state.enabled = highlight.enabled;
                 filter_state.show_in_histogram = highlight.show_in_histogram;

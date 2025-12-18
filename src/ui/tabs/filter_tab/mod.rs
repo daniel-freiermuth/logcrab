@@ -87,7 +87,7 @@ impl FilterView {
     ) -> Vec<FilterViewEvent> {
         profiling::scope!("FilterView::render");
 
-        let selected_line_index = log_view_state.selected_line_index.clone();
+        let selected_line_index = log_view_state.selected_line_index;
         let mut events = Vec::new();
         self.state.search.check_filter_results();
         self.state.search.ensure_cache_valid(&log_view_state.store);
@@ -134,17 +134,17 @@ impl FilterView {
         // Check for completed filter results from background thread
         let scroll_to_row = {
             profiling::scope!("find_scroll_position");
-            if self.state.last_rendered_selection != selected_line_index {
-                self.state.last_rendered_selection = selected_line_index.clone();
-                if let Some(selected_line_index) = selected_line_index.clone() {
+            if self.state.last_rendered_selection == selected_line_index {
+                None
+            } else {
+                self.state.last_rendered_selection = selected_line_index;
+                if let Some(selected_line_index) = selected_line_index {
                     self.state
                         .search
                         .find_closest_row_position_in_cache(selected_line_index, store)
                 } else {
                     None
                 }
-            } else {
-                None
             }
         };
 
@@ -160,7 +160,7 @@ impl FilterView {
                 ui,
                 store,
                 &indices,
-                selected_line_index.clone(),
+                selected_line_index,
                 global_config.hide_epoch_in_histogram,
                 histogram_markers,
                 &mut self.state.histogram_cache,
@@ -181,7 +181,7 @@ impl FilterView {
                 ui,
                 store,
                 &mut self.state,
-                selected_line_index.clone(),
+                selected_line_index,
                 bookmarked_lines,
                 scroll_to_row,
                 all_filter_highlights,
@@ -312,7 +312,6 @@ impl FilterView {
         // Determine current position within filtered list
         data_state.selected_line_index = data_state
             .selected_line_index
-            .clone()
             .and_then(|selected| {
                 self.state
                     .search
@@ -326,7 +325,7 @@ impl FilterView {
                 } else {
                     (current_pos + delta as usize).min(indices.len().saturating_sub(1))
                 };
-                indices[new_pos].clone()
+                indices[new_pos]
             });
     }
 

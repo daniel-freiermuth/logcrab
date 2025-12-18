@@ -177,7 +177,7 @@ impl LogTable {
 
         let available_width = ui.available_width();
         egui::ScrollArea::horizontal()
-            .id_salt(format!("filtered_scroll_{}", filter_id))
+            .id_salt(format!("filtered_scroll_{filter_id}"))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 profiling::scope!("filtered_table");
@@ -312,7 +312,7 @@ impl LogTable {
                 &mut row,
                 store,
                 filtered_indices,
-                selected_line_index.clone(),
+                selected_line_index,
                 bookmarked_lines,
                 all_filter_highlights,
                 dark_mode,
@@ -335,7 +335,7 @@ impl LogTable {
         dark_mode: bool,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
-        let line_idx = filtered_indices[row_index].clone();
+        let line_idx = filtered_indices[row_index];
         let line = store.get_by_id(&line_idx).unwrap();
 
         let is_selected = selected_line_index.as_ref() == Some(&line_idx);
@@ -348,7 +348,7 @@ impl LogTable {
         Self::render_all_columns(
             row,
             &line,
-            line_idx.clone(),
+            line_idx,
             is_selected,
             is_bookmarked,
             color,
@@ -389,7 +389,7 @@ impl LogTable {
         Self::render_line_column(
             row,
             line,
-            line_idx.clone(),
+            line_idx,
             is_selected,
             is_bookmarked,
             color,
@@ -404,7 +404,7 @@ impl LogTable {
         Self::render_timestamp_column(
             row,
             line,
-            line_idx.clone(),
+            line_idx,
             is_selected,
             is_bookmarked,
             color,
@@ -417,7 +417,7 @@ impl LogTable {
         Self::render_message_column(
             row,
             line,
-            line_idx.clone(),
+            line_idx,
             is_selected,
             is_bookmarked,
             color,

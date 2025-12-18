@@ -90,13 +90,13 @@ impl FilterBar {
 
         ui.horizontal(|ui| {
             Self::render_edit_button(ui, &mut events);
-            self.render_globally_visible_toggle(ui, filter, log_view_state);
-            self.render_histogram_toggle(ui, filter, log_view_state);
+            Self::render_globally_visible_toggle(ui, filter, log_view_state);
+            Self::render_histogram_toggle(ui, filter, log_view_state);
             Self::render_color_picker(ui, filter);
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, global_config, &mut events);
             self.render_search_input(ui, filter, should_focus_search, log_view_state);
-            self.render_case_checkbox(ui, filter, log_view_state);
+            Self::render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
         });
@@ -347,7 +347,6 @@ impl FilterBar {
     }
 
     fn render_case_checkbox(
-        &self,
         ui: &mut Ui,
         filter: &mut FilterState,
         session_state: &mut SessionState,
@@ -361,7 +360,6 @@ impl FilterBar {
     }
 
     fn render_globally_visible_toggle(
-        &self,
         ui: &mut Ui,
         filter: &mut FilterState,
         session_state: &mut SessionState,
@@ -376,7 +374,6 @@ impl FilterBar {
     }
 
     fn render_histogram_toggle(
-        &self,
         ui: &mut Ui,
         filter: &mut FilterState,
         session_state: &mut SessionState,

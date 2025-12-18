@@ -73,8 +73,7 @@ impl BookmarksView {
             data_state
                 .store
                 .get_by_id(&b.store_id)
-                .map(|l| l.timestamp)
-                .unwrap_or(chrono::Local::now())
+                .map_or(chrono::Local::now(), |l| l.timestamp)
         });
     }
 
@@ -158,7 +157,7 @@ impl BookmarksView {
             (current_pos + delta as usize).min(bookmark_ids.len() - 1)
         };
 
-        data_state.selected_line_index = Some(bookmark_ids[new_pos].clone());
+        data_state.selected_line_index = Some(bookmark_ids[new_pos]);
     }
 
     /// Jump to the first bookmark (Vim-style gg)
@@ -224,7 +223,7 @@ impl LogCrabTab for BookmarksView {
         // Handle Enter key for starting bookmark rename (when not already editing)
         // enter_pressed_this_frame is set during render when we have UI context
         if self.enter_pressed_this_frame && self.edited_store_id.is_none() {
-            if let Some(selected) = data_state.selected_line_index.clone() {
+            if let Some(selected) = data_state.selected_line_index {
                 self.start_renaming_bookmark(selected, data_state);
             }
         }

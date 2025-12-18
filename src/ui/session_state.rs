@@ -109,7 +109,7 @@ impl SessionState {
     // Bookmark Management (delegates to LogStore)
     // ========================================================================
 
-    /// Get a bookmark by StoreID
+    /// Get a bookmark by `StoreID`
     pub fn get_bookmark(&self, id: &StoreID) -> Option<BookmarkData> {
         self.store.get_bookmark(id)
     }
@@ -122,7 +122,7 @@ impl SessionState {
     /// Toggle bookmark at the given line index
     pub fn toggle_bookmark(&mut self, line_index: StoreID) {
         if self.store.has_bookmark(&line_index) {
-            log::debug!("Removing bookmark at line {:?}", line_index);
+            log::debug!("Removing bookmark at line {line_index:?}");
             self.store.remove_bookmark(&line_index);
         } else if let Some(line) = self.store.get_by_id(&line_index) {
             let bookmark_name = format!("Line {}", line.line_number);
@@ -134,7 +134,7 @@ impl SessionState {
 
     /// Toggle bookmark for the currently selected line
     pub fn toggle_bookmark_for_selected(&mut self) {
-        if let Some(line_index) = self.selected_line_index.clone() {
+        if let Some(line_index) = self.selected_line_index {
             self.toggle_bookmark(line_index);
         }
     }

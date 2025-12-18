@@ -60,8 +60,7 @@ impl ProgressToastState {
     /// Check if this toast should be removed (dismissed and linger time elapsed)
     pub fn should_remove(&self) -> bool {
         self.dismissed_at
-            .map(|t| t.elapsed().as_secs_f32() > DISMISSED_TOAST_LINGER_SECS)
-            .unwrap_or(false)
+            .is_some_and(|t| t.elapsed().as_secs_f32() > DISMISSED_TOAST_LINGER_SECS)
     }
 }
 
@@ -145,7 +144,7 @@ pub struct ToastManager {
 }
 
 impl ToastManager {
-    /// Create a new ToastManager with the egui context already set
+    /// Create a new `ToastManager` with the egui context already set
     pub fn new(ctx: egui::Context) -> Self {
         let toasts = Toasts::new()
             .anchor(Align2::RIGHT_BOTTOM, (-10.0, -40.0))
@@ -241,7 +240,7 @@ impl ToastManager {
 
         // Calculate position for progress toasts (above the simple toasts area)
         #[allow(deprecated)]
-        let screen_rect = ctx.input(|i| i.screen_rect());
+        let screen_rect = ctx.input(egui::InputState::screen_rect);
         let toast_width = 300.0;
         let toast_margin = 10.0;
         let bottom_offset = 40.0; // Space for status bar
@@ -263,12 +262,12 @@ impl ToastManager {
                 .fixed_pos(pos)
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
-                    self.render_single_progress_toast(ui, state);
+                    Self::render_single_progress_toast(ui, state);
                 });
         }
     }
 
-    fn render_single_progress_toast(&self, ui: &mut egui::Ui, state: &ProgressToastState) {
+    fn render_single_progress_toast(ui: &mut egui::Ui, state: &ProgressToastState) {
         let is_error = state.error.is_some();
 
         let fill = if is_error {
