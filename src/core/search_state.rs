@@ -80,16 +80,8 @@ impl SearchState {
         self.id
     }
 
-    pub fn get_filtered_indices(&mut self, store: &Arc<LogStore>) -> &Vec<StoreID> {
+    pub fn get_filtered_indices_cached(&self) -> &Vec<StoreID> {
         profiling::scope!("SearchState::get_filtered_indices");
-        {
-            profiling::scope!("ensure_cache_valid");
-            self.ensure_cache_valid(store);
-        }
-        {
-            profiling::scope!("check_filter_results");
-            self.check_filter_results();
-        }
         &self.filtered_indices
     }
 
@@ -126,7 +118,7 @@ impl SearchState {
 
     /// Check for completed filter results from background thread.
     /// Returns true if new results were received.
-    fn check_filter_results(&mut self) -> bool {
+    pub fn check_filter_results(&mut self) -> bool {
         if let Ok(result) = self.filter_result_rx.try_recv() {
             self.filtered_indices = result.filtered_indices;
             log::trace!(
@@ -140,7 +132,7 @@ impl SearchState {
     }
 
     /// Check if cache is valid for the given store version, request update if not.
-    fn ensure_cache_valid(&mut self, store: &Arc<LogStore>) {
+    pub fn ensure_cache_valid(&mut self, store: &Arc<LogStore>) {
         if self.cached_for_version != store.version()
             || self.cached_for_text != self.search_text
             || self.cached_for_case != self.case_sensitive
@@ -154,15 +146,15 @@ impl SearchState {
 
     /// Find the row position of the closest line in filtered results to the target.
     /// Returns the index within the filtered list (for scrolling to that row).
-    pub fn find_closest_row_position(
-        &mut self,
+    pub fn find_closest_row_position_in_cache(
+        &self,
         target: StoreID,
         store: &Arc<LogStore>,
     ) -> Option<usize> {
         profiling::scope!("find_closest_row_position");
         let indices = {
             profiling::scope!("get_filtered_indices");
-            self.get_filtered_indices(store)
+            self.get_filtered_indices_cached()
         };
         profiling::scope!("find_min_distance");
         indices

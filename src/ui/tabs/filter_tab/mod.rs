@@ -27,7 +27,7 @@ pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
 use crate::core::log_store::StoreID;
-use crate::core::{LogStore, SavedFilter};
+use crate::core::SavedFilter;
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::{FilterToHighlightData, SessionState};
@@ -36,7 +36,6 @@ use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
 use egui::Ui;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Events that can be emitted by the filter view
 #[derive(Debug, Clone)]
@@ -90,6 +89,8 @@ impl FilterView {
 
         let selected_line_index = log_view_state.selected_line_index.clone();
         let mut events = Vec::new();
+        self.state.search.check_filter_results();
+        self.state.search.ensure_cache_valid(&log_view_state.store);
 
         // Render filter bar
         let filter_bar_events = {
@@ -138,7 +139,7 @@ impl FilterView {
                 if let Some(selected_line_index) = selected_line_index.clone() {
                     self.state
                         .search
-                        .find_closest_row_position(selected_line_index, store)
+                        .find_closest_row_position_in_cache(selected_line_index, store)
                 } else {
                     None
                 }
@@ -149,7 +150,7 @@ impl FilterView {
 
         let indices = {
             profiling::scope!("get_filtered_indices");
-            self.state.search.get_filtered_indices(store).clone()
+            self.state.search.get_filtered_indices_cached().clone()
         };
 
         // Render histogram
@@ -315,10 +316,10 @@ impl FilterView {
             .and_then(|selected| {
                 self.state
                     .search
-                    .find_closest_row_position(selected, &data_state.store)
+                    .find_closest_row_position_in_cache(selected, &data_state.store)
             })
             .map(|current_pos| {
-                let indices = self.state.search.get_filtered_indices(&data_state.store);
+                let indices = self.state.search.get_filtered_indices_cached();
 
                 let new_pos = if delta < 0 {
                     current_pos.saturating_sub(delta.unsigned_abs() as usize)
@@ -331,7 +332,7 @@ impl FilterView {
 
     /// Jump to the first line in a filtered view (Vim-style gg)
     pub fn jump_to_top_in_filter(&mut self, data_state: &mut SessionState) {
-        let indices = self.state.search.get_filtered_indices(&data_state.store);
+        let indices = self.state.search.get_filtered_indices_cached();
         if let Some(first_line_index) = indices.first().cloned() {
             data_state.selected_line_index = Some(first_line_index);
         }
@@ -342,7 +343,7 @@ impl FilterView {
         if let Some(last_line_index) = self
             .state
             .search
-            .get_filtered_indices(&data_state.store)
+            .get_filtered_indices_cached()
             .last()
             .cloned()
         {
@@ -499,11 +500,11 @@ impl LogCrabTab for FilterView {
             })
     }
 
-    fn get_histogram_marker(&mut self, store: &Arc<LogStore>) -> Option<HistogramMarker> {
+    fn get_histogram_marker(&mut self) -> Option<HistogramMarker> {
         if !self.state.show_in_histogram {
             return None;
         }
-        let indices = self.state.search.get_filtered_indices(store).clone();
+        let indices = self.state.search.get_filtered_indices_cached().clone();
         if indices.is_empty() {
             return None;
         }

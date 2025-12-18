@@ -21,8 +21,6 @@ pub mod filter_tab;
 pub mod highlights_tab;
 pub mod navigation;
 
-use std::sync::Arc;
-
 pub use bookmarks_tab::BookmarksView;
 pub use filter_tab::FilterView;
 pub use highlights_tab::HighlightsView;
@@ -30,7 +28,7 @@ pub use highlights_tab::HighlightsView;
 use egui_dock::TabViewer;
 
 use crate::config::GlobalConfig;
-use crate::core::{LogStore, SavedFilter};
+use crate::core::SavedFilter;
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -50,7 +48,7 @@ pub trait LogCrabTab {
         -> bool;
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
     fn get_filter_highlight(&self) -> Option<FilterHighlight>;
-    fn get_histogram_marker(&mut self, store: &Arc<LogStore>) -> Option<HistogramMarker>;
+    fn get_histogram_marker(&mut self) -> Option<HistogramMarker>;
     fn context_menu(&mut self, _ui: &mut egui::Ui) {
         // Default implementation does nothing
     }

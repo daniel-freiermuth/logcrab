@@ -251,7 +251,7 @@ impl CrabSession {
             self
                 .dock_state
                 .iter_all_tabs_mut()
-                .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker(&self.state.store))
+                .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker())
                 .collect()
         };
 
@@ -264,13 +264,12 @@ impl CrabSession {
                 } else {
                     highlight.name.clone()
                 };
+                highlight.search.check_filter_results();
+                highlight.search.ensure_cache_valid(&self.state.store);
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name,
                     color: highlight.color,
-                    indices: highlight
-                        .search
-                        .get_filtered_indices(&self.state.store)
-                        .clone(),
+                    indices: highlight.search.get_filtered_indices_cached().clone(),
                 });
             }
         }

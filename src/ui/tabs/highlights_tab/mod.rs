@@ -16,12 +16,10 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
-
 use egui::{Color32, RichText, Ui};
 
 use crate::config::GlobalConfig;
-use crate::core::{LogStore, SavedFilter, SearchRule};
+use crate::core::{SavedFilter, SearchRule};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -303,7 +301,7 @@ impl LogCrabTab for HighlightsView {
         None // Highlights are stored separately in LogViewState
     }
 
-    fn get_histogram_marker(&mut self, _store: &Arc<LogStore>) -> Option<HistogramMarker> {
+    fn get_histogram_marker(&mut self) -> Option<HistogramMarker> {
         None // Highlights provide their markers via LogViewState
     }
 }
