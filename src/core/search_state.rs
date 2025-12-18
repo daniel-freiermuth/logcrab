@@ -45,7 +45,7 @@ pub struct SearchState {
     /// Cached indices of matching lines
     filtered_indices: Vec<StoreID>,
 
-    /// LogStore version this cache was computed for
+    /// `LogStore` version this cache was computed for
     cached_for_version: u64,
     cached_for_text: String,
     cached_for_case: bool,
@@ -157,12 +157,6 @@ impl SearchState {
             self.get_filtered_indices_cached()
         };
         profiling::scope!("find_min_distance");
-        indices
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, line_id)| {
-                target.distance_to(line_id, store)
-            })
-            .map(|(pos, _)| pos)
+        Some(indices.partition_point(|other| other.cmp(&target, store) == std::cmp::Ordering::Less))
     }
 }

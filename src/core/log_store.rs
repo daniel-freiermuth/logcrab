@@ -20,31 +20,36 @@ use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
 use crate::parser::line::LogLine;
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
-use chrono::{Local, TimeDelta};
+use chrono::Local;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, RwLock};
 
-/// A single log source with its lines, wrapped in RwLock for thread-safe access
+/// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 #[derive(Debug)]
 pub struct SourceData {
     /// Path to the source file (None for stdin or unnamed sources)
     file_path: Option<PathBuf>,
+    /// Log lines in file order (index = `line_number` - 1, eternal)
     lines: RwLock<Vec<LogLine>>,
+    /// Indices into `lines`, sorted by timestamp for time-ordered iteration
+    by_timestamp: RwLock<Vec<usize>>,
     /// Bookmarks for this source, keyed by line index within this source
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
     version: AtomicU64,
 }
 
 impl SourceData {
-    /// Create a SourceData for a file source
+    /// Create a `SourceData` for a file source
     pub fn new(file_path: Option<PathBuf>) -> Self {
         let sd = Self {
             file_path,
             lines: RwLock::new(Vec::new()),
+            by_timestamp: RwLock::new(Vec::new()),
             bookmarks: RwLock::new(HashMap::new()),
             version: AtomicU64::new(1),
         };
@@ -66,13 +71,13 @@ impl SourceData {
 
     /// Bump the version number (call after appending lines)
     fn bump_version(&self) {
-        self.version.fetch_add(1, Ordering::SeqCst);
+        self.version.fetch_add(1, AtomicOrdering::SeqCst);
     }
 
     /// Get current version number (bumped whenever data changes)
     pub fn version(&self) -> u64 {
         profiling::scope!("SourceData::version");
-        self.version.load(Ordering::SeqCst)
+        self.version.load(AtomicOrdering::SeqCst)
     }
 
     // ========================================================================
@@ -164,14 +169,56 @@ impl SourceData {
     // ========================================================================
 
     /// Append lines to this source
+    ///
+    /// Lines are stored in file order (append-only). Only the timestamp index
+    /// needs to be rebuilt. Heavy work is done outside the write lock.
     pub fn append_lines(&self, lines: Vec<LogLine>) {
         if lines.is_empty() {
             return;
         }
+
         profiling::scope!("SourceData::append_lines");
+        let new_start_idx = self.lines.read().unwrap().len();
         {
-            let mut guard = self.lines.write().unwrap();
-            guard.extend(lines);
+            self.lines.write().unwrap().extend(lines);
+        }
+
+        let lines = self.lines.read().unwrap();
+        let existing_by_ts = self.by_timestamp.read().unwrap().clone();
+
+        // Build timestamp index for new lines, sorted by timestamp
+        let new_by_ts = {
+            profiling::scope!("sort_new_indices");
+            let mut indices: Vec<usize> = (new_start_idx..lines.len()).collect();
+            indices.par_sort_by_key(|&idx| lines[idx].timestamp);
+            indices
+        };
+
+        // Merge existing and new timestamp indices (both are sorted by timestamp)
+        let merged_by_ts = {
+            profiling::scope!("merge_timestamp_indices");
+            let mut merged = Vec::with_capacity(existing_by_ts.len() + new_by_ts.len());
+            let mut i_exist = 0;
+            let mut j_new = 0;
+            while i_exist < existing_by_ts.len() && j_new < new_by_ts.len() {
+                let ts_exist = lines[existing_by_ts[i_exist]].timestamp;
+                let ts_new = lines[new_by_ts[j_new]].timestamp;
+                if ts_exist <= ts_new {
+                    merged.push(existing_by_ts[i_exist]);
+                    i_exist += 1;
+                } else {
+                    merged.push(new_by_ts[j_new]);
+                    j_new += 1;
+                }
+            }
+            merged.extend_from_slice(&existing_by_ts[i_exist..]);
+            merged.extend_from_slice(&new_by_ts[j_new..]);
+            merged
+        };
+
+        {
+            profiling::scope!("swap_lines_and_index");
+            *self.by_timestamp.write().unwrap() = merged_by_ts;
         }
         self.bump_version();
     }
@@ -249,81 +296,44 @@ impl Clone for LogStore {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StoreID {
     source_index: usize,
     line_index: usize,
 }
 
 impl StoreID {
-    pub fn distance_to(&self, other: &StoreID, store: &LogStore) -> Option<StoreIdDistance> {
-        let self_line = store.get_by_id(self)?;
-        let other_line = store.get_by_id(other)?;
+    pub fn cmp(&self, other: &StoreID, store: &LogStore) -> Ordering {
+        let self_line = store
+            .get_by_id(self)
+            .expect("Tried to compare non-existent line (self).");
+        let other_line = store
+            .get_by_id(other)
+            .expect("Tried to compare non-existent line (other).");
         let t1 = self_line.timestamp;
         let t2 = other_line.timestamp;
 
-        let time_distance = t1.signed_duration_since(t2).abs();
-
-        let line_distance = if self.source_index == other.source_index {
-            Some((self.line_index as isize - other.line_index as isize).unsigned_abs())
-        } else {
-            None
-        };
-
-        Some(StoreIdDistance {
-            time_distance,
-            line_distance,
-        })
-    }
-}
-
-#[derive(PartialEq, Eq)]
-pub struct StoreIdDistance {
-    pub time_distance: TimeDelta,
-    pub line_distance: Option<usize>,
-}
-
-impl StoreIdDistance {
-    fn inner_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self
-            .time_distance
-            .num_milliseconds()
-            .cmp(&other.time_distance.num_milliseconds())
-        {
-            std::cmp::Ordering::Equal => match (self.line_distance, other.line_distance) {
-                (Some(ld1), Some(ld2)) => ld1.cmp(&ld2),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
+        match t1.cmp(&t2) {
+            Ordering::Equal => match self.source_index.cmp(&other.source_index) {
+                Ordering::Equal => self.line_index.cmp(&other.line_index),
+                ord => ord,
             },
-            other => other,
+            ord => ord,
         }
     }
 }
 
-impl PartialOrd for StoreIdDistance {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(std::cmp::Ord::cmp(self, other))
-    }
-}
-
-impl Ord for StoreIdDistance {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.inner_cmp(other)
-    }
-}
-
 impl LogStore {
-    /// Create a new empty LogStore
+    /// Create a new empty `LogStore`
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sources: RwLock::new(Vec::new()),
         })
     }
 
-    /// Add a source to the store, returns the SourceData for appending lines
-    pub fn add_source(self: &Arc<Self>, source_data: Arc<SourceData>) {
-        self.sources.write().unwrap().push(Arc::clone(&source_data));
+    /// Add a source to the store, returns the `SourceData` for appending lines
+    pub fn add_source(self: &Arc<Self>, source_data: &Arc<SourceData>) {
+        self.sources.write().unwrap().push(Arc::clone(source_data));
     }
 
     /// Check if a file with the given path is already loaded in the store
@@ -387,19 +397,19 @@ impl LogStore {
             .is_some_and(|s| s.has_bookmark(id.line_index))
     }
 
-    /// Get a bookmark by StoreID
+    /// Get a bookmark by `StoreID`
     pub fn get_bookmark(&self, id: &StoreID) -> Option<BookmarkData> {
         let sources = self.sources.read().unwrap();
         sources
             .get(id.source_index)
             .and_then(|s| s.get_bookmark(id.line_index))
             .map(|b| BookmarkData {
-                store_id: id.clone(),
+                store_id: *id,
                 name: b.name,
             })
     }
 
-    /// Get all bookmarks across all sources, with their StoreIDs
+    /// Get all bookmarks across all sources, with their `StoreIDs`
     pub fn get_all_bookmarks(&self) -> Vec<BookmarkData> {
         profiling::scope!("LogStore::get_all_bookmarks");
         let sources = self.sources.read().unwrap();
@@ -434,11 +444,10 @@ impl LogStore {
     // Line Queries
     // ========================================================================
 
-    /// Get line indices matching a predicate (parallel filtering, then merge)
+    /// Get line indices matching a predicate, sorted by timestamp
     ///
-    /// The predicate runs in parallel across all sources and within each source.
-    /// Results are collected per-source and then merged by timestamp.
-    /// Returns StoreIDs for matching lines, sorted by timestamp.
+    /// Uses the pre-sorted `by_timestamp` index within each source, then merges.
+    /// Returns `StoreIDs` for matching lines, sorted by timestamp.
     pub fn get_matching_ids<F>(&self, predicate: F) -> Vec<StoreID>
     where
         F: Fn(&LogLine) -> bool + Sync,
@@ -454,10 +463,14 @@ impl LogStore {
                 .enumerate()
                 .map(|(s_idx, source)| {
                     let lines = source.lines.read().unwrap();
-                    lines
+                    // Iterate in timestamp order, filter, collect
+                    source
+                        .by_timestamp
+                        .read()
+                        .unwrap()
                         .par_iter()
-                        .enumerate()
-                        .filter_map(|(idx, line)| {
+                        .filter_map(|&idx| {
+                            let line = &lines[idx];
                             if predicate(line) {
                                 Some(StoreID {
                                     source_index: s_idx,
@@ -476,17 +489,17 @@ impl LogStore {
         self.merge_sorted_sources(per_source)
     }
 
-    /// K-way merge of pre-sorted StoreID vectors by timestamp
+    /// K-way merge of pre-sorted `StoreID` vectors by timestamp
     fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>) -> Vec<StoreID> {
         profiling::scope!("LogStore::merge_sorted_sources");
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
-        let total_len: usize = sources.iter().map(|s| s.len()).sum();
+        let total_len: usize = sources.iter().map(Vec::len).sum();
         let mut result = Vec::with_capacity(total_len);
 
         // Convert to iterators
-        let mut iters: Vec<_> = sources.into_iter().map(|v| v.into_iter()).collect();
+        let mut iters: Vec<_> = sources.into_iter().map(IntoIterator::into_iter).collect();
 
         // Use a min-heap: (timestamp, source_idx, store_id) - Reverse for min-heap behavior
         let mut heap: BinaryHeap<Reverse<(chrono::DateTime<Local>, usize, StoreID)>> =
@@ -528,7 +541,7 @@ impl LogStore {
 /// The `line_index` is the line number within that source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
-    /// Line index within the source (not a global StoreID)
+    /// Line index within the source (not a global `StoreID`)
     pub line_index: usize,
     pub name: String,
 }
