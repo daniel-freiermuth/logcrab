@@ -89,7 +89,10 @@ impl FilterView {
 
         let selected_line_index = log_view_state.selected_line_index;
         let mut events = Vec::new();
-        self.state.search.check_filter_results();
+        if self.state.search.check_filter_results() {
+            // New filter results arrived - invalidate scroll tracking so we re-scroll
+            self.state.last_rendered_selection = None;
+        }
         self.state.search.ensure_cache_valid(&log_view_state.store);
 
         // Render filter bar
@@ -138,13 +141,11 @@ impl FilterView {
                 None
             } else {
                 self.state.last_rendered_selection = selected_line_index;
-                if let Some(selected_line_index) = selected_line_index {
+                selected_line_index.and_then(|selected_line_index_inner| {
                     self.state
                         .search
-                        .find_closest_row_position_in_cache(selected_line_index, store)
-                } else {
-                    None
-                }
+                        .find_closest_row_position_in_cache(selected_line_index_inner, store)
+                })
             }
         };
 

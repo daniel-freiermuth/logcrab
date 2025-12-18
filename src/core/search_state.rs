@@ -156,6 +156,9 @@ impl SearchState {
             profiling::scope!("get_filtered_indices");
             self.get_filtered_indices_cached()
         };
+        if indices.is_empty() {
+            return None;
+        }
         profiling::scope!("find_min_distance");
         Some(indices.partition_point(|other| other.cmp(&target, store) == std::cmp::Ordering::Less))
     }
