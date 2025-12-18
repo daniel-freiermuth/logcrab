@@ -165,12 +165,11 @@ impl SearchState {
             self.get_filtered_indices(store)
         };
         profiling::scope!("find_min_distance");
-        indices
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, line_id)| {
-                target.distance_to(line_id, store)
-            })
-            .map(|(pos, _)| pos)
+        Some(
+            match indices.binary_search_by(|other| other.cmp(&target, store)) {
+                Ok(idx) => idx,  // part of filtered results
+                Err(idx) => idx, // not found, return closest // happens also on out-of-order
+            },
+        )
     }
 }

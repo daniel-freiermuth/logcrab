@@ -339,7 +339,6 @@ impl Histogram {
         Self::handle_click(
             &response,
             rect,
-            bar_width,
             store,
             &cache.effective_indices,
             cache.time_range.unwrap().0,
@@ -525,12 +524,12 @@ impl Histogram {
     fn handle_click(
         response: &egui::Response,
         rect: egui::Rect,
-        bar_width: f32,
         store: &LogStore,
         filtered_indices: &[StoreID],
         start_time: chrono::DateTime<chrono::Local>,
         bucket_size: f64,
     ) -> Option<HistogramClickEvent> {
+        profiling::scope!("Histogram::handle_click");
         // Handle both click and drag - timeline acts like a scrubber
         if !response.clicked() && !response.dragged() {
             return None;
@@ -542,63 +541,39 @@ impl Histogram {
             return None;
         }
 
-        let bucket_idx = ((relative_x / bar_width).floor() as usize).min(NUM_BUCKETS - 1);
+        // Calculate click time directly from x position - no need for bucket math
+        let total_time = NUM_BUCKETS as f64 * bucket_size;
+        let click_fraction = (relative_x / rect.width()) as f64;
+        let click_time = start_time.timestamp() + (click_fraction * total_time) as i64;
 
-        let bucket_start_time = start_time.timestamp() + (bucket_idx as f64 * bucket_size) as i64;
-        let click_time_in_bucket =
-            bucket_start_time + ((relative_x % bar_width) / bar_width * bucket_size as f32) as i64;
-
-        let closest_idx = Self::find_closest_line_in_bucket(
-            store,
-            filtered_indices,
-            start_time,
-            bucket_size,
-            bucket_idx,
-            click_time_in_bucket,
-        );
+        // Binary search to find the closest line by timestamp
+        // Since filtered_indices are sorted by timestamp, we can use binary search
+        let closest_idx = Self::find_closest_line_by_time(store, filtered_indices, click_time);
 
         closest_idx.map(|line_index| HistogramClickEvent { line_index })
     }
 
-    fn find_closest_line_in_bucket(
+    /// Find the line closest to a given timestamp using binary search
+    /// Assumes filtered_indices are sorted by timestamp
+    fn find_closest_line_by_time(
         store: &LogStore,
         filtered_indices: &[StoreID],
-        start_time: chrono::DateTime<chrono::Local>,
-        bucket_size: f64,
-        clicked_bucket: usize,
-        click_time_in_bucket: i64,
+        target_time: i64,
     ) -> Option<StoreID> {
-        let mut closest_idx = None;
-        let mut min_diff = i64::MAX;
-
-        for line_idx in filtered_indices {
-            let ts = store.get_by_id(line_idx).unwrap().timestamp;
-            let line_bucket = timestamp_to_bucket(ts, start_time, bucket_size);
-
-            if line_bucket == clicked_bucket {
-                let diff = (ts.timestamp() - click_time_in_bucket).abs();
-                if diff < min_diff {
-                    min_diff = diff;
-                    closest_idx = Some(line_idx.clone());
-                }
-            }
+        profiling::scope!("Histogram::find_closest_line_by_time");
+        if filtered_indices.is_empty() {
+            return None;
         }
 
-        // Fallback: find closest line overall if bucket was empty
-        if closest_idx.is_none() {
-            let bucket_center_time =
-                start_time.timestamp() + ((clicked_bucket as f64 + 0.5) * bucket_size) as i64;
-            for line_idx in filtered_indices {
-                let ts = store.get_by_id(line_idx).unwrap().timestamp;
-                let diff = (ts.timestamp() - bucket_center_time).abs();
-                if diff < min_diff {
-                    min_diff = diff;
-                    closest_idx = Some(line_idx.clone());
-                }
-            }
-        }
+        // Binary search to find insertion point
+        let idx = filtered_indices.partition_point(|line_idx| {
+            store
+                .get_by_id(line_idx)
+                .map(|line| line.timestamp.timestamp() < target_time)
+                .expect("Logline not found during histogram search.")
+        });
 
-        closest_idx
+        Some(filtered_indices[idx].clone())
     }
 
     fn render_timeline_labels(

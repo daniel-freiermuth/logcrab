@@ -226,8 +226,7 @@ impl CrabSession {
         // Collect all filter highlights from all tabs
         let mut all_filter_highlights: Vec<FilterHighlight> = {
             profiling::scope!("collect_filter_highlights");
-            self
-                .dock_state
+            self.dock_state
                 .iter_all_tabs()
                 .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
                 .collect()
@@ -248,8 +247,7 @@ impl CrabSession {
         // Collect histogram markers from all tabs
         let mut histogram_markers: Vec<_> = {
             profiling::scope!("collect_histogram_markers");
-            self
-                .dock_state
+            self.dock_state
                 .iter_all_tabs_mut()
                 .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker(&self.state.store))
                 .collect()

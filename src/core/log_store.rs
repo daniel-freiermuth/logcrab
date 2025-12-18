@@ -20,21 +20,32 @@ use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
 use crate::parser::line::LogLine;
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
-use chrono::{Local, TimeDelta};
+use chrono::Local;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, RwLock};
+
+/// Lines and their index, kept together for atomic updates
+#[derive(Debug, Clone, Default)]
+struct LinesData {
+    /// Log lines sorted by timestamp
+    lines: Vec<LogLine>,
+    /// Index for O(1) lookup: by_line_number[line_number - 1] = line_index in `lines` vec
+    by_line_number: Vec<usize>,
+}
 
 /// A single log source with its lines, wrapped in RwLock for thread-safe access
 #[derive(Debug)]
 pub struct SourceData {
     /// Path to the source file (None for stdin or unnamed sources)
     file_path: Option<PathBuf>,
-    lines: RwLock<Vec<LogLine>>,
-    /// Bookmarks for this source, keyed by line index within this source
+    /// Lines and index under single lock for atomic access
+    data: RwLock<LinesData>,
+    /// Bookmarks for this source, keyed by line number
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
     version: AtomicU64,
 }
@@ -44,7 +55,7 @@ impl SourceData {
     pub fn new(file_path: Option<PathBuf>) -> Self {
         let sd = Self {
             file_path,
-            lines: RwLock::new(Vec::new()),
+            data: RwLock::new(LinesData::default()),
             bookmarks: RwLock::new(HashMap::new()),
             version: AtomicU64::new(1),
         };
@@ -66,13 +77,13 @@ impl SourceData {
 
     /// Bump the version number (call after appending lines)
     fn bump_version(&self) {
-        self.version.fetch_add(1, Ordering::SeqCst);
+        self.version.fetch_add(1, AtomicOrdering::SeqCst);
     }
 
     /// Get current version number (bumped whenever data changes)
     pub fn version(&self) -> u64 {
         profiling::scope!("SourceData::version");
-        self.version.load(Ordering::SeqCst)
+        self.version.load(AtomicOrdering::SeqCst)
     }
 
     // ========================================================================
@@ -81,7 +92,10 @@ impl SourceData {
 
     /// Add or update a bookmark for a line in this source
     fn set_bookmark(&self, line_index: usize, name: String) {
-        let bookmark = Bookmark { line_index, name };
+        let bookmark = Bookmark {
+            line_number: line_index,
+            name,
+        };
         self.bookmarks.write().unwrap().insert(line_index, bookmark);
     }
 
@@ -120,7 +134,7 @@ impl SourceData {
                 );
                 let mut bookmarks = self.bookmarks.write().unwrap();
                 for bookmark in crab_data.bookmarks {
-                    bookmarks.insert(bookmark.line_index, bookmark);
+                    bookmarks.insert(bookmark.line_number, bookmark);
                 }
             }
             Err(crate::core::SessionError::Io(ref e))
@@ -164,15 +178,74 @@ impl SourceData {
     // ========================================================================
 
     /// Append lines to this source
+    ///
+    /// Heavy work (merge + index build) is done outside the write lock to avoid
+    /// blocking UI reads. Only the final pointer swap happens under the lock.
     pub fn append_lines(&self, lines: Vec<LogLine>) {
         if lines.is_empty() {
             return;
         }
+
+        // Sort incoming lines (no lock needed)
+        let sorted_lines = {
+            profiling::scope!("sort_appended_lines");
+            let mut ls = lines;
+            ls.par_sort_unstable_by_key(|line| line.timestamp);
+            ls
+        };
+
         profiling::scope!("SourceData::append_lines");
+
+        // Clone existing lines under read lock (brief)
+        let existing = {
+            profiling::scope!("clone_existing_lines");
+            self.data.read().unwrap().lines.clone()
+        };
+
+        // Merge outside any lock (O(n), potentially slow)
+        let merged = {
+            profiling::scope!("merge_lines");
+            let mut merged = Vec::with_capacity(existing.len() + sorted_lines.len());
+            let mut i = 0;
+            let mut j = 0;
+            while i < existing.len() && j < sorted_lines.len() {
+                if existing[i].timestamp <= sorted_lines[j].timestamp {
+                    merged.push(existing[i].clone());
+                    i += 1;
+                } else {
+                    merged.push(sorted_lines[j].clone());
+                    j += 1;
+                }
+            }
+            if i < existing.len() {
+                merged.extend_from_slice(&existing[i..]);
+            }
+            if j < sorted_lines.len() {
+                merged.extend_from_slice(&sorted_lines[j..]);
+            }
+            merged
+        };
+
+        // Build by_line_number index outside lock (O(n log n))
+        let by_ln = {
+            profiling::scope!("build_line_number_index");
+            let mut pairs: Vec<(usize, usize)> = merged
+                .iter()
+                .enumerate()
+                .map(|(idx, line)| (idx, line.line_number))
+                .collect();
+            pairs.sort_unstable_by_key(|(_, ln)| *ln);
+            pairs.into_iter().map(|(idx, _)| idx).collect::<Vec<_>>()
+        };
+
+        // Write lock only for the atomic swap (very fast)
         {
-            let mut guard = self.lines.write().unwrap();
-            guard.extend(lines);
+            profiling::scope!("swap_lines_and_index");
+            let mut guard = self.data.write().unwrap();
+            guard.lines = merged;
+            guard.by_line_number = by_ln;
         }
+
         self.bump_version();
     }
 
@@ -180,9 +253,9 @@ impl SourceData {
     /// Scores vec should be same length as lines
     pub fn set_scores(&self, scores: &[f64]) {
         profiling::scope!("SourceData::set_scores");
-        let mut guard = self.lines.write().unwrap();
+        let mut guard = self.data.write().unwrap();
         for (idx, &score) in scores.iter().enumerate() {
-            if let Some(line) = guard.get_mut(idx) {
+            if let Some(line) = guard.lines.get_mut(idx) {
                 line.anomaly_score = score;
             }
         }
@@ -192,24 +265,36 @@ impl SourceData {
 
     /// Get the number of lines
     pub fn len(&self) -> usize {
-        self.lines.read().unwrap().len()
+        self.data.read().unwrap().lines.len()
     }
 
     /// Check if this source has no lines
     pub fn is_empty(&self) -> bool {
-        self.lines.read().unwrap().is_empty()
+        self.data.read().unwrap().lines.is_empty()
     }
 
     /// Get a clone of all lines for iteration
     /// This clones the entire Vec - use sparingly (e.g., one-time scoring)
     pub fn clone_lines(&self) -> Vec<LogLine> {
         profiling::scope!("SourceData::clone_lines");
-        self.lines.read().unwrap().clone()
+        self.data.read().unwrap().lines.clone()
     }
 
     pub fn get_by_id(&self, id: usize) -> Option<LogLine> {
-        let guard = self.lines.read().unwrap();
-        guard.get(id).cloned()
+        let guard = self.data.read().unwrap();
+        guard.lines.get(id).cloned()
+    }
+
+    /// Find the vector index of a line by its original line_number
+    /// Returns None if no line with that line_number exists
+    /// O(1) lookup using the by_line_number index
+    pub fn find_index_by_line_number(&self, line_number: usize) -> Option<usize> {
+        self.data
+            .read()
+            .unwrap()
+            .by_line_number
+            .get(line_number.wrapping_sub(1))
+            .copied()
     }
 
     /// Load and merge filters and highlights
@@ -256,60 +341,23 @@ pub struct StoreID {
 }
 
 impl StoreID {
-    pub fn distance_to(&self, other: &StoreID, store: &LogStore) -> Option<StoreIdDistance> {
-        let self_line = store.get_by_id(self)?;
-        let other_line = store.get_by_id(other)?;
+    pub fn cmp(&self, other: &StoreID, store: &LogStore) -> Ordering {
+        let self_line = store
+            .get_by_id(self)
+            .expect("Tried to compare non-existent line (self).");
+        let other_line = store
+            .get_by_id(other)
+            .expect("Tried to compare non-existent line (other).");
         let t1 = self_line.timestamp;
         let t2 = other_line.timestamp;
 
-        let time_distance = t1.signed_duration_since(t2).abs();
-
-        let line_distance = if self.source_index == other.source_index {
-            Some((self.line_index as isize - other.line_index as isize).unsigned_abs())
-        } else {
-            None
-        };
-
-        Some(StoreIdDistance {
-            time_distance,
-            line_distance,
-        })
-    }
-}
-
-#[derive(PartialEq, Eq)]
-pub struct StoreIdDistance {
-    pub time_distance: TimeDelta,
-    pub line_distance: Option<usize>,
-}
-
-impl StoreIdDistance {
-    fn inner_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self
-            .time_distance
-            .num_milliseconds()
-            .cmp(&other.time_distance.num_milliseconds())
-        {
-            std::cmp::Ordering::Equal => match (self.line_distance, other.line_distance) {
-                (Some(ld1), Some(ld2)) => ld1.cmp(&ld2),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
+        match t1.cmp(&t2) {
+            Ordering::Equal => match self.source_index.cmp(&other.source_index) {
+                Ordering::Equal => self.line_index.cmp(&other.line_index),
+                ord => ord,
             },
-            other => other,
+            ord => ord,
         }
-    }
-}
-
-impl PartialOrd for StoreIdDistance {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(std::cmp::Ord::cmp(self, other))
-    }
-}
-
-impl Ord for StoreIdDistance {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.inner_cmp(other)
     }
 }
 
@@ -367,36 +415,47 @@ impl LogStore {
     pub fn set_bookmark(&self, id: &StoreID, name: String) {
         let sources = self.sources.read().unwrap();
         if let Some(source) = sources.get(id.source_index) {
-            source.set_bookmark(id.line_index, name);
+            // Get the original line_number from the LogLine
+            if let Some(line) = source.get_by_id(id.line_index) {
+                source.set_bookmark(line.line_number, name);
+            }
         }
     }
 
     /// Remove a bookmark
     pub fn remove_bookmark(&self, id: &StoreID) -> Option<Bookmark> {
         let sources = self.sources.read().unwrap();
-        sources
-            .get(id.source_index)
-            .and_then(|s| s.remove_bookmark(id.line_index))
+        if let Some(source) = sources.get(id.source_index) {
+            if let Some(line) = source.get_by_id(id.line_index) {
+                return source.remove_bookmark(line.line_number);
+            }
+        }
+        None
     }
 
     /// Check if a line has a bookmark
     pub fn has_bookmark(&self, id: &StoreID) -> bool {
         let sources = self.sources.read().unwrap();
-        sources
-            .get(id.source_index)
-            .is_some_and(|s| s.has_bookmark(id.line_index))
+        if let Some(source) = sources.get(id.source_index) {
+            if let Some(line) = source.get_by_id(id.line_index) {
+                return source.has_bookmark(line.line_number);
+            }
+        }
+        false
     }
 
     /// Get a bookmark by StoreID
     pub fn get_bookmark(&self, id: &StoreID) -> Option<BookmarkData> {
         let sources = self.sources.read().unwrap();
-        sources
-            .get(id.source_index)
-            .and_then(|s| s.get_bookmark(id.line_index))
-            .map(|b| BookmarkData {
-                store_id: id.clone(),
-                name: b.name,
-            })
+        if let Some(source) = sources.get(id.source_index) {
+            if let Some(line) = source.get_by_id(id.line_index) {
+                return source.get_bookmark(line.line_number).map(|b| BookmarkData {
+                    store_id: id.clone(),
+                    name: b.name,
+                });
+            }
+        }
+        None
     }
 
     /// Get all bookmarks across all sources, with their StoreIDs
@@ -410,12 +469,17 @@ impl LogStore {
                 source
                     .get_bookmarks()
                     .into_iter()
-                    .map(move |bookmark| BookmarkData {
-                        store_id: StoreID {
-                            source_index,
-                            line_index: bookmark.line_index,
-                        },
-                        name: bookmark.name,
+                    .filter_map(move |bookmark| {
+                        // Find the vector index for this line_number
+                        source
+                            .find_index_by_line_number(bookmark.line_number)
+                            .map(|line_index| BookmarkData {
+                                store_id: StoreID {
+                                    source_index,
+                                    line_index,
+                                },
+                                name: bookmark.name,
+                            })
                     })
             })
             .collect()
@@ -453,8 +517,8 @@ impl LogStore {
                 .par_iter()
                 .enumerate()
                 .map(|(s_idx, source)| {
-                    let lines = source.lines.read().unwrap();
-                    lines
+                    let data = source.data.read().unwrap();
+                    data.lines
                         .par_iter()
                         .enumerate()
                         .filter_map(|(idx, line)| {
@@ -525,10 +589,10 @@ impl LogStore {
 /// Named bookmark with optional description
 ///
 /// Each bookmark is stored within its source's .crab file.
-/// The `line_index` is the line number within that source.
+/// The `line_number` is the original line number from the file (stable across sorts).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
-    /// Line index within the source (not a global StoreID)
-    pub line_index: usize,
+    /// Original line number from the file (not the vector index)
+    pub line_number: usize,
     pub name: String,
 }

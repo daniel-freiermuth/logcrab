@@ -4,6 +4,16 @@
 
 - Instead of storing indices, store Vec<Arc<LogLine>> ??
 - Store FilterState in CrabSession instead of tabs?
+- use ArcSwap in datasource?
+- use Vec<Arc<LogLine>> and no IDs?
+- Line lookup vec
+- data version generations?
+  - Challenge: what to use for stable IDs
+  - Idea: actually stick with original line numbers
+  - And don't sort the lines for O(1) lookup
+  - Just build and rebuild a sorted indexing for fast time-sorted iterating
+
+- race between line number and ID
 
 ## Overview
 
