@@ -124,21 +124,25 @@ impl LogCrabApp {
             dialog = dialog.set_directory(dir);
         }
 
-        if let Some(path) = dialog.pick_file() {
-            // Remember the directory for next time
-            if let Some(parent) = path.parent() {
-                self.global_config.last_log_directory = Some(parent.to_path_buf());
-                let _ = self.global_config.save();
+        if let Some(paths) = dialog.pick_files() {
+            if let Some(first) = paths.first() {
+                if let Some(parent) = first.parent() {
+                    self.global_config.last_log_directory = Some(parent.to_path_buf());
+                    let _ = self.global_config.save();
+                }
             }
+
             self.start_new_session();
-            self.add_file_to_session(path, ctx.clone());
+            for path in paths {
+                self.add_file_to_session(path, ctx.clone());
+            }
         }
     }
 
     /// Show file dialog and add selected file(s) to the current workspace
     fn add_file_dialog(&mut self, ctx: &egui::Context) {
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("Log Files", &["log", "txt", "dlt"])
+            .add_filter("Log Files", &["log", "txt", "dlt", "crab"])
             .add_filter("All Files", &["*"]);
 
         if let Some(ref dir) = self.global_config.last_log_directory {
@@ -184,7 +188,6 @@ impl LogCrabApp {
             self.start_new_session();
         }
 
-        // Add remaining log files to the workspace
         for path in log_files {
             log::info!("Adding dropped file to workspace: {}", path.display());
             self.add_file_to_session(path, ctx.clone());
