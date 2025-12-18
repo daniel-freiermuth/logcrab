@@ -81,8 +81,15 @@ impl SearchState {
     }
 
     pub fn get_filtered_indices(&mut self, store: &Arc<LogStore>) -> &Vec<StoreID> {
-        self.ensure_cache_valid(store);
-        self.check_filter_results();
+        profiling::scope!("SearchState::get_filtered_indices");
+        {
+            profiling::scope!("ensure_cache_valid");
+            self.ensure_cache_valid(store);
+        }
+        {
+            profiling::scope!("check_filter_results");
+            self.check_filter_results();
+        }
         &self.filtered_indices
     }
 

@@ -85,6 +85,7 @@ impl TabViewer for LogCrabTabViewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        profiling::scope!("TabViewer::ui");
         tab.render(
             ui,
             self.log_view,

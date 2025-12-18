@@ -434,8 +434,10 @@ impl LogCrabTab for FilterView {
         actions: &[ShortcutAction],
         data_state: &mut SessionState,
     ) -> bool {
+        profiling::function_scope!();
         let mut should_save = false;
         for action in actions {
+            profiling::scope!("process_event_action");
             match action {
                 ShortcutAction::MoveDown => {
                     self.move_selection_in_filter(1, data_state);

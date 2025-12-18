@@ -298,6 +298,7 @@ impl CrabSession {
                 .last_saved
                 .is_none_or(|t| (Local::now() - t).num_seconds() >= 5)
         {
+            profiling::scope!("save_crab_file");
             self.save_crab_file();
             self.state.modified = false;
             self.state.last_saved = Some(Local::now());
@@ -357,6 +358,7 @@ impl CrabSession {
     }
 
     pub fn process_keyboard_input(&mut self, actions: &[ShortcutAction]) {
+        profiling::function_scope!();
         // Execute all generated actions
         for action in actions {
             match action {

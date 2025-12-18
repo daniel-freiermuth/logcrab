@@ -71,6 +71,7 @@ impl SourceData {
 
     /// Get current version number (bumped whenever data changes)
     pub fn version(&self) -> u64 {
+        profiling::scope!("SourceData::version");
         self.version.load(Ordering::SeqCst)
     }
 
@@ -344,6 +345,7 @@ impl LogStore {
 
     /// Get current version number (bumped whenever data changes)
     pub fn version(&self) -> u64 {
+        profiling::scope!("LogStore::version");
         self.sources
             .read()
             .unwrap()

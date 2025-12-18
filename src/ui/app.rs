@@ -447,6 +447,7 @@ impl LogCrabApp {
 
     /// Process keyboard shortcuts and execute actions
     fn process_keyboard_input(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        profiling::scope!("process_keyboard_input");
         // Skip keyboard shortcuts if text input is focused AND no modifiers are pressed
         // This allows shortcuts like Ctrl+w to work even in text fields
         let has_modifiers = raw_input.events.iter().any(|event| {
@@ -510,6 +511,7 @@ impl LogCrabApp {
 
 impl eframe::App for LogCrabApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        profiling::scope!("raw_input_hook");
         self.process_keyboard_input(ctx, raw_input);
     }
 
@@ -518,23 +520,33 @@ impl eframe::App for LogCrabApp {
 
         // Process pending dropped files
         if !self.pending_drop_files.is_empty() {
+            profiling::scope!("process_dropped_files");
             let files = std::mem::take(&mut self.pending_drop_files);
             self.process_dropped_files(files, ctx);
         }
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                self.render_menu_bar(ui, ctx);
+        {
+            profiling::scope!("top_panel");
+            egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    self.render_menu_bar(ui, ctx);
+                });
             });
-        });
+        }
 
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            self.render_status_panel(ui);
-        });
+        {
+            profiling::scope!("bottom_panel");
+            egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+                self.render_status_panel(ui);
+            });
+        }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_central_panel(ui, ctx);
-        });
+        {
+            profiling::scope!("central_panel_show");
+            egui::CentralPanel::default().show(ctx, |ui| {
+                self.render_central_panel(ui, ctx);
+            });
+        }
 
         // Show windows
         if self.show_anomaly_explanation {
