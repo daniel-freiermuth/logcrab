@@ -152,10 +152,18 @@ impl SearchState {
         target: StoreID,
         store: &Arc<LogStore>,
     ) -> Option<usize> {
-        self.get_filtered_indices(store)
+        profiling::scope!("find_closest_row_position");
+        let indices = {
+            profiling::scope!("get_filtered_indices");
+            self.get_filtered_indices(store)
+        };
+        profiling::scope!("find_min_distance");
+        indices
             .iter()
             .enumerate()
-            .min_by_key(|(_, line_id)| target.distance_to(line_id, store))
+            .min_by_key(|(_, line_id)| {
+                target.distance_to(line_id, store)
+            })
             .map(|(pos, _)| pos)
     }
 }

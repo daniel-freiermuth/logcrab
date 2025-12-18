@@ -21,6 +21,7 @@ pub fn create_default_scorer() -> CompositeScorer {
 
 /// Normalize anomaly scores to 0-100 range
 pub fn normalize_scores(scores: &[f64]) -> Vec<f64> {
+    profiling::scope!("normalize_scores");
     if scores.is_empty() {
         return Vec::new();
     }

@@ -140,6 +140,7 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     source: &Arc<SourceData>,
     progress_callback: ProgressCallback,
 ) -> Result<usize, String> {
+    profiling::scope!("parse_dlt_file_with_progress");
     let path = path.as_ref();
 
     // Get file size for progress calculation

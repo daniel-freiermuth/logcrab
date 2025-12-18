@@ -92,13 +92,16 @@ impl FilterView {
         let mut events = Vec::new();
 
         // Render filter bar
-        let filter_bar_events = self.filter_bar.render(
-            ui,
-            &mut self.state,
-            global_config,
-            self.should_focus_search,
-            log_view_state,
-        );
+        let filter_bar_events = {
+            profiling::scope!("render_filter_bar");
+            self.filter_bar.render(
+                ui,
+                &mut self.state,
+                global_config,
+                self.should_focus_search,
+                log_view_state,
+            )
+        };
         self.should_focus_search = false;
 
         let store = &log_view_state.store;
@@ -128,31 +131,41 @@ impl FilterView {
         ui.separator();
 
         // Check for completed filter results from background thread
-        let scroll_to_row = if self.state.last_rendered_selection != selected_line_index {
-            self.state.last_rendered_selection = selected_line_index.clone();
-            if let Some(selected_line_index) = selected_line_index.clone() {
-                self.state
-                    .search
-                    .find_closest_row_position(selected_line_index, store)
+        let scroll_to_row = {
+            profiling::scope!("find_scroll_position");
+            if self.state.last_rendered_selection != selected_line_index {
+                self.state.last_rendered_selection = selected_line_index.clone();
+                if let Some(selected_line_index) = selected_line_index.clone() {
+                    self.state
+                        .search
+                        .find_closest_row_position(selected_line_index, store)
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
         };
 
-        let indices = self.state.search.get_filtered_indices(store).clone();
+        let indices = {
+            profiling::scope!("get_filtered_indices");
+            self.state.search.get_filtered_indices(store).clone()
+        };
 
         // Render histogram
-        if let Some(hist_event) = Histogram::render(
-            ui,
-            store,
-            &indices,
-            selected_line_index.clone(),
-            global_config.hide_epoch_in_histogram,
-            histogram_markers,
-            &mut self.state.histogram_cache,
-        ) {
+        let hist_event = {
+            profiling::scope!("render_histogram");
+            Histogram::render(
+                ui,
+                store,
+                &indices,
+                selected_line_index.clone(),
+                global_config.hide_epoch_in_histogram,
+                histogram_markers,
+                &mut self.state.histogram_cache,
+            )
+        };
+        if let Some(hist_event) = hist_event {
             events.push(FilterViewEvent::LineSelected {
                 store_id: hist_event.line_index,
             });
@@ -161,15 +174,18 @@ impl FilterView {
         ui.separator();
 
         // Render log table
-        let table_events = LogTable::render(
-            ui,
-            store,
-            &mut self.state,
-            selected_line_index.clone(),
-            bookmarked_lines,
-            scroll_to_row,
-            all_filter_highlights,
-        );
+        let table_events = {
+            profiling::scope!("render_log_table");
+            LogTable::render(
+                ui,
+                store,
+                &mut self.state,
+                selected_line_index.clone(),
+                bookmarked_lines,
+                scroll_to_row,
+                all_filter_highlights,
+            )
+        };
 
         // Handle table events
         for event in table_events {

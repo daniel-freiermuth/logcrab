@@ -224,11 +224,14 @@ impl CrabSession {
         profiling::scope!("LogView::render");
 
         // Collect all filter highlights from all tabs
-        let mut all_filter_highlights: Vec<FilterHighlight> = self
-            .dock_state
-            .iter_all_tabs()
-            .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
-            .collect();
+        let mut all_filter_highlights: Vec<FilterHighlight> = {
+            profiling::scope!("collect_filter_highlights");
+            self
+                .dock_state
+                .iter_all_tabs()
+                .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
+                .collect()
+        };
 
         // Add highlights from LogViewState
         for highlight in &self.state.highlights {
@@ -243,11 +246,14 @@ impl CrabSession {
         }
 
         // Collect histogram markers from all tabs
-        let mut histogram_markers: Vec<_> = self
-            .dock_state
-            .iter_all_tabs_mut()
-            .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker(&self.state.store))
-            .collect();
+        let mut histogram_markers: Vec<_> = {
+            profiling::scope!("collect_histogram_markers");
+            self
+                .dock_state
+                .iter_all_tabs_mut()
+                .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker(&self.state.store))
+                .collect()
+        };
 
         // Add histogram markers from highlights (using cached indices)
         for highlight in &mut self.state.highlights {

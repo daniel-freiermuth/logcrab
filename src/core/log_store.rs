@@ -167,6 +167,7 @@ impl SourceData {
         if lines.is_empty() {
             return;
         }
+        profiling::scope!("SourceData::append_lines");
         {
             let mut guard = self.lines.write().unwrap();
             guard.extend(lines);
@@ -177,6 +178,7 @@ impl SourceData {
     /// Set anomaly scores for lines (indexed by position in the vector)
     /// Scores vec should be same length as lines
     pub fn set_scores(&self, scores: &[f64]) {
+        profiling::scope!("SourceData::set_scores");
         let mut guard = self.lines.write().unwrap();
         for (idx, &score) in scores.iter().enumerate() {
             if let Some(line) = guard.get_mut(idx) {
@@ -200,6 +202,7 @@ impl SourceData {
     /// Get a clone of all lines for iteration
     /// This clones the entire Vec - use sparingly (e.g., one-time scoring)
     pub fn clone_lines(&self) -> Vec<LogLine> {
+        profiling::scope!("SourceData::clone_lines");
         self.lines.read().unwrap().clone()
     }
 
@@ -396,6 +399,7 @@ impl LogStore {
 
     /// Get all bookmarks across all sources, with their StoreIDs
     pub fn get_all_bookmarks(&self) -> Vec<BookmarkData> {
+        profiling::scope!("LogStore::get_all_bookmarks");
         let sources = self.sources.read().unwrap();
         sources
             .iter()
@@ -417,6 +421,7 @@ impl LogStore {
 
     /// Save all sources' .crab files
     pub fn save_all_crab_files(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
+        profiling::scope!("LogStore::save_all_crab_files");
         let sources = self.sources.read().unwrap();
         for source in sources.iter() {
             source.save_crab_file(filters, highlights);
@@ -436,30 +441,34 @@ impl LogStore {
     where
         F: Fn(&LogLine) -> bool + Sync,
     {
+        profiling::scope!("LogStore::get_matching_ids");
         let sources = self.sources.read().unwrap();
 
         // Parallel filter each source, collect results
-        let per_source: Vec<Vec<StoreID>> = sources
-            .par_iter()
-            .enumerate()
-            .map(|(s_idx, source)| {
-                let lines = source.lines.read().unwrap();
-                lines
-                    .par_iter()
-                    .enumerate()
-                    .filter_map(|(idx, line)| {
-                        if predicate(line) {
-                            Some(StoreID {
-                                source_index: s_idx,
-                                line_index: idx,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .collect() // Materialize ParIter here so that it can be iterated sequentially later
-            })
-            .collect();
+        let per_source: Vec<Vec<StoreID>> = {
+            profiling::scope!("parallel_filter_sources");
+            sources
+                .par_iter()
+                .enumerate()
+                .map(|(s_idx, source)| {
+                    let lines = source.lines.read().unwrap();
+                    lines
+                        .par_iter()
+                        .enumerate()
+                        .filter_map(|(idx, line)| {
+                            if predicate(line) {
+                                Some(StoreID {
+                                    source_index: s_idx,
+                                    line_index: idx,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect() // Materialize ParIter here so that it can be iterated sequentially later
+                })
+                .collect()
+        };
 
         // K-way merge of sorted sources by timestamp
         self.merge_sorted_sources(per_source)
@@ -467,6 +476,7 @@ impl LogStore {
 
     /// K-way merge of pre-sorted StoreID vectors by timestamp
     fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>) -> Vec<StoreID> {
+        profiling::scope!("LogStore::merge_sorted_sources");
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
