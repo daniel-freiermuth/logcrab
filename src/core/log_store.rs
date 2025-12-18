@@ -24,7 +24,7 @@ use chrono::{Local, TimeDelta};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -322,6 +322,23 @@ impl LogStore {
         self.sources.write().unwrap().push(Arc::clone(&source_data));
     }
 
+    /// Check if a file with the given path is already loaded in the store
+    pub fn contains_file(&self, path: &Path) -> bool {
+        let canonical_path = path.canonicalize().ok();
+        let sources = self.sources.read().unwrap();
+        sources.iter().any(|source| {
+            source.file_path.as_ref().is_some_and(|source_path| {
+                // Try canonical comparison first, fall back to direct comparison
+                if let Some(ref canonical) = canonical_path {
+                    if let Ok(source_canonical) = source_path.canonicalize() {
+                        return &source_canonical == canonical;
+                    }
+                }
+                source_path == path
+            })
+        })
+    }
+
     /// Get current version number (bumped whenever data changes)
     pub fn version(&self) -> u64 {
         self.sources
@@ -503,4 +520,3 @@ pub struct Bookmark {
     pub line_index: usize,
     pub name: String,
 }
-

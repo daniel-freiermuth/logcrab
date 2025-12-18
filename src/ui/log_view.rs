@@ -99,7 +99,15 @@ impl CrabSession {
     /// Add a file to the current session
     ///
     /// Loads the file asynchronously and adds it as an additional source to the store.
+    /// Skips files that are already loaded.
     pub fn add_file(&mut self, path: PathBuf, ctx: egui::Context, toast: ProgressToastHandle) {
+        // Check if the file is already loaded
+        if self.state.store.contains_file(&path) {
+            log::info!("Skipping already loaded file: {}", path.display());
+            toast.dismiss();
+            return;
+        }
+
         log::info!("Adding file to session: {}", path.display());
 
         let source = LogFileLoader::load_async(path, ctx, toast);
