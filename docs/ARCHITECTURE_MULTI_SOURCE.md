@@ -4,6 +4,8 @@
 
 - Instead of storing indices, store Vec<Arc<LogLine>> ??
 - Store FilterState in CrabSession instead of tabs?
+- use ArcSwap in datasource?
+- use Vec<Arc<LogLine>> and no IDs?
 
 ## Overview
 
