@@ -37,16 +37,12 @@ impl LogFileLoader {
     ///
     /// The toast handle will be updated with progress and dismissed when complete.
     /// Returns the `SourceData` that will be populated with log lines.
-    pub fn load_async(
-        path: PathBuf,
-        ctx: egui::Context,
-        toast: ProgressToastHandle,
-    ) -> Arc<SourceData> {
+    pub fn load_async(path: PathBuf, toast: ProgressToastHandle) -> Arc<SourceData> {
         let data_source = Arc::new(SourceData::new(Some(path.clone())));
         let source_clone = data_source.clone();
 
         thread::spawn(move || {
-            Self::process_file_background(path, source_clone, toast, ctx);
+            Self::process_file_background(path, source_clone, toast);
         });
 
         data_source
@@ -56,7 +52,6 @@ impl LogFileLoader {
         path: &Path,
         data_source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: &egui::Context,
     ) -> bool {
         log::info!("Detected DLT binary file, using dlt-core parser");
         toast.update(
@@ -73,7 +68,6 @@ impl LogFileLoader {
         match dlt::parse_dlt_file_with_progress(path, data_source, &progress_callback) {
             Ok(total_lines) => {
                 log::info!("Successfully parsed {total_lines} DLT messages");
-                ctx.request_repaint();
                 true
             }
             Err(e) => {
@@ -89,7 +83,6 @@ impl LogFileLoader {
         path: PathBuf,
         data_source: Arc<SourceData>,
         toast: ProgressToastHandle,
-        ctx: egui::Context,
     ) {
         let start_time = std::time::Instant::now();
         log::debug!(
@@ -115,7 +108,7 @@ impl LogFileLoader {
 
         // Load file based on detected format
         let source_added = if is_dlt_file {
-            Self::read_dlt_file(&path, &data_source, &toast, &ctx)
+            Self::read_dlt_file(&path, &data_source, &toast)
         } else {
             // Read file content first to detect format
             let Some(content) = Self::read_file_content(&path, &toast) else {
@@ -133,7 +126,6 @@ impl LogFileLoader {
                     year,
                     &data_source,
                     &toast,
-                    &ctx,
                     start_time,
                     file_size,
                 ),
@@ -143,7 +135,6 @@ impl LogFileLoader {
                     year,
                     &data_source,
                     &toast,
-                    &ctx,
                     start_time,
                     file_size,
                 ),
@@ -152,7 +143,6 @@ impl LogFileLoader {
                     &content,
                     &data_source,
                     &toast,
-                    &ctx,
                     start_time,
                     file_size,
                 ),
@@ -223,7 +213,6 @@ impl LogFileLoader {
         year: i32,
         source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
@@ -233,7 +222,6 @@ impl LogFileLoader {
             content,
             source,
             toast,
-            ctx,
             start_time,
             file_size,
             |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
@@ -246,7 +234,6 @@ impl LogFileLoader {
         year: i32,
         source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
@@ -256,7 +243,6 @@ impl LogFileLoader {
             content,
             source,
             toast,
-            ctx,
             start_time,
             file_size,
             |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
@@ -268,7 +254,6 @@ impl LogFileLoader {
         content: &str,
         source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
@@ -278,7 +263,6 @@ impl LogFileLoader {
             content,
             source,
             toast,
-            ctx,
             start_time,
             file_size,
             generic::parse_generic,
@@ -291,7 +275,6 @@ impl LogFileLoader {
         content: &str,
         source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        ctx: &egui::Context,
         start_time: std::time::Instant,
         file_size: u64,
         parse_fn: F,
@@ -351,7 +334,6 @@ impl LogFileLoader {
                     progress,
                     format!("Loading {}... ({} lines)", file_name, source.len()),
                 );
-                ctx.request_repaint();
                 log::debug!("Sent partial load: {} lines", source.len());
             }
         }
@@ -375,7 +357,6 @@ impl LogFileLoader {
             file_line_number - source.len()
         );
 
-        ctx.request_repaint();
         log::info!("Total time to display file: {:?}", start_time.elapsed());
         true
     }

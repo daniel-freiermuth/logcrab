@@ -71,7 +71,7 @@ impl LogCrabApp {
         if let Some(file) = file {
             if file.exists() {
                 app.start_new_session();
-                app.add_file_to_session(file, cc.egui_ctx.clone());
+                app.add_file_to_session(file);
             } else {
                 app.toast_manager
                     .show_error(format!("File not found: {}", file.display()));
@@ -87,7 +87,7 @@ impl LogCrabApp {
     }
 
     /// Add a file to the current session
-    fn add_file_to_session(&mut self, mut path: PathBuf, ctx: egui::Context) {
+    fn add_file_to_session(&mut self, mut path: PathBuf) {
         if let Some(ref mut session) = self.session {
             // Check if this is a .crab session file
             if path.to_string_lossy().ends_with(".crab") {
@@ -109,12 +109,12 @@ impl LogCrabApp {
                 .toast_manager
                 .create_progress_toast(file_name, "Starting...");
 
-            session.add_file(path, ctx, toast_handle);
+            session.add_file(path, toast_handle);
         }
     }
 
     /// Show file dialog and load selected file
-    fn open_file_dialog(&mut self, ctx: &egui::Context) {
+    fn open_file_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new()
             .add_filter("Log Files", &["log", "txt", "dlt", "crab"])
             .add_filter("All Files", &["*"]);
@@ -133,13 +133,13 @@ impl LogCrabApp {
 
             self.start_new_session();
             for path in paths {
-                self.add_file_to_session(path, ctx.clone());
+                self.add_file_to_session(path);
             }
         }
     }
 
     /// Show file dialog and add selected file(s) to the current workspace
-    fn add_file_dialog(&mut self, ctx: &egui::Context) {
+    fn add_file_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new()
             .add_filter("Log Files", &["log", "txt", "dlt", "crab"])
             .add_filter("All Files", &["*"]);
@@ -158,7 +158,7 @@ impl LogCrabApp {
             }
 
             for path in paths {
-                self.add_file_to_session(path, ctx.clone());
+                self.add_file_to_session(path);
             }
         }
     }
@@ -167,7 +167,7 @@ impl LogCrabApp {
     /// - If no session exists, first log file is loaded as main file
     /// - If session exists, additional log files are added to the workspace
     /// - All .crab-filters files are imported
-    fn process_dropped_files(&mut self, files: Vec<PathBuf>, ctx: &egui::Context) {
+    fn process_dropped_files(&mut self, files: Vec<PathBuf>) {
         let mut log_files: Vec<PathBuf> = Vec::new();
         let mut filter_files: Vec<PathBuf> = Vec::new();
 
@@ -189,7 +189,7 @@ impl LogCrabApp {
 
         for path in log_files {
             log::info!("Adding dropped file to workspace: {}", path.display());
-            self.add_file_to_session(path, ctx.clone());
+            self.add_file_to_session(path);
         }
 
         // Import filter files if we have a log view
@@ -227,12 +227,12 @@ impl LogCrabApp {
     fn render_menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.menu_button("File", |ui| {
             if ui.button("Open Log File...").clicked() {
-                self.open_file_dialog(ctx);
+                self.open_file_dialog();
                 ui.close();
             }
 
             if self.session.is_some() && ui.button("Add File to session...").clicked() {
-                self.add_file_dialog(ctx);
+                self.add_file_dialog();
                 ui.close();
             }
 
@@ -410,7 +410,7 @@ impl LogCrabApp {
                 ui.add_space(40.0);
 
                 if ui.button("Open Log File").clicked() {
-                    self.open_file_dialog(ctx);
+                    self.open_file_dialog();
                 }
             });
         }
@@ -490,7 +490,7 @@ impl LogCrabApp {
                 ShortcutAction::PageUp => {}
                 ShortcutAction::PageDown => {}
                 ShortcutAction::OpenFile => {
-                    self.open_file_dialog(ctx);
+                    self.open_file_dialog();
                 }
                 ShortcutAction::RenameFilter => {}
                 ShortcutAction::MoveUp => {}
@@ -522,7 +522,7 @@ impl eframe::App for LogCrabApp {
         if !self.pending_drop_files.is_empty() {
             profiling::scope!("process_dropped_files");
             let files = std::mem::take(&mut self.pending_drop_files);
-            self.process_dropped_files(files, ctx);
+            self.process_dropped_files(files);
         }
 
         {
