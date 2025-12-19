@@ -82,6 +82,15 @@ impl TabViewer for LogCrabTabViewer<'_> {
         tab.title()
     }
 
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        // Use stable UUID if available, otherwise fall back to title-based ID
+        if let Some(uuid) = tab.get_uuid() {
+            egui::Id::new(("logcrab_tab", uuid))
+        } else {
+            egui::Id::new(self.title(tab).text())
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         profiling::scope!("TabViewer::ui");
         tab.render(
