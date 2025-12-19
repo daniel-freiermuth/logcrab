@@ -224,13 +224,19 @@ impl ToastManager {
 
     fn render_progress_toasts(&mut self, ctx: &egui::Context) {
         // Clean up dismissed handles and collect active ones
-        let active_states: Vec<ProgressToastState> = {
+        let active_states: Vec<(usize, ProgressToastState, Arc<RwLock<ProgressToastState>>)> = {
             let mut handles = self.progress_handles.lock().unwrap();
             // Remove toasts that have been dismissed long enough
             handles.retain(|state| state.read().map(|s| !s.should_remove()).unwrap_or(false));
             handles
                 .iter()
-                .filter_map(|state| state.read().ok().map(|s| s.clone()))
+                .enumerate()
+                .filter_map(|(idx, state)| {
+                    state
+                        .read()
+                        .ok()
+                        .map(|s| (idx, s.clone(), Arc::clone(state)))
+                })
                 .collect()
         };
 
@@ -245,13 +251,13 @@ impl ToastManager {
         let toast_margin = 10.0;
         let bottom_offset = 40.0; // Space for status bar
 
-        for (idx, state) in active_states.iter().enumerate() {
+        for (idx, state, state_arc) in active_states.iter() {
             let toast_height = if state.progress.is_some() {
                 100.0
             } else {
                 80.0
             };
-            let y_offset = bottom_offset + (idx as f32) * (toast_height + toast_margin);
+            let y_offset = bottom_offset + (*idx as f32) * (toast_height + toast_margin);
 
             let pos = egui::pos2(
                 screen_rect.right() - toast_width - toast_margin,
@@ -262,12 +268,24 @@ impl ToastManager {
                 .fixed_pos(pos)
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
-                    Self::render_single_progress_toast(ui, state);
+                    if Self::render_single_progress_toast(ui, state) {
+                        // Close button was clicked - dismiss the toast immediately
+                        // Set dismissed_at far enough in the past to pass the linger check
+                        if let Ok(mut s) = state_arc.write() {
+                            s.dismissed_at = Some(
+                                Instant::now()
+                                    - std::time::Duration::from_secs_f32(
+                                        DISMISSED_TOAST_LINGER_SECS + 1.0,
+                                    ),
+                            );
+                        }
+                    }
                 });
         }
     }
 
-    fn render_single_progress_toast(ui: &mut egui::Ui, state: &ProgressToastState) {
+    /// Render a single progress toast. Returns true if the close button was clicked.
+    fn render_single_progress_toast(ui: &mut egui::Ui, state: &ProgressToastState) -> bool {
         let is_error = state.error.is_some();
 
         let fill = if is_error {
@@ -276,7 +294,7 @@ impl ToastManager {
             ui.visuals().window_fill
         };
 
-        egui::Frame::default()
+        let inner = egui::Frame::default()
             .fill(fill)
             .stroke(ui.visuals().window_stroke)
             .inner_margin(Margin::same(12))
@@ -290,13 +308,21 @@ impl ToastManager {
             .show(ui, |ui| {
                 ui.set_min_width(280.0);
 
-                ui.horizontal(|ui| {
-                    if !is_error {
-                        ui.spinner();
-                        ui.add_space(8.0);
-                    }
-                    ui.strong(&state.title);
-                });
+                let close_clicked = ui
+                    .horizontal(|ui| {
+                        if !is_error {
+                            ui.spinner();
+                            ui.add_space(8.0);
+                        }
+                        ui.strong(&state.title);
+
+                        // Add close button on the right
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.small_button("x").clicked()
+                        })
+                        .inner
+                    })
+                    .inner;
 
                 ui.add_space(6.0);
 
@@ -324,6 +350,10 @@ impl ToastManager {
                         .fill(Color32::from_rgb(100, 180, 100));
                     ui.add(progress_bar);
                 }
+
+                close_clicked
             });
+
+        inner.inner
     }
 }
