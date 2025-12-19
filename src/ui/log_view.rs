@@ -83,10 +83,8 @@ impl CrabSession {
         let color = DEFAULT_PALETTE[self.monotonic_filter_counter % DEFAULT_PALETTE.len()];
 
         let state = state.unwrap_or_else(|| {
-            FilterState::new(
-                format!("Filter {}", self.monotonic_filter_counter + 1),
-                color,
-            )
+            // Use empty name - title will show "everything" or the filter text dynamically
+            FilterState::new(String::new(), color)
         });
         let mut filter = Box::new(FilterView::new(state));
         if focus_search {

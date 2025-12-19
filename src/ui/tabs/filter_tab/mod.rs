@@ -378,7 +378,24 @@ impl LogCrabTab for FilterView {
             },
         );
 
-        layout_job.append(&self.state.name, 0.0, egui::TextFormat::default());
+        // Determine display name:
+        // 1. Use explicit name if set
+        // 2. Otherwise use filter text (truncated) if present
+        // 3. Otherwise show "everything"
+        let display_name = if !self.state.name.is_empty() {
+            self.state.name.clone()
+        } else if self.state.search.search_text.is_empty() {
+            "everything".to_string()
+        } else {
+            let filter_text = &self.state.search.search_text;
+            if filter_text.chars().count() > 10 {
+                format!("{}…", filter_text.chars().take(9).collect::<String>())
+            } else {
+                filter_text.clone()
+            }
+        };
+
+        layout_job.append(&display_name, 0.0, egui::TextFormat::default());
 
         layout_job.into()
     }
