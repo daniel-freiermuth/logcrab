@@ -369,6 +369,17 @@ impl LogStore {
         self.sources.read().unwrap().iter().map(|s| s.len()).sum()
     }
 
+    /// Get the source name (filename) for a given StoreID
+    pub fn get_source_name(&self, id: &StoreID) -> Option<String> {
+        let sources = self.sources.read().unwrap();
+        sources.get(id.source_index).and_then(|source| {
+            source.file_path.as_ref().and_then(|p| {
+                p.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+        })
+    }
+
     // ========================================================================
     // Bookmark Management (delegates to appropriate SourceData)
     // ========================================================================

@@ -135,6 +135,7 @@ pub struct LogTable;
 /// Stored column widths for the log table
 #[derive(Clone, Debug)]
 pub struct ColumnWidths {
+    pub source: f32,
     pub line: f32,
     pub timestamp: f32,
     pub message: f32,
@@ -144,6 +145,7 @@ pub struct ColumnWidths {
 impl Default for ColumnWidths {
     fn default() -> Self {
         Self {
+            source: 120.0,
             line: 60.0,
             timestamp: 175.0,
             message: 0.0, // Will be calculated
@@ -214,7 +216,10 @@ impl LogTable {
         let body_height = available_height - header_height - 1.0;
 
         // Calculate minimum message column width to fill remaining space
-        let other_cols_width = column_widths.line + column_widths.timestamp + column_widths.score;
+        let other_cols_width = column_widths.source
+            + column_widths.line
+            + column_widths.timestamp
+            + column_widths.score;
         let remainder = (available_width - other_cols_width).max(Self::MIN_MESSAGE_WIDTH);
 
         let mut table = TableBuilder::new(ui)
@@ -225,15 +230,16 @@ impl LogTable {
             .vscroll(true)
             .min_scrolled_height(body_height)
             .max_scroll_height(body_height)
-            .column(Column::initial(60.0).resizable(true).clip(true))
-            .column(Column::initial(175.0).resizable(true).clip(true))
+            .column(Column::initial(120.0).resizable(true).clip(true)) // Source
+            .column(Column::initial(60.0).resizable(true).clip(true)) // Line
+            .column(Column::initial(175.0).resizable(true).clip(true)) // Timestamp
             .column(
                 Column::initial(remainder)
                     .at_least(remainder)
                     .resizable(true)
                     .clip(true),
-            )
-            .column(Column::auto().clip(true));
+            ) // Message
+            .column(Column::auto().clip(true)); // Score
 
         if let Some(row_idx) = scroll_to_row {
             table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
@@ -274,6 +280,10 @@ impl LogTable {
     }
 
     fn render_header(header: &mut egui_extras::TableRow, column_widths: &mut ColumnWidths) {
+        header.col(|ui| {
+            column_widths.source = ui.available_width();
+            ui.strong("Source");
+        });
         header.col(|ui| {
             column_widths.line = ui.available_width();
             ui.strong("Line");
@@ -341,6 +351,7 @@ impl LogTable {
         let is_selected = selected_line_index.as_ref() == Some(&line_idx);
         let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
         let color = score_to_color(line.anomaly_score, dark_mode);
+        let source_name = store.get_source_name(&line_idx);
 
         let mut row_clicked = false;
         let mut row_right_clicked = false;
@@ -352,6 +363,7 @@ impl LogTable {
             is_selected,
             is_bookmarked,
             color,
+            source_name.as_deref(),
             bookmarked_lines,
             all_filter_highlights,
             &mut row_clicked,
@@ -380,12 +392,25 @@ impl LogTable {
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
+        source_name: Option<&str>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
         dark_mode: bool,
     ) {
+        Self::render_source_column(
+            row,
+            line_idx,
+            is_selected,
+            is_bookmarked,
+            color,
+            source_name,
+            row_clicked,
+            row_right_clicked,
+            dark_mode,
+        );
+
         Self::render_line_column(
             row,
             line,
@@ -438,6 +463,65 @@ impl LogTable {
             row_right_clicked,
             dark_mode,
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_source_column(
+        row: &mut egui_extras::TableRow,
+        line_idx: StoreID,
+        is_selected: bool,
+        is_bookmarked: bool,
+        color: Color32,
+        source_name: Option<&str>,
+        row_clicked: &mut bool,
+        row_right_clicked: &mut bool,
+        dark_mode: bool,
+    ) {
+        row.col(|ui| {
+            // Background highlight for selected/bookmarked rows
+            if is_selected && is_bookmarked {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    selected_bookmarked_row_color(dark_mode),
+                );
+            } else if is_bookmarked {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    bookmarked_row_color(dark_mode),
+                );
+            } else if is_selected {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    selected_row_color(dark_mode),
+                );
+            }
+
+            // Display source name (truncated if needed)
+            let display_name = source_name.unwrap_or("stdin");
+            let text = RichText::new(display_name).color(color);
+            let label_response = ui.add(egui::Label::new(text).truncate());
+
+            // Tooltip with full source name
+            if let Some(name) = source_name {
+                label_response.on_hover_text(name);
+            }
+
+            let response = ui.interact(
+                ui.max_rect(),
+                ui.id().with(line_idx).with("source"),
+                egui::Sense::click(),
+            );
+
+            if response.clicked() {
+                *row_clicked = true;
+            }
+            if response.secondary_clicked() {
+                *row_right_clicked = true;
+            }
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
