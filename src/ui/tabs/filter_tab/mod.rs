@@ -241,6 +241,7 @@ impl FilterView {
                     data_state.selected_line_index = Some(store_id);
                 }
                 FilterViewEvent::BookmarkToggled { store_id } => {
+                    data_state.selected_line_index = Some(store_id);
                     data_state.toggle_bookmark(store_id);
                     data_state.modified = true;
                 }
