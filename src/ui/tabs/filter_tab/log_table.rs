@@ -433,7 +433,6 @@ impl LogTable {
             is_selected,
             is_bookmarked,
             color,
-            all_filter_highlights,
             row_clicked,
             row_right_clicked,
             dark_mode,
@@ -601,8 +600,7 @@ impl LogTable {
         line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
-        bg_color: Color32,
-        all_filter_highlights: &[FilterHighlight],
+        color: Color32,
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
         dark_mode: bool,
@@ -629,14 +627,8 @@ impl LogTable {
             }
 
             let timestamp_str = line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-
-            let job = FilterHighlight::highlight_text_with_filters(
-                &timestamp_str,
-                bg_color,
-                all_filter_highlights,
-                dark_mode,
-            );
-            ui.label(job);
+            let text = RichText::new(timestamp_str).color(color);
+            ui.label(text);
 
             let response = ui.interact(
                 ui.max_rect(),
