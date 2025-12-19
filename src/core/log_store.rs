@@ -26,8 +26,19 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, RwLock};
+
+/// Information about a log source for UI display
+#[derive(Debug, Clone)]
+pub struct SourceInfo {
+    /// Index in the store's sources list
+    pub index: usize,
+    /// Display name (usually the filename)
+    pub name: String,
+    /// Time offset in seconds applied to this source's timestamps
+    pub time_offset_secs: i64,
+}
 
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 #[derive(Debug)]
@@ -40,6 +51,10 @@ pub struct SourceData {
     by_timestamp: RwLock<Vec<usize>>,
     /// Bookmarks for this source, keyed by line index within this source
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
+    /// Time offset in seconds to apply to all timestamps from this source.
+    /// Positive values shift timestamps forward (source is behind), negative shift back.
+    /// Use this to align sources recorded in different timezones.
+    time_offset_secs: AtomicI64,
     version: AtomicU64,
 }
 
@@ -51,6 +66,7 @@ impl SourceData {
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
             bookmarks: RwLock::new(HashMap::new()),
+            time_offset_secs: AtomicI64::new(0),
             version: AtomicU64::new(1),
         };
         sd.load_bookmarks();
@@ -78,6 +94,34 @@ impl SourceData {
     pub fn version(&self) -> u64 {
         profiling::scope!("SourceData::version");
         self.version.load(AtomicOrdering::SeqCst)
+    }
+
+    // ========================================================================
+    // Time Offset Management
+    // ========================================================================
+
+    /// Get the time offset in seconds for this source.
+    /// Positive values mean the source timestamps are shifted forward.
+    pub fn time_offset_secs(&self) -> i64 {
+        self.time_offset_secs.load(AtomicOrdering::SeqCst)
+    }
+
+    /// Set the time offset in seconds for this source.
+    /// Positive values shift timestamps forward (use when source was recorded in an earlier timezone).
+    /// For example, if source is in UTC and local is UTC+1, set offset to +3600.
+    pub fn set_time_offset_secs(&self, offset: i64) {
+        self.time_offset_secs.store(offset, AtomicOrdering::SeqCst);
+        self.bump_version(); // Trigger re-sort and re-render
+    }
+
+    /// Apply the time offset to a timestamp
+    pub fn adjust_timestamp(&self, ts: chrono::DateTime<Local>) -> chrono::DateTime<Local> {
+        let offset = self.time_offset_secs();
+        if offset == 0 {
+            ts
+        } else {
+            ts + chrono::Duration::seconds(offset)
+        }
     }
 
     // ========================================================================
@@ -110,7 +154,7 @@ impl SourceData {
         self.bookmarks.read().unwrap().values().cloned().collect()
     }
 
-    /// Load bookmarks from this source's .crab file
+    /// Load bookmarks and time offset from this source's .crab file
     fn load_bookmarks(&self) {
         let Some(crab_path) = self.crab_file_path() else {
             return;
@@ -119,14 +163,18 @@ impl SourceData {
         match CrabFile::load(&crab_path) {
             Ok(crab_data) => {
                 log::info!(
-                    "Loaded {} bookmarks from {}",
+                    "Loaded {} bookmarks and time_offset={}s from {}",
                     crab_data.bookmarks.len(),
+                    crab_data.time_offset_secs,
                     crab_path.display()
                 );
                 let mut bookmarks = self.bookmarks.write().unwrap();
                 for bookmark in crab_data.bookmarks {
                     bookmarks.insert(bookmark.line_index, bookmark);
                 }
+                // Load time offset
+                self.time_offset_secs
+                    .store(crab_data.time_offset_secs, AtomicOrdering::SeqCst);
             }
             Err(crate::core::SessionError::Io(ref e))
                 if e.kind() == std::io::ErrorKind::NotFound =>
@@ -139,7 +187,7 @@ impl SourceData {
         }
     }
 
-    /// Save bookmarks to this source's .crab file
+    /// Save bookmarks and time offset to this source's .crab file
     /// Note: filters and highlights are passed in since they're shared across sources
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
         let Some(crab_path) = self.crab_file_path() else {
@@ -152,13 +200,15 @@ impl SourceData {
             bookmarks: self.get_bookmarks(),
             filters: filters.to_vec(),
             highlights: highlights.to_vec(),
+            time_offset_secs: self.time_offset_secs(),
         };
 
         match crab_data.save(&crab_path) {
             Ok(()) => log::debug!(
-                "Saved .crab file {} with {} bookmarks",
+                "Saved .crab file {} with {} bookmarks, time_offset={}s",
                 crab_path.display(),
-                crab_data.bookmarks.len()
+                crab_data.bookmarks.len(),
+                crab_data.time_offset_secs
             ),
             Err(e) => log::error!("Failed to save .crab file {}: {e}", crab_path.display()),
         }
@@ -303,15 +353,14 @@ pub struct StoreID {
 }
 
 impl StoreID {
+    /// Compare two StoreIDs by their adjusted timestamps
     pub fn cmp(&self, other: &StoreID, store: &LogStore) -> Ordering {
-        let self_line = store
-            .get_by_id(self)
+        let t1 = store
+            .get_adjusted_timestamp(self)
             .expect("Tried to compare non-existent line (self).");
-        let other_line = store
-            .get_by_id(other)
+        let t2 = store
+            .get_adjusted_timestamp(other)
             .expect("Tried to compare non-existent line (other).");
-        let t1 = self_line.timestamp;
-        let t2 = other_line.timestamp;
 
         match t1.cmp(&t2) {
             Ordering::Equal => match self.source_index.cmp(&other.source_index) {
@@ -512,15 +561,16 @@ impl LogStore {
         // Convert to iterators
         let mut iters: Vec<_> = sources.into_iter().map(IntoIterator::into_iter).collect();
 
-        // Use a min-heap: (timestamp, source_idx, store_id) - Reverse for min-heap behavior
+        // Use a min-heap: (adjusted_timestamp, source_idx, store_id) - Reverse for min-heap behavior
         let mut heap: BinaryHeap<Reverse<(chrono::DateTime<Local>, usize, StoreID)>> =
             BinaryHeap::new();
 
         // Initialize heap with first element from each non-empty source
         for (src_idx, iter) in iters.iter_mut().enumerate() {
             if let Some(id) = iter.next() {
-                if let Some(line) = self.get_by_id(&id) {
-                    heap.push(Reverse((line.timestamp, src_idx, id)));
+                // Use adjusted timestamp for sorting
+                if let Some(ts) = self.get_adjusted_timestamp(&id) {
+                    heap.push(Reverse((ts, src_idx, id)));
                 }
             }
         }
@@ -531,8 +581,9 @@ impl LogStore {
 
             // Push the next element from this source onto the heap
             if let Some(next_id) = iters[src_idx].next() {
-                if let Some(line) = self.get_by_id(&next_id) {
-                    heap.push(Reverse((line.timestamp, src_idx, next_id)));
+                // Use adjusted timestamp for sorting
+                if let Some(ts) = self.get_adjusted_timestamp(&next_id) {
+                    heap.push(Reverse((ts, src_idx, next_id)));
                 }
             }
         }
@@ -543,6 +594,47 @@ impl LogStore {
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
         let sources = self.sources.read().unwrap();
         sources.get(id.source_index)?.get_by_id(id.line_index)
+    }
+
+    /// Get the adjusted timestamp for a line, applying the source's time offset
+    pub fn get_adjusted_timestamp(&self, id: &StoreID) -> Option<chrono::DateTime<Local>> {
+        let sources = self.sources.read().unwrap();
+        let source = sources.get(id.source_index)?;
+        let line = source.get_by_id(id.line_index)?;
+        Some(source.adjust_timestamp(line.timestamp))
+    }
+
+    /// Get the time offset in seconds for a source
+    pub fn get_source_time_offset(&self, source_index: usize) -> Option<i64> {
+        let sources = self.sources.read().unwrap();
+        sources.get(source_index).map(|s| s.time_offset_secs())
+    }
+
+    /// Set the time offset in seconds for a source
+    pub fn set_source_time_offset(&self, source_index: usize, offset_secs: i64) {
+        let sources = self.sources.read().unwrap();
+        if let Some(source) = sources.get(source_index) {
+            source.set_time_offset_secs(offset_secs);
+        }
+    }
+
+    /// Get all sources with their names and time offsets
+    pub fn get_source_info(&self) -> Vec<SourceInfo> {
+        let sources = self.sources.read().unwrap();
+        sources
+            .iter()
+            .enumerate()
+            .map(|(idx, source)| SourceInfo {
+                index: idx,
+                name: source
+                    .file_path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| format!("Source {idx}")),
+                time_offset_secs: source.time_offset_secs(),
+            })
+            .collect()
     }
 }
 

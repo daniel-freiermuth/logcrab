@@ -29,7 +29,7 @@ use std::path::Path;
 use crate::core::log_store::Bookmark;
 
 /// Current version of the .crab file format
-pub const CRAB_FILE_VERSION: u32 = 2;
+pub const CRAB_FILE_VERSION: u32 = 3;
 
 /// Current version of the .crab-filters file format
 pub const CRAB_FILTERS_VERSION: u32 = 1;
@@ -134,6 +134,10 @@ pub struct CrabFile {
     pub filters: Vec<SavedFilter>,
     #[serde(default)]
     pub highlights: Vec<SavedHighlight>,
+    /// Time offset in seconds to apply to timestamps from this source.
+    /// Used to align sources recorded in different timezones.
+    #[serde(default)]
+    pub time_offset_secs: i64,
 }
 
 impl CrabFile {

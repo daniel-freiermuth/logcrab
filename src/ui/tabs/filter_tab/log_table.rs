@@ -352,6 +352,7 @@ impl LogTable {
         let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
         let color = score_to_color(line.anomaly_score, dark_mode);
         let source_name = store.get_source_name(&line_idx);
+        let adjusted_timestamp = store.get_adjusted_timestamp(&line_idx);
 
         let mut row_clicked = false;
         let mut row_right_clicked = false;
@@ -364,6 +365,7 @@ impl LogTable {
             is_bookmarked,
             color,
             source_name.as_deref(),
+            adjusted_timestamp,
             bookmarked_lines,
             all_filter_highlights,
             &mut row_clicked,
@@ -393,6 +395,7 @@ impl LogTable {
         is_bookmarked: bool,
         color: Color32,
         source_name: Option<&str>,
+        adjusted_timestamp: Option<chrono::DateTime<chrono::Local>>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
@@ -433,6 +436,7 @@ impl LogTable {
             is_selected,
             is_bookmarked,
             color,
+            adjusted_timestamp,
             row_clicked,
             row_right_clicked,
             dark_mode,
@@ -601,6 +605,7 @@ impl LogTable {
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
+        adjusted_timestamp: Option<chrono::DateTime<chrono::Local>>,
         row_clicked: &mut bool,
         row_right_clicked: &mut bool,
         dark_mode: bool,
@@ -626,7 +631,9 @@ impl LogTable {
                 );
             }
 
-            let timestamp_str = line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            // Use adjusted timestamp if available, otherwise fall back to line timestamp
+            let display_timestamp = adjusted_timestamp.unwrap_or(line.timestamp);
+            let timestamp_str = display_timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             let text = RichText::new(timestamp_str).color(color);
             ui.label(text);
 

@@ -28,6 +28,9 @@ pub struct LogCrabApp {
     /// Whether to show the keyboard shortcuts window
     show_shortcuts_window: bool,
 
+    /// Whether to show the time offset configuration window
+    show_time_offset_window: bool,
+
     /// Global configuration (shortcuts, favorites, etc.)
     global_config: GlobalConfig,
 
@@ -60,6 +63,7 @@ impl LogCrabApp {
             session: None,
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
+            show_time_offset_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
@@ -357,6 +361,16 @@ impl LogCrabApp {
             }
         });
 
+        // Sources menu - only show when we have a session with sources
+        if self.session.is_some() {
+            ui.menu_button("Sources", |ui| {
+                if ui.button("Configure Time Offsets...").clicked() {
+                    self.show_time_offset_window = true;
+                    ui.close();
+                }
+            });
+        }
+
         ui.menu_button("Help", |ui| {
             if ui.button("Anomaly Score Calculation").clicked() {
                 self.show_anomaly_explanation = true;
@@ -561,6 +575,12 @@ impl eframe::App for LogCrabApp {
                 &mut self.pending_rebind,
                 &mut self.global_config,
             );
+        }
+
+        if self.show_time_offset_window {
+            if let Some(session) = &self.session {
+                windows::render_time_offset_window(ctx, &mut self.show_time_offset_window, session);
+            }
         }
 
         // Show toast notifications
