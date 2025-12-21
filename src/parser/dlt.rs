@@ -53,7 +53,7 @@ fn calc_boot_time_from_message(msg: &Message) -> Option<DateTime<Local>> {
     let storage_time = msg
         .storage_header
         .as_ref()
-        .map(|sh| storage_time_to_datetime(&sh.timestamp))?;
+        .and_then(|sh| storage_time_to_datetime(&sh.timestamp))?;
 
     // Get header timestamp (time since boot in 0.1ms units, precise)
     let boot_time_offset = msg.header.timestamp.map(dlt_header_time_to_timedelta)?;
@@ -84,14 +84,13 @@ fn calc_boot_time_from_file(path: &Path) -> Result<DateTime<Local>, String> {
     }
 }
 
-fn storage_time_to_datetime(storage_time: &DltTimeStamp) -> DateTime<Local> {
+fn storage_time_to_datetime(storage_time: &DltTimeStamp) -> Option<DateTime<Local>> {
     Local
         .timestamp_opt(
             i64::from(storage_time.seconds),
             storage_time.microseconds * 1000,
         )
         .single()
-        .expect("Invalid storage timestamp")
 }
 
 const fn dlt_header_time_to_timedelta(header_time: u32) -> TimeDelta {
@@ -264,10 +263,11 @@ fn convert_dlt_message(
         return None;
     };
     let (storage_ecu, storage_time) = if let Some(storage_header) = &msg.storage_header {
-        (
-            storage_header.ecu_id.clone(),
-            storage_time_to_datetime(&storage_header.timestamp),
-        )
+        let Some(ts) = storage_time_to_datetime(&storage_header.timestamp) else {
+            log::error!("DLT message has invalid storage timestamp for line {line_number}");
+            return None;
+        };
+        (storage_header.ecu_id.clone(), ts)
     } else {
         log::error!("DLT message missing Storage Header for line {line_number}");
         return None;
