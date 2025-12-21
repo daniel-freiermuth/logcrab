@@ -12,7 +12,7 @@ static WARNING_KEYWORDS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(warn|warning|caution|alert)\b").unwrap());
 
 static FAILURE_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(fail|failed|failure|unsuccessful|denied|rejected|timeout|timed out)\b")
+    Regex::new(r"(?i)\b(fail|failed|failure|unsuccessful|denied|rejected|time(?:d|s|out)? out|timing out)\b")
         .unwrap()
 });
 
