@@ -116,4 +116,9 @@ pub fn render_shortcuts_window(
 
             ui.add_space(4.0);
         });
+
+    // Clear pending rebind if window was just closed
+    if !*open {
+        *pending_rebind = None;
+    }
 }
