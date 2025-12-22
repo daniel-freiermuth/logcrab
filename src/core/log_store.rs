@@ -86,27 +86,32 @@ impl SourceData {
 
     /// Add or update a bookmark for a line in this source
     fn set_bookmark(&self, line_index: usize, name: String) {
+        profiling::scope!("SourceData::bookmarks::write");
         let bookmark = Bookmark { line_index, name };
         self.bookmarks.write().unwrap().insert(line_index, bookmark);
     }
 
     /// Remove a bookmark from this source
     fn remove_bookmark(&self, line_index: usize) -> Option<Bookmark> {
+        profiling::scope!("SourceData::bookmarks::write");
         self.bookmarks.write().unwrap().remove(&line_index)
     }
 
     /// Check if a line has a bookmark
     fn has_bookmark(&self, line_index: usize) -> bool {
+        profiling::scope!("SourceData::bookmarks::read");
         self.bookmarks.read().unwrap().contains_key(&line_index)
     }
 
     /// Get a bookmark by line index
     fn get_bookmark(&self, line_index: usize) -> Option<Bookmark> {
+        profiling::scope!("SourceData::bookmarks::read");
         self.bookmarks.read().unwrap().get(&line_index).cloned()
     }
 
     /// Get all bookmarks for this source
     fn get_bookmarks(&self) -> Vec<Bookmark> {
+        profiling::scope!("SourceData::bookmarks::read");
         self.bookmarks.read().unwrap().values().cloned().collect()
     }
 
@@ -123,6 +128,7 @@ impl SourceData {
                     crab_data.bookmarks.len(),
                     crab_path.display()
                 );
+                profiling::scope!("SourceData::bookmarks::write");
                 let mut bookmarks = self.bookmarks.write().unwrap();
                 for bookmark in crab_data.bookmarks {
                     bookmarks.insert(bookmark.line_index, bookmark);
@@ -178,13 +184,23 @@ impl SourceData {
         }
 
         profiling::scope!("SourceData::append_lines");
-        let new_start_idx = self.lines.read().unwrap().len();
+        let new_start_idx = {
+            profiling::scope!("SourceData::lines::read");
+            self.lines.read().unwrap().len()
+        };
         {
+            profiling::scope!("SourceData::lines::write");
             self.lines.write().unwrap().extend(lines);
         }
 
-        let lines = self.lines.read().unwrap();
-        let existing_by_ts = self.by_timestamp.read().unwrap().clone();
+        let lines = {
+            profiling::scope!("SourceData::lines::read");
+            self.lines.read().unwrap()
+        };
+        let existing_by_ts = {
+            profiling::scope!("SourceData::by_timestamp::read");
+            self.by_timestamp.read().unwrap().clone()
+        };
 
         // Build timestamp index for new lines, sorted by timestamp
         let new_by_ts = {
@@ -217,7 +233,7 @@ impl SourceData {
         };
 
         {
-            profiling::scope!("swap_lines_and_index");
+            profiling::scope!("SourceData::by_timestamp::write");
             *self.by_timestamp.write().unwrap() = merged_by_ts;
         }
         self.bump_version();
@@ -227,6 +243,7 @@ impl SourceData {
     /// Scores vec should be same length as lines
     pub fn set_scores(&self, scores: &[f64]) {
         profiling::scope!("SourceData::set_scores");
+        profiling::scope!("SourceData::lines::write");
         let mut guard = self.lines.write().unwrap();
         for (idx, &score) in scores.iter().enumerate() {
             if let Some(line) = guard.get_mut(idx) {
@@ -239,11 +256,13 @@ impl SourceData {
 
     /// Get the number of lines
     pub fn len(&self) -> usize {
+        profiling::scope!("SourceData::lines::read");
         self.lines.read().unwrap().len()
     }
 
     /// Check if this source has no lines
     pub fn is_empty(&self) -> bool {
+        profiling::scope!("SourceData::lines::read");
         self.lines.read().unwrap().is_empty()
     }
 
@@ -255,6 +274,7 @@ impl SourceData {
     }
 
     pub fn get_by_id(&self, id: usize) -> Option<LogLine> {
+        profiling::scope!("SourceData::lines::read");
         let guard = self.lines.read().unwrap();
         guard.get(id).cloned()
     }
@@ -290,6 +310,7 @@ pub struct LogStore {
 
 impl Clone for LogStore {
     fn clone(&self) -> Self {
+        profiling::scope!("LogStore::sources::read");
         Self {
             sources: RwLock::new(self.sources.read().unwrap().clone()),
         }
@@ -333,11 +354,13 @@ impl LogStore {
 
     /// Add a source to the store, returns the `SourceData` for appending lines
     pub fn add_source(self: &Arc<Self>, source_data: &Arc<SourceData>) {
+        profiling::scope!("LogStore::sources::write");
         self.sources.write().unwrap().push(Arc::clone(source_data));
     }
 
     /// Check if a file with the given path is already loaded in the store
     pub fn contains_file(&self, path: &Path) -> bool {
+        profiling::scope!("LogStore::sources::read");
         let canonical_path = path.canonicalize().ok();
         let sources = self.sources.read().unwrap();
         sources.iter().any(|source| {
@@ -356,6 +379,7 @@ impl LogStore {
     /// Get current version number (bumped whenever data changes)
     pub fn version(&self) -> u64 {
         profiling::scope!("LogStore::version");
+        profiling::scope!("LogStore::sources::read");
         self.sources
             .read()
             .unwrap()
@@ -366,11 +390,13 @@ impl LogStore {
 
     /// Get total number of lines across all sources
     pub fn total_lines(&self) -> usize {
+        profiling::scope!("LogStore::sources::read");
         self.sources.read().unwrap().iter().map(|s| s.len()).sum()
     }
 
-    /// Get the source name (filename) for a given StoreID
+    /// Get the source name (filename) for a given `StoreID`
     pub fn get_source_name(&self, id: &StoreID) -> Option<String> {
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         sources.get(id.source_index).and_then(|source| {
             source.file_path.as_ref().and_then(|p| {
@@ -386,6 +412,7 @@ impl LogStore {
 
     /// Add or update a bookmark
     pub fn set_bookmark(&self, id: &StoreID, name: String) {
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         if let Some(source) = sources.get(id.source_index) {
             source.set_bookmark(id.line_index, name);
@@ -394,6 +421,7 @@ impl LogStore {
 
     /// Remove a bookmark
     pub fn remove_bookmark(&self, id: &StoreID) -> Option<Bookmark> {
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         sources
             .get(id.source_index)
@@ -402,6 +430,7 @@ impl LogStore {
 
     /// Check if a line has a bookmark
     pub fn has_bookmark(&self, id: &StoreID) -> bool {
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         sources
             .get(id.source_index)
@@ -410,6 +439,7 @@ impl LogStore {
 
     /// Get a bookmark by `StoreID`
     pub fn get_bookmark(&self, id: &StoreID) -> Option<BookmarkData> {
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         sources
             .get(id.source_index)
@@ -423,6 +453,7 @@ impl LogStore {
     /// Get all bookmarks across all sources, with their `StoreIDs`
     pub fn get_all_bookmarks(&self) -> Vec<BookmarkData> {
         profiling::scope!("LogStore::get_all_bookmarks");
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         sources
             .iter()
@@ -445,6 +476,7 @@ impl LogStore {
     /// Save all sources' .crab files
     pub fn save_all_crab_files(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
         profiling::scope!("LogStore::save_all_crab_files");
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         for source in sources.iter() {
             source.save_crab_file(filters, highlights);
@@ -464,6 +496,7 @@ impl LogStore {
         F: Fn(&LogLine) -> bool + Sync,
     {
         profiling::scope!("LogStore::get_matching_ids");
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
 
         // Parallel filter each source, collect results
@@ -541,6 +574,7 @@ impl LogStore {
     }
 
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
+        profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         sources.get(id.source_index)?.get_by_id(id.line_index)
     }
