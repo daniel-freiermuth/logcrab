@@ -28,6 +28,7 @@ use egui::Color32;
 
 use crate::core::log_store::StoreID;
 use crate::core::{FilterWorkerHandle, LogStore, SearchRule};
+use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 
 /// Shared state for a log viewing session.
@@ -43,6 +44,9 @@ pub struct SessionState {
 
     /// Handle to send filter requests to the background worker
     pub filter_worker: FilterWorkerHandle,
+
+    /// Handle to send histogram requests to the background worker
+    pub histogram_worker: HistogramWorkerHandle,
 
     /// Currently selected line index
     pub selected_line_index: Option<StoreID>,
@@ -79,11 +83,16 @@ pub struct FilterToHighlightData {
 }
 
 impl SessionState {
-    /// Create a new session state with the given log store and filter worker handle.
-    pub fn new(store: Arc<LogStore>, filter_worker: FilterWorkerHandle) -> Self {
+    /// Create a new session state with the given log store and worker handles.
+    pub fn new(
+        store: Arc<LogStore>,
+        filter_worker: FilterWorkerHandle,
+        histogram_worker: HistogramWorkerHandle,
+    ) -> Self {
         Self {
             store,
             filter_worker,
+            histogram_worker,
             selected_line_index: None,
             modified: false,
             last_saved: None,

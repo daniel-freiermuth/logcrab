@@ -167,6 +167,7 @@ impl FilterView {
                 global_config.hide_epoch_in_histogram,
                 histogram_markers,
                 &mut self.state.histogram_cache,
+                &log_view_state.histogram_worker,
             )
         };
         if let Some(hist_event) = hist_event {

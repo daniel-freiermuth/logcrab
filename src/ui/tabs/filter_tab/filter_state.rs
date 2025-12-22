@@ -42,10 +42,12 @@ pub struct FilterState {
 
 impl FilterState {
     pub fn new(name: String, color: Color32) -> Self {
+        let rule = SearchRule::new(name, color);
+        let filter_id = rule.id();
         Self {
-            rule: SearchRule::new(name, color),
+            rule,
             last_rendered_selection: None,
-            histogram_cache: HistogramCache::default(),
+            histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
         }
     }
@@ -81,10 +83,11 @@ impl std::ops::DerefMut for FilterState {
 impl From<&SavedFilter> for FilterState {
     fn from(saved: &SavedFilter) -> Self {
         let rule = SearchRule::from(saved);
+        let filter_id = rule.id();
         Self {
             rule,
             last_rendered_selection: None,
-            histogram_cache: HistogramCache::default(),
+            histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
         }
     }

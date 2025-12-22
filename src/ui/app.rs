@@ -4,6 +4,7 @@ use super::ToastManager;
 use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
+use crate::core::histogram_worker::HistogramWorker;
 use crate::core::{FilterWorker, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
@@ -24,6 +25,9 @@ pub struct LogCrabApp {
 
     /// Background filter worker (owned, dropped on app exit)
     filter_worker: FilterWorker,
+
+    /// Background histogram worker (owned, dropped on app exit)
+    histogram_worker: HistogramWorker,
 
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
@@ -62,6 +66,7 @@ impl LogCrabApp {
         let mut app = Self {
             session: None,
             filter_worker: FilterWorker::new(),
+            histogram_worker: HistogramWorker::new(),
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
@@ -87,7 +92,11 @@ impl LogCrabApp {
     pub fn start_new_session(&mut self) {
         // Create a new store for this file
         let store = LogStore::new();
-        self.session = Some(CrabSession::new(store, self.filter_worker.handle()));
+        self.session = Some(CrabSession::new(
+            store,
+            self.filter_worker.handle(),
+            self.histogram_worker.handle(),
+        ));
     }
 
     /// Add a file to the current session

@@ -16,16 +16,16 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::core::histogram_worker::{
+    AnomalyDistribution, HistogramCacheKey, HistogramRequest, HistogramResult,
+    HistogramWorkerHandle, NUM_BUCKETS, SCORE_BUCKETS,
+};
 use crate::core::{log_store::StoreID, LogStore};
 use crate::ui::tabs::filter_tab::log_table;
-use chrono::{DateTime, Datelike, Local};
+use chrono::{DateTime, Local};
 use egui::{Color32, Ui};
-
-/// Number of horizontal time buckets in the histogram
-const NUM_BUCKETS: usize = 100;
-
-/// Number of vertical buckets for anomaly score distribution
-const SCORE_BUCKETS: usize = 20;
+use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 
 /// Marker data for showing filter matches in histogram
 #[derive(Clone)]
@@ -35,23 +35,22 @@ pub struct HistogramMarker {
     pub color: Color32,
 }
 
-/// Distribution of anomaly scores within a histogram bucket
-#[derive(Debug, Clone, Copy, Default)]
-struct AnomalyDistribution {
-    buckets: [usize; SCORE_BUCKETS],
-}
-
 /// Event emitted when histogram is clicked
 #[derive(Clone)]
 pub struct HistogramClickEvent {
     pub line_index: StoreID,
 }
 
-/// Cached histogram computation results
-#[derive(Clone, Default)]
+/// Cached histogram computation results with async support
 pub struct HistogramCache {
-    /// Cache key: (`store_version`, `indices_len`, `hide_epoch`)
-    key: (u64, usize, bool),
+    /// Filter ID for this cache (used for worker requests)
+    filter_id: usize,
+    /// Cache key for the current valid data
+    key: Option<HistogramCacheKey>,
+    /// Pending computation key (what we're waiting for)
+    pending_key: Option<HistogramCacheKey>,
+    /// Channel to receive computation results
+    result_rx: Option<Receiver<HistogramResult>>,
     /// Filtered indices after epoch removal (if `hide_epoch` is true)
     effective_indices: Vec<StoreID>,
     /// Time range of the histogram
@@ -64,21 +63,107 @@ pub struct HistogramCache {
     anomaly_buckets: Vec<AnomalyDistribution>,
 }
 
-impl HistogramCache {
-    /// Check if cache is valid for the given inputs
-    fn is_valid(&self, store_version: u64, indices_len: usize, hide_epoch: bool) -> bool {
-        self.key == (store_version, indices_len, hide_epoch)
+impl Default for HistogramCache {
+    fn default() -> Self {
+        Self {
+            filter_id: 0,
+            key: None,
+            pending_key: None,
+            result_rx: None,
+            effective_indices: Vec::new(),
+            time_range: None,
+            bucket_size: 0.0,
+            buckets: Vec::new(),
+            anomaly_buckets: Vec::new(),
+        }
     }
 }
 
-/// Calculate which bucket a timestamp belongs to
-fn timestamp_to_bucket(
-    ts: chrono::DateTime<chrono::Local>,
-    start_time: chrono::DateTime<chrono::Local>,
-    bucket_size: f64,
-) -> usize {
-    let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-    ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1)
+impl HistogramCache {
+    /// Create a new histogram cache with the given filter ID
+    pub fn new(filter_id: usize) -> Self {
+        Self {
+            filter_id,
+            ..Default::default()
+        }
+    }
+
+    /// Check if cache is valid for the given inputs
+    fn is_valid(&self, store_version: u64, indices_len: usize, hide_epoch: bool) -> bool {
+        self.key == Some(HistogramCacheKey {
+            store_version,
+            indices_len,
+            hide_epoch,
+        })
+    }
+
+    /// Check if we're already waiting for the right computation
+    fn is_pending(&self, store_version: u64, indices_len: usize, hide_epoch: bool) -> bool {
+        self.pending_key == Some(HistogramCacheKey {
+            store_version,
+            indices_len,
+            hide_epoch,
+        })
+    }
+
+    /// Poll for completed results and update cache if ready
+    fn poll_results(&mut self) -> bool {
+        if let Some(ref rx) = self.result_rx {
+            match rx.try_recv() {
+                Ok(result) => {
+                    // Update cache with result
+                    self.key = Some(result.cache_key);
+                    self.pending_key = None;
+                    self.effective_indices = result.effective_indices;
+                    self.time_range = result.time_range;
+                    self.bucket_size = result.bucket_size;
+                    self.buckets = result.buckets;
+                    self.anomaly_buckets = result.anomaly_buckets;
+                    self.result_rx = None;
+                    true
+                }
+                Err(mpsc::TryRecvError::Empty) => false,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // Worker died or task was cancelled, clear pending state
+                    self.pending_key = None;
+                    self.result_rx = None;
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Request a new histogram computation
+    fn request_computation(
+        &mut self,
+        worker: &HistogramWorkerHandle,
+        store: &Arc<LogStore>,
+        filtered_indices: &[StoreID],
+        hide_epoch: bool,
+        store_version: u64,
+    ) {
+        let (tx, rx) = mpsc::channel();
+        let cache_key = HistogramCacheKey {
+            store_version,
+            indices_len: filtered_indices.len(),
+            hide_epoch,
+        };
+
+        let request = HistogramRequest {
+            filter_id: self.filter_id,
+            store: Arc::clone(store),
+            filtered_indices: filtered_indices.to_vec(),
+            hide_epoch,
+            store_version,
+            result_tx: tx,
+        };
+
+        worker.send_request(request);
+        self.pending_key = Some(cache_key);
+        self.result_rx = Some(rx);
+    }
 }
 
 /// Reusable timeline histogram component
@@ -87,15 +172,17 @@ pub struct Histogram;
 impl Histogram {
     /// Render the timeline histogram
     ///
-    /// Returns Some(event) if the histogram was clicked
+    /// Returns Some(event) if the histogram was clicked.
+    /// Uses async computation - will show "Computing..." while waiting for results.
     pub fn render(
         ui: &mut Ui,
-        store: &LogStore,
+        store: &Arc<LogStore>,
         filtered_indices: &[StoreID],
         selected_line_index: Option<StoreID>,
         hide_epoch: bool,
         markers: &[HistogramMarker],
         cache: &mut HistogramCache,
+        worker: &HistogramWorkerHandle,
     ) -> Option<HistogramClickEvent> {
         profiling::scope!("Histogram::render");
 
@@ -109,67 +196,37 @@ impl Histogram {
 
         let store_version = store.version();
 
-        // Check if we need to recompute the cached data
-        if !cache.is_valid(store_version, filtered_indices.len(), hide_epoch) {
-            profiling::scope!("Histogram::recompute_cache");
+        // Poll for any completed results
+        cache.poll_results();
 
-            // Filter out January 1st timestamps if requested
-            let effective_indices: Vec<StoreID> = if hide_epoch {
-                profiling::scope!("Histogram::filter_epoch");
-                filtered_indices
-                    .iter()
-                    .filter_map(|idx| {
-                        store.get_by_id(idx).and_then(|line| {
-                            let ts = line.timestamp;
-                            // Exclude all timestamps that are January 1st (any year)
-                            if ts.month0() == 0 && ts.day0() == 0 {
-                                None
-                            } else {
-                                Some(*idx)
-                            }
-                        })
-                    })
-                    .collect()
-            } else {
-                filtered_indices.to_vec()
-            };
-
-            // Calculate time range
-            let time_range = Self::calculate_time_range(store, &effective_indices);
-
-            if let Some((start_time, end_time)) = time_range {
-                let time_span = (end_time.timestamp() - start_time.timestamp()).max(1);
-                let bucket_size = time_span as f64 / NUM_BUCKETS as f64;
-
-                let (buckets, anomaly_buckets) =
-                    Self::create_buckets(store, &effective_indices, start_time, bucket_size);
-
-                cache.time_range = Some((start_time, end_time));
-                cache.bucket_size = bucket_size;
-                cache.buckets = buckets;
-                cache.anomaly_buckets = anomaly_buckets;
-            } else {
-                cache.time_range = None;
-                cache.buckets.clear();
-                cache.anomaly_buckets.clear();
-            }
-
-            cache.effective_indices = effective_indices;
-            cache.key = (store_version, filtered_indices.len(), hide_epoch);
+        // Check if cache is valid
+        if cache.is_valid(store_version, filtered_indices.len(), hide_epoch) {
+            // Cache is valid, render it
+            return Self::render_cached(ui, store, cache, selected_line_index, markers);
         }
 
-        if cache.time_range.is_none() {
-            ui.label("No timestamps available for histogram");
-            return None;
+        // Cache is invalid - do we need to request a new computation?
+        if !cache.is_pending(store_version, filtered_indices.len(), hide_epoch) {
+            // Request new computation
+            cache.request_computation(worker, store, filtered_indices, hide_epoch, store_version);
         }
 
-        // Now render using cached data
-        if cache.effective_indices.is_empty() {
-            ui.label("No logs match the current filter (all timestamps are January 1st)");
-            return None;
+        // While waiting, render stale data if available, otherwise show loading
+        if cache.key.is_some() && cache.time_range.is_some() && !cache.effective_indices.is_empty()
+        {
+            // Render stale data with indicator
+            let result = Self::render_cached(ui, store, cache, selected_line_index, markers);
+            ui.ctx().request_repaint(); // Keep polling
+            return result;
         }
 
-        Self::render_cached(ui, store, cache, selected_line_index, markers)
+        // No stale data available, show loading
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label("Computing histogram...");
+        });
+        ui.ctx().request_repaint(); // Keep polling
+        None
     }
 
     fn render_cached(
@@ -211,57 +268,6 @@ impl Histogram {
         );
 
         click_event
-    }
-
-    fn calculate_time_range(
-        store: &LogStore,
-        filtered_indices: &[StoreID],
-    ) -> Option<(
-        chrono::DateTime<chrono::Local>,
-        chrono::DateTime<chrono::Local>,
-    )> {
-        profiling::scope!("Histogram::calculate_time_range");
-        let first_ts = filtered_indices
-            .iter()
-            .map(|idx| store.get_by_id(idx).unwrap().timestamp)
-            .next();
-        let last_ts = filtered_indices
-            .iter()
-            .rev()
-            .map(|idx| store.get_by_id(idx).unwrap().timestamp)
-            .next();
-
-        match (first_ts, last_ts) {
-            (Some(start), Some(end)) => Some((start, end)),
-            _ => None,
-        }
-    }
-
-    fn create_buckets(
-        store: &LogStore,
-        filtered_indices: &[StoreID],
-        start_time: chrono::DateTime<chrono::Local>,
-        bucket_size: f64,
-    ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
-        profiling::scope!("Histogram::create_buckets");
-        let mut buckets = vec![0usize; NUM_BUCKETS];
-        let mut anomaly_distributions = vec![AnomalyDistribution::default(); NUM_BUCKETS];
-
-        for line_idx in filtered_indices {
-            let line = store.get_by_id(line_idx).unwrap();
-            let ts = line.timestamp;
-            let bucket_idx = timestamp_to_bucket(ts, start_time, bucket_size);
-            buckets[bucket_idx] += 1;
-
-            // Use anomaly_score from the line
-            let score = line.anomaly_score / 100.0;
-            // Determine which score bucket this falls into
-            let score_bucket =
-                ((score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);
-            anomaly_distributions[bucket_idx].buckets[score_bucket] += 1;
-        }
-
-        (buckets, anomaly_distributions)
     }
 
     fn calculate_selected_x_fraction(
