@@ -27,7 +27,7 @@ use chrono::{DateTime, Local};
 use egui::Color32;
 
 use crate::core::log_store::StoreID;
-use crate::core::{LogStore, SearchRule};
+use crate::core::{FilterWorkerHandle, LogStore, SearchRule};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 
 /// Shared state for a log viewing session.
@@ -40,6 +40,9 @@ use crate::ui::tabs::bookmarks_tab::BookmarkData;
 /// - Pending conversion requests between filters and highlights
 pub struct SessionState {
     pub store: Arc<LogStore>,
+
+    /// Handle to send filter requests to the background worker
+    pub filter_worker: FilterWorkerHandle,
 
     /// Currently selected line index
     pub selected_line_index: Option<StoreID>,
@@ -76,10 +79,11 @@ pub struct FilterToHighlightData {
 }
 
 impl SessionState {
-    /// Create a new session state with the given log store.
-    pub fn new(store: Arc<LogStore>) -> Self {
+    /// Create a new session state with the given log store and filter worker handle.
+    pub fn new(store: Arc<LogStore>, filter_worker: FilterWorkerHandle) -> Self {
         Self {
             store,
+            filter_worker,
             selected_line_index: None,
             modified: false,
             last_saved: None,

@@ -93,7 +93,9 @@ impl FilterView {
             // New filter results arrived - invalidate scroll tracking so we re-scroll
             self.state.last_rendered_selection = None;
         }
-        self.state.search.ensure_cache_valid(&log_view_state.store);
+        self.state
+            .search
+            .ensure_cache_valid(&log_view_state.store, &log_view_state.filter_worker);
 
         // Render filter bar
         let filter_bar_events = {

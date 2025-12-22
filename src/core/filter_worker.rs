@@ -16,10 +16,12 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Global background worker for filter computations.
+//! Background worker for filter computations.
 //!
-//! This module provides a shared worker thread that processes filter requests
+//! This module provides a worker thread that processes filter requests
 //! from both `FilterState` and `HighlightState`, avoiding duplicate threading logic.
+//!
+//! The worker is owned by the application and shuts down gracefully when dropped.
 
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
@@ -27,7 +29,7 @@ use fancy_regex::Regex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// Request to compute filtered indices in background
 #[derive(Clone)]
@@ -43,40 +45,61 @@ pub struct FilterResult {
     pub filtered_indices: Vec<StoreID>,
 }
 
-/// Global filter worker channels
-pub struct GlobalFilterWorker {
+/// Handle to send filter requests to the background worker.
+///
+/// Clone this to send requests from multiple places.
+/// When all handles are dropped, the worker thread exits gracefully.
+#[derive(Clone)]
+pub struct FilterWorkerHandle {
     request_tx: Sender<FilterRequest>,
     pub is_filtering: Arc<AtomicBool>,
 }
 
-impl GlobalFilterWorker {
-    pub fn get() -> &'static Self {
-        static INSTANCE: OnceLock<GlobalFilterWorker> = OnceLock::new();
+impl FilterWorkerHandle {
+    /// Send a filter request to the background worker
+    pub fn send_request(&self, request: FilterRequest) {
+        let _ = self.request_tx.send(request);
+    }
+}
+
+/// Background filter worker that processes filter requests.
+///
+/// When dropped, the sender channel closes and the worker thread exits.
+pub struct FilterWorker {
+    /// Handle for sending requests (can be cloned and shared)
+    handle: FilterWorkerHandle,
+    /// Thread handle (joined on drop for clean shutdown)
+    _thread: std::thread::JoinHandle<()>,
+}
+
+impl FilterWorker {
+    /// Create a new filter worker with a background thread.
+    pub fn new() -> Self {
+        let (request_tx, request_rx) = channel::<FilterRequest>();
         let is_filtering = Arc::new(AtomicBool::new(false));
         let is_filtering_copy = is_filtering.clone();
-        INSTANCE.get_or_init(|| {
-            let (request_tx, request_rx) = channel::<FilterRequest>();
 
-            // Spawn the single global worker thread
-            std::thread::spawn(move || {
-                Self::filter_worker(&request_rx, &is_filtering_copy);
-            });
+        let thread = std::thread::spawn(move || {
+            Self::worker_loop(&request_rx, &is_filtering_copy);
+        });
 
-            Self {
+        Self {
+            handle: FilterWorkerHandle {
                 request_tx,
                 is_filtering,
-            }
-        })
+            },
+            _thread: thread,
+        }
     }
 
-    /// Send a filter request to the background worker
-    /// Can be used by both `FilterState` and `HighlightState`
-    pub fn send_request(request: FilterRequest) {
-        let _ = Self::get().request_tx.send(request);
+    /// Get a handle to send requests to this worker.
+    /// The handle can be cloned and shared across the application.
+    pub fn handle(&self) -> FilterWorkerHandle {
+        self.handle.clone()
     }
 
-    /// Single background worker that processes all filter requests
-    fn filter_worker(request_rx: &Receiver<FilterRequest>, is_filtering: &Arc<AtomicBool>) {
+    /// Background worker loop that processes filter requests.
+    fn worker_loop(request_rx: &Receiver<FilterRequest>, is_filtering: &Arc<AtomicBool>) {
         profiling::function_scope!();
 
         log::debug!("Filter worker thread started");
@@ -96,7 +119,7 @@ impl GlobalFilterWorker {
             }
         };
 
-        // Main processing loop
+        // Main processing loop - exits when all senders are dropped
         while let Ok(first_request) = request_rx.recv() {
             is_filtering.store(true, Ordering::Relaxed);
             profiling::scope!("process_filter_request");

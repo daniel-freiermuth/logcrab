@@ -55,12 +55,12 @@ pub struct CrabSession {
 }
 
 impl CrabSession {
-    pub fn new(store: Arc<LogStore>) -> Self {
+    pub fn new(store: Arc<LogStore>, filter_worker: crate::core::FilterWorkerHandle) -> Self {
         let mut cs = Self {
             dock_state: DockState::new(Vec::new()),
             monotonic_filter_counter: 0,
             pending_tab_add: None,
-            state: SessionState::new(store),
+            state: SessionState::new(store, filter_worker),
         };
         cs.add_filter_view(false, None);
 
@@ -261,7 +261,9 @@ impl CrabSession {
                     highlight.name.clone()
                 };
                 highlight.search.check_filter_results();
-                highlight.search.ensure_cache_valid(&self.state.store);
+                highlight
+                    .search
+                    .ensure_cache_valid(&self.state.store, &self.state.filter_worker);
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name,
                     color: highlight.color,

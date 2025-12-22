@@ -5,7 +5,7 @@ pub mod search_rule;
 pub mod search_state;
 pub mod session;
 
-pub use filter_worker::GlobalFilterWorker;
+pub use filter_worker::{FilterWorker, FilterWorkerHandle};
 pub use log_file::LogFileLoader;
 pub use log_store::LogStore;
 pub use search_rule::SearchRule;

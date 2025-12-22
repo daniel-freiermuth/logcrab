@@ -4,7 +4,7 @@ use super::ToastManager;
 use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
-use crate::core::{GlobalFilterWorker, LogStore};
+use crate::core::{FilterWorker, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
 use crate::ui::CrabSession;
@@ -21,6 +21,9 @@ use std::fmt::Write;
 pub struct LogCrabApp {
     /// The main log view component
     session: Option<CrabSession>,
+
+    /// Background filter worker (owned, dropped on app exit)
+    filter_worker: FilterWorker,
 
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
@@ -58,6 +61,7 @@ impl LogCrabApp {
 
         let mut app = Self {
             session: None,
+            filter_worker: FilterWorker::new(),
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
@@ -83,7 +87,7 @@ impl LogCrabApp {
     pub fn start_new_session(&mut self) {
         // Create a new store for this file
         let store = LogStore::new();
-        self.session = Some(CrabSession::new(store));
+        self.session = Some(CrabSession::new(store, self.filter_worker.handle()));
     }
 
     /// Add a file to the current session
@@ -370,10 +374,12 @@ impl LogCrabApp {
     }
 
     /// Render bottom status panel
-    fn render_status_panel(ui: &mut egui::Ui) {
+    fn render_status_panel(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             // Show filtering indicator if any filter is currently processing
-            if GlobalFilterWorker::get()
+            if self
+                .filter_worker
+                .handle()
                 .is_filtering
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
@@ -537,7 +543,7 @@ impl eframe::App for LogCrabApp {
         {
             profiling::scope!("bottom_panel");
             egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-                Self::render_status_panel(ui);
+                self.render_status_panel(ui);
             });
         }
 

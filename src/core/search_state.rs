@@ -21,7 +21,7 @@
 //! This module provides the core regex-based search functionality
 //! with background filtering support via the global filter worker.
 
-use crate::core::filter_worker::{FilterRequest, FilterResult, GlobalFilterWorker};
+use crate::core::filter_worker::{FilterRequest, FilterResult, FilterWorkerHandle};
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
 use fancy_regex::{Error, Regex};
@@ -95,7 +95,7 @@ impl SearchState {
     }
 
     /// Request a background filter update for the given store.
-    fn request_filter_update(&mut self, store: Arc<LogStore>) {
+    fn request_filter_update(&mut self, store: Arc<LogStore>, worker: &FilterWorkerHandle) {
         if !self.search_text.is_empty() {
             log::trace!(
                 "Search {}: requesting background filter for '{}'",
@@ -112,7 +112,7 @@ impl SearchState {
                 result_tx: self.filter_result_tx.clone(),
             };
 
-            GlobalFilterWorker::send_request(request);
+            worker.send_request(request);
         }
     }
 
@@ -132,12 +132,12 @@ impl SearchState {
     }
 
     /// Check if cache is valid for the given store version, request update if not.
-    pub fn ensure_cache_valid(&mut self, store: &Arc<LogStore>) {
+    pub fn ensure_cache_valid(&mut self, store: &Arc<LogStore>, worker: &FilterWorkerHandle) {
         if self.cached_for_version != store.version()
             || self.cached_for_text != self.search_text
             || self.cached_for_case != self.case_sensitive
         {
-            self.request_filter_update(Arc::clone(store));
+            self.request_filter_update(Arc::clone(store), worker);
             self.cached_for_version = store.version();
             self.cached_for_text = self.search_text.clone();
             self.cached_for_case = self.case_sensitive;
