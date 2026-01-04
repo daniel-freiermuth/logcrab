@@ -38,11 +38,19 @@ pub struct FilterRequest {
     pub regex: Regex,
     pub store: Arc<LogStore>, // Shared read-only access to log store
     pub result_tx: Sender<FilterResult>, // Each filter has its own result channel
+    /// The search text this request was made for (for result tracking)
+    pub search_text: String,
+    /// Whether case sensitivity was enabled (for result tracking)
+    pub case_sensitive: bool,
 }
 
 /// Result from background filtering
 pub struct FilterResult {
     pub filtered_indices: Vec<StoreID>,
+    /// The search text these indices were computed for
+    pub search_text: String,
+    /// Whether case sensitivity was enabled
+    pub case_sensitive: bool,
 }
 
 /// Handle to send filter requests to the background worker.
@@ -153,7 +161,11 @@ impl FilterWorker {
                     filtered_indices.len(),
                 );
 
-                let result = FilterResult { filtered_indices };
+                let result = FilterResult {
+                    filtered_indices,
+                    search_text: request.search_text.clone(),
+                    case_sensitive: request.case_sensitive,
+                };
 
                 // Send result back to the specific filter (ignore errors if filter is gone)
                 {

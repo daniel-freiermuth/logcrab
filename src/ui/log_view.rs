@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::config::GlobalConfig;
+use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::session::CRAB_FILTERS_VERSION;
 use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule};
 use crate::input::ShortcutAction;
@@ -55,12 +56,16 @@ pub struct CrabSession {
 }
 
 impl CrabSession {
-    pub fn new(store: Arc<LogStore>, filter_worker: crate::core::FilterWorkerHandle) -> Self {
+    pub fn new(
+        store: Arc<LogStore>,
+        filter_worker: crate::core::FilterWorkerHandle,
+        histogram_worker: HistogramWorkerHandle,
+    ) -> Self {
         let mut cs = Self {
             dock_state: DockState::new(Vec::new()),
             monotonic_filter_counter: 0,
             pending_tab_add: None,
-            state: SessionState::new(store, filter_worker),
+            state: SessionState::new(store, filter_worker, histogram_worker),
         };
         cs.add_filter_view(false, None);
 

@@ -1,4 +1,5 @@
 pub mod filter_worker;
+pub mod histogram_worker;
 pub mod log_file;
 pub mod log_store;
 pub mod search_rule;

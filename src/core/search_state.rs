@@ -50,6 +50,11 @@ pub struct SearchState {
     cached_for_text: String,
     cached_for_case: bool,
 
+    /// What the current `filtered_indices` was actually computed for
+    /// (only updated when results are received)
+    indices_computed_for_text: String,
+    indices_computed_for_case: bool,
+
     /// Channel for receiving background filter results
     filter_result_rx: Receiver<FilterResult>,
     /// Sender kept to create new requests
@@ -68,6 +73,8 @@ impl SearchState {
             cached_for_text: String::new(),
             case_sensitive: false,
             cached_for_case: false,
+            indices_computed_for_text: String::new(),
+            indices_computed_for_case: false,
             filtered_indices: Vec::new(),
             cached_for_version: 0,
             filter_result_rx: result_rx,
@@ -110,6 +117,8 @@ impl SearchState {
                 regex,
                 store,
                 result_tx: self.filter_result_tx.clone(),
+                search_text: self.search_text.clone(),
+                case_sensitive: self.case_sensitive,
             };
 
             worker.send_request(request);
@@ -121,6 +130,9 @@ impl SearchState {
     pub fn check_filter_results(&mut self) -> bool {
         if let Ok(result) = self.filter_result_rx.try_recv() {
             self.filtered_indices = result.filtered_indices;
+            // Track what these indices were computed for (from the result, not cached_for)
+            self.indices_computed_for_text = result.search_text;
+            self.indices_computed_for_case = result.case_sensitive;
             log::trace!(
                 "Search {}: completed filtering ({} matches)",
                 self.id,
@@ -129,6 +141,11 @@ impl SearchState {
             return true;
         }
         false
+    }
+
+    /// Get the search text that the current filtered indices were computed for.
+    pub fn indices_computed_for(&self) -> (&str, bool) {
+        (&self.indices_computed_for_text, self.indices_computed_for_case)
     }
 
     /// Check if cache is valid for the given store version, request update if not.

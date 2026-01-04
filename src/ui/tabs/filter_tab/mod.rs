@@ -166,7 +166,8 @@ impl FilterView {
                 selected_line_index,
                 global_config.hide_epoch_in_histogram,
                 histogram_markers,
-                &mut self.state.histogram_cache,
+                &mut self.state,
+                &log_view_state.histogram_worker,
             )
         };
         if let Some(hist_event) = hist_event {
