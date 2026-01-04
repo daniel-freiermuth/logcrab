@@ -32,6 +32,7 @@ egui-toast = "0.19"
 dhat = { version = "0.3", optional = true }
 profiling = { version = "1.0", default-features = false }
 tracy-client = { version = "0.17", optional = true }
+tokio = { version = "1.49.0", features = ["sync"] }
 
 # Release profile optimizations
 [profile.release]
