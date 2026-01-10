@@ -36,7 +36,8 @@ tokio = { version = "1.49.0", features = ["sync"] }
 
 # Release profile optimizations
 [profile.release]
-lto = "thin"
+opt-level = 3
+lto = "fat"
 codegen-units = 1
 strip = true
 
