@@ -17,10 +17,12 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::core::log_store::StoreID;
-use crate::core::{SavedFilter, SearchRule};
-use crate::ui::tabs::filter_tab::histogram::HistogramCache;
+use crate::core::{AsyncCache, HistogramData, HistogramKey, SavedFilter, SearchRule};
 use crate::ui::tabs::filter_tab::log_table::ColumnWidths;
 use egui::Color32;
+
+/// Type alias for histogram cache
+pub type HistogramCache = AsyncCache<usize, HistogramKey, HistogramData>;
 
 /// Represents a single filter view with its own search criteria and cached results.
 ///

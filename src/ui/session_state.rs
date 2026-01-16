@@ -26,9 +26,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Local};
 use egui::Color32;
 
-use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::log_store::StoreID;
-use crate::core::{FilterWorkerHandle, LogStore, SearchRule};
+use crate::core::{FilterWorkerHandle, LogStore, SearchRule, TaskWorkerHandle};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 
 /// Shared state for a log viewing session.
@@ -45,8 +44,8 @@ pub struct SessionState {
     /// Handle to send filter requests to the background worker
     pub filter_worker: FilterWorkerHandle,
 
-    /// Handle to send histogram requests to the background worker
-    pub histogram_worker: HistogramWorkerHandle,
+    /// Handle to send background tasks (histogram, etc.)
+    pub task_worker: TaskWorkerHandle<usize>,
 
     /// Currently selected line index
     pub selected_line_index: Option<StoreID>,
@@ -87,12 +86,12 @@ impl SessionState {
     pub fn new(
         store: Arc<LogStore>,
         filter_worker: FilterWorkerHandle,
-        histogram_worker: HistogramWorkerHandle,
+        task_worker: TaskWorkerHandle<usize>,
     ) -> Self {
         Self {
             store,
             filter_worker,
-            histogram_worker,
+            task_worker,
             selected_line_index: None,
             modified: false,
             last_saved: None,

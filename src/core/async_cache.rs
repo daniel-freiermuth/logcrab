@@ -22,7 +22,7 @@
 //! for cached async computations with automatic deduplication.
 
 use crate::core::task_worker::TaskWorkerHandle;
-use tokio::sync::watch::{self, Ref};
+use tokio::sync::watch;
 
 /// Cache for async-computed values with automatic background computation.
 ///
@@ -33,6 +33,7 @@ use tokio::sync::watch::{self, Ref};
 /// - Deduplicates requests via the task worker
 pub struct AsyncCache<D, K, V> {
     dedup_key: D,
+    current: Option<(K, V)>,
     pending_key: Option<K>,
     rx: watch::Receiver<Option<(K, V)>>,
     tx: watch::Sender<Option<(K, V)>>,
@@ -52,37 +53,49 @@ where
         let (tx, rx) = watch::channel(None);
         Self {
             dedup_key,
+            current: None,
             pending_key: None,
             rx,
             tx,
         }
     }
 
-    /// Get the latest value, polling for updates from the background task.
+    /// Poll for updates from the background task and update local cache.
     ///
-    /// Returns the cached (key, value) pair if available.
-    pub fn get_latest(&mut self) -> Ref<Option<(K, V)>> {
+    /// Call this at the start of each frame to receive any completed results.
+    pub fn poll(&mut self) {
         // borrow_and_update marks the value as seen
-        self.rx.borrow_and_update()
+        if let Some(new_value) = self.rx.borrow_and_update().clone() {
+            self.current = Some(new_value);
+            self.pending_key = None;
+        }
+    }
+
+    /// Get the current cached value, if any.
+    pub fn get(&self) -> Option<&(K, V)> {
+        self.current.as_ref()
+    }
+
+    /// Check if the current cached value matches the given key.
+    pub fn is_valid(&self, key: &K) -> bool {
+        self.current.as_ref().is_some_and(|(k, _)| k == key)
     }
 
     /// Ensure a value is computed for the given key.
     ///
     /// If the key is already cached or pending, this is a no-op.
     /// Otherwise, submits the work closure to the background worker.
-    ///
-    /// The closure should return `(key, value)` - both are sent back to the cache.
-    pub fn ensure_computed<F>(
-        &mut self,
-        key: K,
-        worker: &TaskWorkerHandle<D>,
-        compute: F,
-    ) where
+    pub fn ensure_computed<F>(&mut self, key: K, worker: &TaskWorkerHandle<D>, compute: F)
+    where
         D: Send + 'static,
         K: Send + Sync + 'static,
         V: Send + Sync + 'static,
         F: FnOnce() -> V + Send + 'static,
     {
+        // Already have it?
+        if self.is_valid(&key) {
+            return;
+        }
         // Already pending?
         if self.pending_key.as_ref() == Some(&key) {
             return;

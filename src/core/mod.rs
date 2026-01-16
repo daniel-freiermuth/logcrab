@@ -1,5 +1,7 @@
 pub mod async_cache;
+pub mod filter;
 pub mod filter_worker;
+pub mod histogram;
 pub mod histogram_worker;
 pub mod log_file;
 pub mod log_store;
@@ -9,7 +11,9 @@ pub mod session;
 pub mod task_worker;
 
 pub use async_cache::AsyncCache;
+pub use filter::{FilterCache, FilterData, FilterKey};
 pub use filter_worker::{FilterWorker, FilterWorkerHandle};
+pub use histogram::{AnomalyDistribution, HistogramData, HistogramKey, NUM_BUCKETS, SCORE_BUCKETS};
 pub use log_file::LogFileLoader;
 pub use log_store::LogStore;
 pub use search_rule::SearchRule;

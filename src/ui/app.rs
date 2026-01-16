@@ -4,8 +4,7 @@ use super::ToastManager;
 use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
-use crate::core::histogram_worker::HistogramWorker;
-use crate::core::{FilterWorker, LogStore};
+use crate::core::{FilterWorker, LogStore, TaskWorker};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
 use crate::ui::CrabSession;
@@ -26,8 +25,8 @@ pub struct LogCrabApp {
     /// Background filter worker (owned, dropped on app exit)
     filter_worker: FilterWorker,
 
-    /// Background histogram worker (owned, dropped on app exit)
-    histogram_worker: HistogramWorker,
+    /// Background task worker for histogram and other async computations
+    task_worker: TaskWorker<usize>,
 
     /// Whether to show the anomaly explanation window
     show_anomaly_explanation: bool,
@@ -66,7 +65,7 @@ impl LogCrabApp {
         let mut app = Self {
             session: None,
             filter_worker: FilterWorker::new(),
-            histogram_worker: HistogramWorker::new(),
+            task_worker: TaskWorker::new(),
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
@@ -95,7 +94,7 @@ impl LogCrabApp {
         self.session = Some(CrabSession::new(
             store,
             self.filter_worker.handle(),
-            self.histogram_worker.handle(),
+            self.task_worker.handle(),
         ));
     }
 

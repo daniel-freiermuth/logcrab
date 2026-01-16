@@ -16,17 +16,18 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::core::histogram_worker::{
-    AnomalyDistribution, HistogramCacheKey, HistogramRequest, HistogramResult,
-    HistogramWorkerHandle, NUM_BUCKETS, SCORE_BUCKETS,
+use crate::core::{
+    AnomalyDistribution, AsyncCache, HistogramData, HistogramKey, LogStore, TaskWorkerHandle,
+    NUM_BUCKETS, SCORE_BUCKETS,
 };
-use crate::core::{log_store::StoreID, LogStore};
+use crate::core::log_store::StoreID;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table;
-use chrono::{DateTime, Local};
 use egui::{Color32, Ui};
-use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
+
+/// Type alias for histogram cache
+pub type HistogramCache = AsyncCache<usize, HistogramKey, HistogramData>;
 
 /// Marker data for showing filter matches in histogram
 #[derive(Clone)]
@@ -40,99 +41,6 @@ pub struct HistogramMarker {
 #[derive(Clone)]
 pub struct HistogramClickEvent {
     pub line_index: StoreID,
-}
-
-/// Cached histogram computation results
-pub struct HistogramCache {
-    /// Filter ID for this cache (used for worker requests)
-    filter_id: usize,
-    /// Cache key for the current valid data
-    key: Option<HistogramCacheKey>,
-    /// Pending computation key (what we're waiting for)
-    pending_key: Option<HistogramCacheKey>,
-    /// Channel to receive computation results
-    result_rx: Receiver<HistogramResult>,
-    result_tx: mpsc::Sender<HistogramResult>,
-    /// Filtered indices after epoch removal (if `hide_epoch` is true)
-    effective_indices: Vec<StoreID>,
-    /// Time range of the histogram
-    time_range: Option<(DateTime<Local>, DateTime<Local>)>,
-    /// Bucket size in seconds
-    bucket_size: f64,
-    /// Count per time bucket
-    buckets: Vec<usize>,
-    /// Anomaly score distribution per bucket
-    anomaly_buckets: Vec<AnomalyDistribution>,
-}
-
-impl HistogramCache {
-    /// Create a new histogram cache with the given filter ID
-    pub fn new(filter_id: usize) -> Self {
-        let (tx, rx) = mpsc::channel();
-        Self {
-            filter_id,
-            result_rx: rx,
-            result_tx: tx,
-            key: None,
-            pending_key: None,
-            effective_indices: Vec::new(),
-            time_range: None,
-            bucket_size: 0.0,
-            buckets: vec![0; NUM_BUCKETS],
-            anomaly_buckets: vec![AnomalyDistribution::default(); NUM_BUCKETS],
-        }
-    }
-
-    /// Check if cache is valid for the given inputs
-    fn is_valid(&self, key: &HistogramCacheKey) -> bool {
-        self.key == Some(key.clone())
-    }
-
-    /// Check if we're already waiting for the right computation
-    fn is_pending(&self, key: &HistogramCacheKey) -> bool {
-        self.pending_key == Some(key.clone())
-    }
-
-    /// Poll for completed results and update cache if ready
-    fn poll_results(&mut self) {
-        match self.result_rx.try_recv() {
-            Ok(result) => {
-                // Update cache with result
-                self.key = Some(result.cache_key);
-                self.effective_indices = result.effective_indices;
-                self.time_range = result.time_range;
-                self.bucket_size = result.bucket_size;
-                self.buckets = result.buckets;
-                self.anomaly_buckets = result.anomaly_buckets;
-            }
-            Err(mpsc::TryRecvError::Empty) => {},
-            Err(mpsc::TryRecvError::Disconnected) => {
-                // Worker died or task was cancelled, clear pending state
-            }
-        }
-    }
-
-    /// Request a new histogram computation
-    fn request_computation(
-        &mut self,
-        worker: &HistogramWorkerHandle,
-        store: &Arc<LogStore>,
-        filtered_indices: &[StoreID],
-        hide_epoch: bool,
-        cache_key: &HistogramCacheKey
-    ) {
-        let request = HistogramRequest {
-            filter_id: self.filter_id,
-            store: Arc::clone(store),
-            filtered_indices: filtered_indices.to_vec(),
-            hide_epoch,
-            result_tx: self.result_tx.clone(),
-            key: cache_key.clone(),
-        };
-
-        worker.send_request(request);
-        self.pending_key = Some(cache_key.clone());
-    }
 }
 
 /// Reusable timeline histogram component
@@ -150,7 +58,7 @@ impl Histogram {
         hide_epoch: bool,
         markers: &[HistogramMarker],
         filter_state: &mut FilterState,
-        worker: &HistogramWorkerHandle,
+        worker: &TaskWorkerHandle<usize>,
     ) -> Option<HistogramClickEvent> {
         profiling::scope!("Histogram::render");
 
@@ -166,7 +74,7 @@ impl Histogram {
         // Use the search parameters that the current filtered_indices were computed for,
         // not the current search_text (which may have changed while filter is pending)
         let (indices_text, indices_case) = filter_state.search.indices_computed_for();
-        let cache_key = HistogramCacheKey {
+        let cache_key = HistogramKey {
             store_version,
             hide_epoch,
             search_str: indices_text.to_string(),
@@ -175,28 +83,29 @@ impl Histogram {
 
         let cache = &mut filter_state.histogram_cache;
 
-        // Poll for any completed results
-        cache.poll_results();
+        // Poll for updates
+        cache.poll();
 
         // Check if cache is valid
         if cache.is_valid(&cache_key) {
-            // Cache is valid, render it
-            return Self::render_cached(ui, store, &cache, selected_line_index, markers);
+            let (_, data) = cache.get().unwrap();
+            return Self::render_data(ui, store, data, selected_line_index, markers);
         }
 
-        // Cache is invalid - do we need to request a new computation?
-        if !cache.is_pending(&cache_key) {
-            // Request new computation
-            cache.request_computation(worker, store, filtered_indices, hide_epoch, &cache_key);
-        }
+        // Need to compute - submit work if not already pending
+        let store_clone = Arc::clone(store);
+        let indices_clone = filtered_indices.to_vec();
+        cache.ensure_computed(cache_key.clone(), worker, move || {
+            HistogramData::compute(&store_clone, &indices_clone, hide_epoch)
+        });
 
-        // While waiting, render stale data if available, otherwise show loading
-        if cache.key.is_some() && cache.time_range.is_some() && !cache.effective_indices.is_empty()
-        {
-            // Render stale data with indicator
-            let result = Self::render_cached(ui, store, &cache, selected_line_index, markers);
-            ui.ctx().request_repaint(); // Keep polling
-            return result;
+        // Render stale data if available
+        if let Some((_, data)) = cache.get() {
+            if data.time_range.is_some() && !data.effective_indices.is_empty() {
+                let result = Self::render_data(ui, store, data, selected_line_index, markers);
+                ui.ctx().request_repaint(); // Keep polling
+                return result;
+            }
         }
 
         // No stale data available, show loading
@@ -208,28 +117,28 @@ impl Histogram {
         None
     }
 
-    fn render_cached(
+    fn render_data(
         ui: &mut Ui,
         store: &LogStore,
-        cache: &HistogramCache,
+        data: &HistogramData,
         selected_line_index: Option<StoreID>,
         markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
-        let max_count = *cache.buckets.iter().max().unwrap_or(&1);
+        let Some((start_time, end_time)) = data.time_range else {
+            return None;
+        };
 
-        let selected_x_fraction = Self::calculate_selected_x_fraction(
-            store,
-            selected_line_index,
-            cache.time_range.unwrap().0,
-            cache.time_range.unwrap().1,
-        );
+        let max_count = *data.buckets.iter().max().unwrap_or(&1);
+
+        let selected_x_fraction =
+            Self::calculate_selected_x_fraction(store, selected_line_index, start_time, end_time);
 
         let dark_mode = ui.visuals().dark_mode;
         let bg_color = ui.visuals().extreme_bg_color;
 
         let click_event = Self::render_histogram_bars(
             ui,
-            cache,
+            data,
             max_count,
             selected_x_fraction,
             store,
@@ -238,13 +147,7 @@ impl Histogram {
             bg_color,
         );
 
-        Self::render_timeline_labels(
-            ui,
-            cache.time_range.unwrap().0,
-            cache.time_range.unwrap().1,
-            store,
-            selected_line_index,
-        );
+        Self::render_timeline_labels(ui, start_time, end_time, store, selected_line_index);
 
         click_event
     }
@@ -275,7 +178,7 @@ impl Histogram {
 
     fn render_histogram_bars(
         ui: &mut Ui,
-        cache: &HistogramCache,
+        data: &HistogramData,
         max_count: usize,
         selected_x_fraction: Option<f32>,
         store: &LogStore,
@@ -295,40 +198,41 @@ impl Histogram {
         Self::draw_bars(
             &painter,
             rect,
-            cache.buckets.as_slice(),
-            cache.anomaly_buckets.as_slice(),
+            data.buckets.as_slice(),
+            data.anomaly_buckets.as_slice(),
             max_count,
             bar_width,
             dark_mode,
         );
-        Self::draw_markers(
-            &painter,
-            rect,
-            store,
-            cache.time_range.unwrap().0,
-            cache.bucket_size,
-            markers,
-        );
+
+        if let Some((start_time, _)) = data.time_range {
+            Self::draw_markers(&painter, rect, store, start_time, data.bucket_size, markers);
+        }
+
         Self::draw_selected_indicator(&painter, rect, selected_x_fraction);
 
         // Handle hover tooltip for markers
-        Self::handle_marker_hover(
-            ui,
-            &response,
-            rect,
-            store,
-            cache.time_range.unwrap().0,
-            cache.bucket_size,
-            markers,
-        );
-        Self::handle_click(
-            &response,
-            rect,
-            store,
-            &cache.effective_indices,
-            cache.time_range.unwrap().0,
-            cache.bucket_size,
-        )
+        if let Some((start_time, _)) = data.time_range {
+            Self::handle_marker_hover(
+                ui,
+                &response,
+                rect,
+                store,
+                start_time,
+                data.bucket_size,
+                markers,
+            );
+            Self::handle_click(
+                &response,
+                rect,
+                store,
+                &data.effective_indices,
+                start_time,
+                data.bucket_size,
+            )
+        } else {
+            None
+        }
     }
 
     fn draw_bars(
