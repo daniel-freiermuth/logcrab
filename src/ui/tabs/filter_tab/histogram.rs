@@ -179,7 +179,7 @@ impl Histogram {
         cache.poll_results();
 
         // Check if cache is valid
-        if cache.is_valid(&cache_key) {
+        if cache.is_valid(&cache_key) && cache.time_range.is_some() {
             // Cache is valid, render it
             return Self::render_cached(ui, store, &cache, selected_line_index, markers);
         }
