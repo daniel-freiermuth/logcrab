@@ -168,21 +168,8 @@ fn map_modifiers(mods: &egui::Modifiers, is_letter_key: bool) -> keybinds::Mods 
 
     let mut kb_mods = Mods::empty();
 
-    // On Mac, Cmd is the primary modifier; on other platforms, Ctrl is
-    #[cfg(target_os = "macos")]
-    {
-        if mods.mac_cmd || mods.command {
-            kb_mods |= Mods::CMD;
-        }
-        if mods.ctrl {
-            kb_mods |= Mods::CTRL;
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if mods.ctrl {
-            kb_mods |= Mods::CTRL;
-        }
+    if mods.command {
+        kb_mods |= Mods::CTRL;
     }
 
     // Don't add shift for letter keys - we've already encoded it in the character case
