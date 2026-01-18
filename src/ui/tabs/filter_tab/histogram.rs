@@ -533,9 +533,32 @@ impl Histogram {
                 .expect("Logline not found during histogram search.")
         });
 
-        // Clamp to valid range (partition_point can return len if all match)
-        let idx = idx.min(filtered_indices.len().saturating_sub(1));
-        Some(filtered_indices[idx])
+        // Compare neighbors around the insertion point to find the closest
+        match idx {
+            0 => Some(filtered_indices[0]),
+            i if i >= filtered_indices.len() => Some(filtered_indices[filtered_indices.len() - 1]),
+            i => {
+                let before_ts = store
+                    .get_by_id(&filtered_indices[i - 1])
+                    .expect("Logline not found during histogram search.")
+                    .timestamp
+                    .timestamp();
+                let after_ts = store
+                    .get_by_id(&filtered_indices[i])
+                    .expect("Logline not found during histogram search.")
+                    .timestamp
+                    .timestamp();
+
+                let dist_before = (target_time - before_ts).abs();
+                let dist_after = (after_ts - target_time).abs();
+
+                if dist_before <= dist_after {
+                    Some(filtered_indices[i - 1])
+                } else {
+                    Some(filtered_indices[i])
+                }
+            }
+        }
     }
 
     fn render_timeline_labels(
