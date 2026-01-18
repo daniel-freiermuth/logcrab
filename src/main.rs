@@ -36,9 +36,9 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 #[command(version = "0.1.0")]
 #[command(about = "Analyze log files with anomaly detection and pattern matching", long_about = None)]
 struct Args {
-    /// Path to the log file to open
+    /// Path(s) to log file(s) to open
     #[arg(value_name = "FILE")]
-    file: Option<PathBuf>,
+    files: Vec<PathBuf>,
 
     /// Path for the DHAT heap profiling output (only used when built with --features ram-profiling)
     #[cfg(feature = "ram-profiling")]
@@ -81,8 +81,11 @@ fn main() -> eframe::Result<()> {
 
     let args = Args::parse();
 
-    if let Some(ref file) = args.file {
-        log::info!("Opening file from command line: {}", file.display());
+    if !args.files.is_empty() {
+        log::info!("Opening {} file(s) from command line", args.files.len());
+        for file in &args.files {
+            log::info!("  - {}", file.display());
+        }
     }
 
     // Load app icon
@@ -103,6 +106,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "LogCrab - Log Anomaly Explorer",
         native_options,
-        Box::new(move |cc| Ok(Box::new(LogCrabApp::new(cc, args.file)))),
+        Box::new(move |cc| Ok(Box::new(LogCrabApp::new(cc, args.files)))),
     )
 }

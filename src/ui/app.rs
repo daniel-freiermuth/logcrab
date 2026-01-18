@@ -52,7 +52,7 @@ pub struct LogCrabApp {
 }
 
 impl LogCrabApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, file: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
         // Load global configuration
         let global_config = GlobalConfig::load();
 
@@ -76,14 +76,16 @@ impl LogCrabApp {
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
         };
 
-        // Load initial file if provided via command line
-        if let Some(file) = file {
-            if file.exists() {
-                app.start_new_session();
-                app.add_file_to_session(file);
-            } else {
-                app.toast_manager
-                    .show_error(format!("File not found: {}", file.display()));
+        // Load initial files if provided via command line
+        if !files.is_empty() {
+            app.start_new_session();
+            for file in files {
+                if file.exists() {
+                    app.add_file_to_session(file);
+                } else {
+                    app.toast_manager
+                        .show_error(format!("File not found: {}", file.display()));
+                }
             }
         }
         app
