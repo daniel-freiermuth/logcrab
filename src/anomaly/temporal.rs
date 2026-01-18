@@ -10,8 +10,6 @@ pub struct TemporalScorer {
     last_seen: HashMap<String, DateTime<Local>>,
     // Track recent timestamps for burst detection
     recent_timestamps: VecDeque<DateTime<Local>>,
-    // Track template counts within window
-    window_template_counts: HashMap<String, u32>,
 }
 
 impl TemporalScorer {
@@ -20,7 +18,6 @@ impl TemporalScorer {
             window_duration: Duration::seconds(window_seconds),
             last_seen: HashMap::new(),
             recent_timestamps: VecDeque::new(),
-            window_template_counts: HashMap::new(),
         }
     }
 
@@ -88,12 +85,6 @@ impl AnomalyScorer for TemporalScorer {
 
         // Add to recent timestamps
         self.recent_timestamps.push_back(current_time);
-
-        // Update window counts
-        *self
-            .window_template_counts
-            .entry(line.template_key.clone())
-            .or_insert(0) += 1;
 
         // Clean up old entries periodically
         if self.recent_timestamps.len().is_multiple_of(1000) {
