@@ -72,16 +72,22 @@ pub struct HistogramCacheKey {
 pub struct HistogramResult {
     /// Cache key for validation
     pub cache_key: HistogramCacheKey,
-    /// Filtered indices after epoch removal (if `hide_epoch` is true)
-    pub effective_indices: Vec<StoreID>,
+    pub data: Option<HistogramData>,
+}
+
+#[derive(Clone)]
+pub struct HistogramData {
     /// Time range of the histogram
-    pub time_range: Option<(DateTime<Local>, DateTime<Local>)>,
+    pub start_time: DateTime<Local>,
+    pub end_time: DateTime<Local>,
     /// Bucket size in seconds
     pub bucket_size: f64,
     /// Count per time bucket
     pub buckets: Vec<usize>,
     /// Anomaly score distribution per bucket
     pub anomaly_buckets: Vec<AnomalyDistribution>,
+    /// Filtered indices after epoch removal (if `hide_epoch` is true)
+    pub effective_indices: Vec<StoreID>,
 }
 
 /// Handle to send histogram requests to the background worker.
@@ -171,11 +177,7 @@ impl HistogramWorker {
 
                 let result = Self::compute_histogram(&request);
 
-                log::trace!(
-                    "Histogram {} complete: {} effective indices",
-                    filter_id,
-                    result.effective_indices.len(),
-                );
+                log::trace!("Histogram {filter_id} complete",);
 
                 // Send result back (ignore errors if receiver is gone)
                 let _ = request.result_tx.send(result);
@@ -216,29 +218,30 @@ impl HistogramWorker {
             filtered_indices.clone()
         };
 
-        // Calculate time range
-        let time_range = Self::calculate_time_range(store, &effective_indices);
+        if let Some((start_time, end_time)) = Self::calculate_time_range(store, &effective_indices)
+        {
+            let time_span = (end_time - start_time).as_seconds_f64();
+            let bucket_size = time_span / NUM_BUCKETS as f64;
 
-        let (bucket_size, buckets, anomaly_buckets) =
-            if let Some((start_time, end_time)) = time_range {
-                let time_span = (end_time - start_time).as_seconds_f64();
-                let bucket_size = time_span / NUM_BUCKETS as f64;
+            let (buckets, anomaly_buckets) =
+                Self::create_buckets(store, &effective_indices, start_time, bucket_size);
 
-                let (buckets, anomaly_buckets) =
-                    Self::create_buckets(store, &effective_indices, start_time, bucket_size);
-
-                (bucket_size, buckets, anomaly_buckets)
-            } else {
-                (0.0, Vec::new(), Vec::new())
-            };
-
-        HistogramResult {
-            cache_key: request.key.clone(),
-            effective_indices,
-            time_range,
-            bucket_size,
-            buckets,
-            anomaly_buckets,
+            HistogramResult {
+                cache_key: request.key.clone(),
+                data: Some(HistogramData {
+                    effective_indices,
+                    start_time,
+                    end_time,
+                    bucket_size,
+                    buckets,
+                    anomaly_buckets,
+                }),
+            }
+        } else {
+            HistogramResult {
+                cache_key: request.key.clone(),
+                data: None,
+            }
         }
     }
 

@@ -17,13 +17,12 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::core::histogram_worker::{
-    AnomalyDistribution, HistogramCacheKey, HistogramRequest, HistogramResult,
+    AnomalyDistribution, HistogramCacheKey, HistogramData, HistogramRequest, HistogramResult,
     HistogramWorkerHandle, NUM_BUCKETS, SCORE_BUCKETS,
 };
 use crate::core::{log_store::StoreID, LogStore};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table;
-use chrono::{DateTime, Local};
 use egui::{Color32, Ui};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
@@ -54,15 +53,7 @@ pub struct HistogramCache {
     result_rx: Receiver<HistogramResult>,
     result_tx: mpsc::Sender<HistogramResult>,
     /// Filtered indices after epoch removal (if `hide_epoch` is true)
-    effective_indices: Vec<StoreID>,
-    /// Time range of the histogram
-    time_range: Option<(DateTime<Local>, DateTime<Local>)>,
-    /// Bucket size in seconds
-    bucket_size: f64,
-    /// Count per time bucket
-    buckets: Vec<usize>,
-    /// Anomaly score distribution per bucket
-    anomaly_buckets: Vec<AnomalyDistribution>,
+    data: Option<HistogramData>,
 }
 
 impl HistogramCache {
@@ -75,11 +66,7 @@ impl HistogramCache {
             result_tx: tx,
             key: None,
             pending_key: None,
-            effective_indices: Vec::new(),
-            time_range: None,
-            bucket_size: 0.0,
-            buckets: vec![0; NUM_BUCKETS],
-            anomaly_buckets: vec![AnomalyDistribution::default(); NUM_BUCKETS],
+            data: None,
         }
     }
 
@@ -99,13 +86,9 @@ impl HistogramCache {
             Ok(result) => {
                 // Update cache with result
                 self.key = Some(result.cache_key);
-                self.effective_indices = result.effective_indices;
-                self.time_range = result.time_range;
-                self.bucket_size = result.bucket_size;
-                self.buckets = result.buckets;
-                self.anomaly_buckets = result.anomaly_buckets;
+                self.data = result.data;
             }
-            Err(mpsc::TryRecvError::Empty) => {},
+            Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 // Worker died or task was cancelled, clear pending state
             }
@@ -119,7 +102,7 @@ impl HistogramCache {
         store: &Arc<LogStore>,
         filtered_indices: &[StoreID],
         hide_epoch: bool,
-        cache_key: &HistogramCacheKey
+        cache_key: &HistogramCacheKey,
     ) {
         let request = HistogramRequest {
             filter_id: self.filter_id,
@@ -178,50 +161,42 @@ impl Histogram {
         // Poll for any completed results
         cache.poll_results();
 
-        // Check if cache is valid
-        if cache.is_valid(&cache_key) && cache.time_range.is_some() {
+        if !cache.is_valid(&cache_key) {
+            if cache.is_pending(&cache_key) {
+                ui.ctx().request_repaint(); // Keep polling
+            } else {
+                // Request new computation
+                cache.request_computation(worker, store, filtered_indices, hide_epoch, &cache_key);
+            }
+        }
+
+        if let Some(data) = &cache.data {
             // Cache is valid, render it
-            return Self::render_cached(ui, store, &cache, selected_line_index, markers);
-        }
-
-        // Cache is invalid - do we need to request a new computation?
-        if !cache.is_pending(&cache_key) {
-            // Request new computation
-            cache.request_computation(worker, store, filtered_indices, hide_epoch, &cache_key);
-        }
-
-        // While waiting, render stale data if available, otherwise show loading
-        if cache.key.is_some() && cache.time_range.is_some() && !cache.effective_indices.is_empty()
-        {
-            // Render stale data with indicator
-            let result = Self::render_cached(ui, store, &cache, selected_line_index, markers);
+            Self::render_cached(ui, store, data, selected_line_index, markers)
+        } else {
+            // No stale data available, show loading
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Computing histogram...");
+            });
             ui.ctx().request_repaint(); // Keep polling
-            return result;
+            None
         }
-
-        // No stale data available, show loading
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.label("Computing histogram...");
-        });
-        ui.ctx().request_repaint(); // Keep polling
-        None
     }
 
     fn render_cached(
         ui: &mut Ui,
         store: &LogStore,
-        cache: &HistogramCache,
+        data: &HistogramData,
         selected_line_index: Option<StoreID>,
         markers: &[HistogramMarker],
     ) -> Option<HistogramClickEvent> {
-        let max_count = *cache.buckets.iter().max().unwrap_or(&1);
-
+        let max_count = *data.buckets.iter().max().unwrap_or(&1);
         let selected_x_fraction = Self::calculate_selected_x_fraction(
             store,
             selected_line_index,
-            cache.time_range.unwrap().0,
-            cache.time_range.unwrap().1,
+            data.start_time,
+            data.end_time,
         );
 
         let dark_mode = ui.visuals().dark_mode;
@@ -229,7 +204,7 @@ impl Histogram {
 
         let click_event = Self::render_histogram_bars(
             ui,
-            cache,
+            data,
             max_count,
             selected_x_fraction,
             store,
@@ -240,8 +215,8 @@ impl Histogram {
 
         Self::render_timeline_labels(
             ui,
-            cache.time_range.unwrap().0,
-            cache.time_range.unwrap().1,
+            data.start_time,
+            data.end_time,
             store,
             selected_line_index,
         );
@@ -275,7 +250,7 @@ impl Histogram {
 
     fn render_histogram_bars(
         ui: &mut Ui,
-        cache: &HistogramCache,
+        data: &HistogramData,
         max_count: usize,
         selected_x_fraction: Option<f32>,
         store: &LogStore,
@@ -295,8 +270,8 @@ impl Histogram {
         Self::draw_bars(
             &painter,
             rect,
-            cache.buckets.as_slice(),
-            cache.anomaly_buckets.as_slice(),
+            data.buckets.as_slice(),
+            data.anomaly_buckets.as_slice(),
             max_count,
             bar_width,
             dark_mode,
@@ -305,8 +280,8 @@ impl Histogram {
             &painter,
             rect,
             store,
-            cache.time_range.unwrap().0,
-            cache.bucket_size,
+            data.start_time,
+            data.bucket_size,
             markers,
         );
         Self::draw_selected_indicator(&painter, rect, selected_x_fraction);
@@ -317,17 +292,17 @@ impl Histogram {
             &response,
             rect,
             store,
-            cache.time_range.unwrap().0,
-            cache.bucket_size,
+            data.start_time,
+            data.bucket_size,
             markers,
         );
         Self::handle_click(
             &response,
             rect,
             store,
-            &cache.effective_indices,
-            cache.time_range.unwrap().0,
-            cache.bucket_size,
+            &data.effective_indices,
+            data.start_time,
+            data.bucket_size,
         )
     }
 
