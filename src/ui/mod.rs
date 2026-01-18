@@ -12,16 +12,16 @@ pub use toasts::{ProgressToastHandle, ToastManager};
 use egui::Color32;
 
 /// Default color palette for filters and highlights.
-/// Colors are chosen to be distinct and visible on both dark and light backgrounds.
+/// Colors are medium-saturation to ensure visibility on both dark and light backgrounds.
 pub const DEFAULT_PALETTE: [Color32; 8] = [
-    Color32::YELLOW,
-    Color32::LIGHT_BLUE,
-    Color32::LIGHT_GREEN,
-    Color32::from_rgb(255, 200, 150), // Light orange
-    Color32::from_rgb(255, 150, 255), // Light magenta
-    Color32::from_rgb(150, 255, 255), // Light cyan
-    Color32::from_rgb(255, 150, 150), // Light red
-    Color32::from_rgb(200, 200, 255), // Light purple
+    Color32::from_rgb(230, 190, 50),  // Golden yellow
+    Color32::from_rgb(80, 140, 200),  // Steel blue
+    Color32::from_rgb(80, 180, 120),  // Sea green
+    Color32::from_rgb(210, 130, 80),  // Warm orange
+    Color32::from_rgb(180, 100, 180), // Orchid
+    Color32::from_rgb(60, 160, 160),  // Teal
+    Color32::from_rgb(210, 90, 90),   // Soft red
+    Color32::from_rgb(140, 110, 200), // Soft violet
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
