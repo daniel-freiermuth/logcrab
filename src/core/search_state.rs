@@ -145,7 +145,10 @@ impl SearchState {
 
     /// Get the search text that the current filtered indices were computed for.
     pub fn indices_computed_for(&self) -> (&str, bool) {
-        (&self.indices_computed_for_text, self.indices_computed_for_case)
+        (
+            &self.indices_computed_for_text,
+            self.indices_computed_for_case,
+        )
     }
 
     /// Check if cache is valid for the given store version, request update if not.
