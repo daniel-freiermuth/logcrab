@@ -2,6 +2,7 @@ use super::windows;
 use super::ToastManager;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorker;
@@ -98,6 +99,7 @@ impl LogCrabApp {
             store,
             self.filter_worker.handle(),
             self.histogram_worker.handle(),
+            Arc::new(self.global_config.clone()),
         ));
     }
 
@@ -369,6 +371,37 @@ impl LogCrabApp {
                 if let Err(e) = self.global_config.save() {
                     log::error!("Failed to save config: {e}");
                 }
+            }
+
+            ui.separator();
+
+            ui.label("DLT Timestamp Source:");
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .selectable_value(
+                        &mut self.global_config.dlt_timestamp_source,
+                        crate::config::DltTimestampSource::CalibratedMonotonic,
+                        "Calibrated Monotonic (more precise)",
+                    )
+                    .changed();
+                changed |= ui
+                    .selectable_value(
+                        &mut self.global_config.dlt_timestamp_source,
+                        crate::config::DltTimestampSource::StorageTime,
+                        "Storage Time (less precise)",
+                    )
+                    .changed();
+            });
+            if changed {
+                // Save config when changed
+                if let Err(e) = self.global_config.save() {
+                    log::error!("Failed to save config: {e}");
+                }
+                log::info!(
+                    "DLT timestamp source changed to: {:?}",
+                    self.global_config.dlt_timestamp_source
+                );
             }
         });
 

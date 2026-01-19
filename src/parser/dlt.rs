@@ -1,3 +1,4 @@
+use crate::config::DltTimestampSource;
 use crate::core::log_file::ProgressCallback;
 use crate::core::log_store::SourceData;
 
@@ -138,6 +139,7 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     path: P,
     source: &Arc<SourceData>,
     progress_callback: &ProgressCallback,
+    timestamp_source: DltTimestampSource,
 ) -> Result<usize, String> {
     profiling::scope!("parse_dlt_file_with_progress");
     let path = path.as_ref();
@@ -147,9 +149,17 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
         .map(|m| m.len())
         .map_err(|e| format!("{e:?}"))?;
 
-    let boot_time = calc_boot_time_from_file(path)?;
-
-    log::info!("Calculated DLT boot time: {boot_time}");
+    let boot_time = match timestamp_source {
+        DltTimestampSource::CalibratedMonotonic => {
+            let bt = calc_boot_time_from_file(path)?;
+            log::info!("Calculated DLT boot time: {bt}");
+            Some(bt)
+        }
+        DltTimestampSource::StorageTime => {
+            log::info!("Using DLT storage time for timestamps");
+            None
+        }
+    };
 
     // Second pass: parse all messages with the calculated offset
     let file = File::open(path).map_err(|e| format!("Failed to open DLT file: {e}"))?;
@@ -227,20 +237,18 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
 fn convert_dlt_message(
     msg: &Message,
     line_number: usize,
-    boot_time: DateTime<Local>,
+    boot_time: Option<DateTime<Local>>,
 ) -> Option<LogLine> {
-    // Extract timestamp: boot_time + time_since_boot
-    let timestamp = if let Some(ts) = msg.header.timestamp {
+    // Extract timestamp based on configuration
+    let timestamp = if let Some(boot_time) = boot_time {
+        // Use calibrated monotonic clock: boot_time + time_since_boot
+        let ts = msg.header.timestamp?;
         let time_since_boot = dlt_header_time_to_timedelta(ts);
-        if let Some(ts) = boot_time.checked_add_signed(time_since_boot) {
-            ts
-        } else {
-            log::error!("Invalid timestamp in DLT message for line {line_number}");
-            return None;
-        }
+        boot_time.checked_add_signed(time_since_boot)?
     } else {
-        log::error!("DLT message missing timestamp for line {line_number}");
-        return None;
+        // Use storage time directly
+        let storage_header = msg.storage_header.as_ref()?;
+        storage_time_to_datetime(&storage_header.timestamp)?
     };
     let ecu_header = if let Some(ecu_id) = &msg.header.ecu_id {
         ecu_id.clone()
@@ -273,8 +281,6 @@ fn convert_dlt_message(
         return None;
     };
 
-    let time_diff = storage_time.signed_duration_since(timestamp);
-
     // Extract the payload as message (PayloadContent)
     let payload = if let dlt_core::dlt::PayloadContent::Verbose(args) = &msg.payload {
         args.iter()
@@ -305,11 +311,30 @@ fn convert_dlt_message(
         return None;
     };
 
-    let diff_str = format_time_diff(time_diff);
-
-    let message = format!(
-        "[{storage_time} ({diff_str}) {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type:?} {payload}"
-    );
+    // Format message with appropriate timestamp info based on mode
+    let message = if boot_time.is_some() {
+        // CalibratedMonotonic mode: show storage time with diff to calibrated time
+        let time_diff = storage_time.signed_duration_since(timestamp);
+        let diff_str = format_time_diff(time_diff);
+        format!(
+            "[{storage_time} ({diff_str}) {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type:?} {payload}"
+        )
+    } else {
+        // StorageTime mode: show monotonic timestamp (header timestamp)
+        if let Some(header_ts) = msg.header.timestamp {
+            let monotonic_delta = dlt_header_time_to_timedelta(header_ts);
+            // Format as seconds with millisecond precision
+            let monotonic_secs = monotonic_delta.num_milliseconds() as f64 / 1000.0;
+            format!(
+                "[{monotonic_secs:.3}s {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type:?} {payload}"
+            )
+        } else {
+            // Fallback if no header timestamp
+            format!(
+                "[{storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type:?} {payload}"
+            )
+        }
+    };
 
     let raw = format!("{msg:?}");
 

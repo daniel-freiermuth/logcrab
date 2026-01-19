@@ -22,6 +22,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// DLT timestamp source configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DltTimestampSource {
+    /// Use storage header timestamp (wall-clock time, less precise)
+    StorageTime,
+    /// Use calibrated monotonic clock (boot time + header timestamp, more precise)
+    CalibratedMonotonic,
+}
+
+impl Default for DltTimestampSource {
+    fn default() -> Self {
+        Self::CalibratedMonotonic
+    }
+}
+
 /// Global user configuration stored in config directory
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
@@ -48,6 +63,10 @@ pub struct GlobalConfig {
     /// Last directory used for filter files (import/export)
     #[serde(default)]
     pub last_filters_directory: Option<PathBuf>,
+
+    /// DLT timestamp source (storage time or calibrated monotonic clock)
+    #[serde(default)]
+    pub dlt_timestamp_source: DltTimestampSource,
 }
 
 const fn default_hide_epoch() -> bool {
@@ -63,6 +82,7 @@ impl Default for GlobalConfig {
             bright_mode: false,
             last_log_directory: None,
             last_filters_directory: None,
+            dlt_timestamp_source: DltTimestampSource::default(),
         }
     }
 }

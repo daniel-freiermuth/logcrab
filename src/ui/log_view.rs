@@ -51,6 +51,9 @@ pub struct CrabSession {
     /// Shared state passed to all tabs
     pub state: SessionState,
 
+    /// Global configuration (needed for DLT timestamp source)
+    global_config: Arc<GlobalConfig>,
+
     /// Pending tab add request (set by add button callback)
     pending_tab_add: Option<PendingTabAdd>,
 }
@@ -60,12 +63,14 @@ impl CrabSession {
         store: Arc<LogStore>,
         filter_worker: crate::core::FilterWorkerHandle,
         histogram_worker: HistogramWorkerHandle,
+        global_config: Arc<GlobalConfig>,
     ) -> Self {
         let mut cs = Self {
             dock_state: DockState::new(Vec::new()),
             monotonic_filter_counter: 0,
             pending_tab_add: None,
             state: SessionState::new(store, filter_worker, histogram_worker),
+            global_config,
         };
         cs.add_filter_view(false, None);
 
@@ -113,7 +118,11 @@ impl CrabSession {
 
         log::info!("Adding file to session: {}", path.display());
 
-        let source = LogFileLoader::load_async(path, toast);
+        let source = LogFileLoader::load_async(
+            path,
+            toast,
+            self.global_config.dlt_timestamp_source,
+        );
         let (filters, highlights) = source.load_saved_filters_and_highlights();
         self.state.store.add_source(&source);
         for saved_filter in &filters {

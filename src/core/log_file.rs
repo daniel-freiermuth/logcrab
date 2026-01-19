@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
+use crate::config::DltTimestampSource;
 use crate::core::log_store::SourceData;
 use crate::parser::{detect_format, dlt, generic, logcat, LogFormat};
 use crate::ui::ProgressToastHandle;
@@ -37,12 +38,16 @@ impl LogFileLoader {
     ///
     /// The toast handle will be updated with progress and dismissed when complete.
     /// Returns the `SourceData` that will be populated with log lines.
-    pub fn load_async(path: PathBuf, toast: ProgressToastHandle) -> Arc<SourceData> {
+    pub fn load_async(
+        path: PathBuf,
+        toast: ProgressToastHandle,
+        dlt_timestamp_source: DltTimestampSource,
+    ) -> Arc<SourceData> {
         let data_source = Arc::new(SourceData::new(Some(path.clone())));
         let source_clone = data_source.clone();
 
         thread::spawn(move || {
-            Self::process_file_background(path, source_clone, toast);
+            Self::process_file_background(path, source_clone, toast, dlt_timestamp_source);
         });
 
         data_source
@@ -52,6 +57,7 @@ impl LogFileLoader {
         path: &Path,
         data_source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
+        dlt_timestamp_source: DltTimestampSource,
     ) -> bool {
         log::info!("Detected DLT binary file, using dlt-core parser");
         toast.update(
@@ -65,7 +71,12 @@ impl LogFileLoader {
             toast_clone.update(progress, message);
         });
 
-        match dlt::parse_dlt_file_with_progress(path, data_source, &progress_callback) {
+        match dlt::parse_dlt_file_with_progress(
+            path,
+            data_source,
+            &progress_callback,
+            dlt_timestamp_source,
+        ) {
             Ok(total_lines) => {
                 log::info!("Successfully parsed {total_lines} DLT messages");
                 true
@@ -83,6 +94,7 @@ impl LogFileLoader {
         path: PathBuf,
         data_source: Arc<SourceData>,
         toast: ProgressToastHandle,
+        dlt_timestamp_source: DltTimestampSource,
     ) {
         let start_time = std::time::Instant::now();
         log::debug!(
@@ -108,7 +120,7 @@ impl LogFileLoader {
 
         // Load file based on detected format
         let source_added = if is_dlt_file {
-            Self::read_dlt_file(&path, &data_source, &toast)
+            Self::read_dlt_file(&path, &data_source, &toast, dlt_timestamp_source)
         } else {
             // Read file content first to detect format
             let Some(content) = Self::read_file_content(&path, &toast) else {
