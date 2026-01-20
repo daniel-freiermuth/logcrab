@@ -132,6 +132,47 @@ pub fn selected_bookmarked_row_color(dark_mode: bool) -> Color32 {
 /// Reusable log table component
 pub struct LogTable;
 
+impl LogTable {
+    /// Show context menu for a log line
+    fn show_line_context_menu(
+        response: &egui::Response,
+        store: &LogStore,
+        line_idx: StoreID,
+        events: &mut Vec<LogTableEvent>,
+    ) {
+        use crate::parser::line::LogLineCore;
+        response.context_menu(|ui| {
+            if ui.button("📑 Toggle Bookmark").clicked() {
+                events.push(LogTableEvent::BookmarkToggled {
+                    line_index: line_idx,
+                });
+                ui.close();
+            }
+
+            if ui.button("🎯 Jump to Line").clicked() {
+                events.push(LogTableEvent::LineClicked {
+                    line_index: line_idx,
+                });
+                ui.close();
+            }
+
+            ui.separator();
+
+            if let Some(line) = store.get_by_id(&line_idx) {
+                if ui.button("📋 Copy Message").clicked() {
+                    ui.ctx().copy_text(line.message());
+                    ui.close();
+                }
+
+                if ui.button("📋 Copy Full Line").clicked() {
+                    ui.ctx().copy_text(line.raw());
+                    ui.close();
+                }
+            }
+        });
+    }
+}
+
 /// Stored column widths for the log table
 #[derive(Clone, Debug)]
 pub struct ColumnWidths {
@@ -325,6 +366,7 @@ impl LogTable {
                 selected_line_index,
                 bookmarked_lines,
                 all_filter_highlights,
+                events,
                 dark_mode,
             );
 
@@ -342,6 +384,7 @@ impl LogTable {
         selected_line_index: Option<StoreID>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
+        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
@@ -354,10 +397,11 @@ impl LogTable {
         let source_name = store.get_source_name(&line_idx);
 
         let mut row_clicked = false;
-        let mut row_right_clicked = false;
+        let mut row_middle_clicked = false;
 
         Self::render_all_columns(
             row,
+            store,
             &line,
             line_idx,
             is_selected,
@@ -367,11 +411,12 @@ impl LogTable {
             bookmarked_lines,
             all_filter_highlights,
             &mut row_clicked,
-            &mut row_right_clicked,
+            &mut row_middle_clicked,
+            events,
             dark_mode,
         );
 
-        if row_right_clicked {
+        if row_middle_clicked {
             Some(LogTableEvent::BookmarkToggled {
                 line_index: line_idx,
             })
@@ -387,6 +432,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_all_columns(
         row: &mut egui_extras::TableRow,
+        store: &LogStore,
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
@@ -396,23 +442,27 @@ impl LogTable {
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
-        row_right_clicked: &mut bool,
+        row_middle_clicked: &mut bool,
+        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) {
         Self::render_source_column(
             row,
+            store,
             line_idx,
             is_selected,
             is_bookmarked,
             color,
             source_name,
             row_clicked,
-            row_right_clicked,
+            row_middle_clicked,
+            events,
             dark_mode,
         );
 
         Self::render_line_column(
             row,
+            store,
             line,
             line_idx,
             is_selected,
@@ -422,24 +472,28 @@ impl LogTable {
                 .get(&line_idx)
                 .map(std::string::String::as_str),
             row_clicked,
-            row_right_clicked,
+            row_middle_clicked,
+            events,
             dark_mode,
         );
 
         Self::render_timestamp_column(
             row,
+            store,
             line,
             line_idx,
             is_selected,
             is_bookmarked,
             color,
             row_clicked,
-            row_right_clicked,
+            row_middle_clicked,
+            events,
             dark_mode,
         );
 
         Self::render_message_column(
             row,
+            store,
             line,
             line_idx,
             is_selected,
@@ -447,19 +501,22 @@ impl LogTable {
             color,
             all_filter_highlights,
             row_clicked,
-            row_right_clicked,
+            row_middle_clicked,
+            events,
             dark_mode,
         );
 
         Self::render_score_column(
             row,
+            store,
             line,
             line_idx,
             is_selected,
             is_bookmarked,
             color,
             row_clicked,
-            row_right_clicked,
+            row_middle_clicked,
+            events,
             dark_mode,
         );
     }
@@ -467,13 +524,15 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_source_column(
         row: &mut egui_extras::TableRow,
+        store: &LogStore,
         line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
         source_name: Option<&str>,
         row_clicked: &mut bool,
-        row_right_clicked: &mut bool,
+        row_middle_clicked: &mut bool,
+        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
@@ -517,15 +576,19 @@ impl LogTable {
             if response.clicked() {
                 *row_clicked = true;
             }
-            if response.secondary_clicked() {
-                *row_right_clicked = true;
+            if response.middle_clicked() {
+                *row_middle_clicked = true;
             }
+            
+            // Show context menu on right-click
+            Self::show_line_context_menu(&response, store, line_idx, events);
         });
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_line_column(
         row: &mut egui_extras::TableRow,
+        store: &LogStore,
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
@@ -533,7 +596,8 @@ impl LogTable {
         color: Color32,
         bookmark_name: Option<&str>,
         row_clicked: &mut bool,
-        row_right_clicked: &mut bool,
+        row_middle_clicked: &mut bool,
+        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
@@ -587,22 +651,27 @@ impl LogTable {
             if response.clicked() {
                 *row_clicked = true;
             }
-            if response.secondary_clicked() {
-                *row_right_clicked = true;
+            if response.middle_clicked() {
+                *row_middle_clicked = true;
             }
+            
+            // Show context menu on right-click
+            Self::show_line_context_menu(&response, store, line_idx, events);
         });
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow,
+        store: &LogStore,
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
         row_clicked: &mut bool,
-        row_right_clicked: &mut bool,
+        row_middle_clicked: &mut bool,
+        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
@@ -638,15 +707,19 @@ impl LogTable {
             if response.clicked() {
                 *row_clicked = true;
             }
-            if response.secondary_clicked() {
-                *row_right_clicked = true;
+            if response.middle_clicked() {
+                *row_middle_clicked = true;
             }
+            
+            // Show context menu on right-click
+            Self::show_line_context_menu(&response, store, line_idx, events);
         });
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_message_column(
         row: &mut egui_extras::TableRow,
+        store: &LogStore,
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
@@ -654,7 +727,8 @@ impl LogTable {
         bg_color: Color32,
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
-        row_right_clicked: &mut bool,
+        row_middle_clicked: &mut bool,
+        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
@@ -710,22 +784,27 @@ impl LogTable {
             if response.clicked() {
                 *row_clicked = true;
             }
-            if response.secondary_clicked() {
-                *row_right_clicked = true;
+            if response.middle_clicked() {
+                *row_middle_clicked = true;
             }
+            
+            // Show context menu on right-click
+            Self::show_line_context_menu(&response, store, line_idx, events);
         });
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_score_column(
         row: &mut egui_extras::TableRow,
+        store: &LogStore,
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
         is_bookmarked: bool,
         color: Color32,
         row_clicked: &mut bool,
-        row_right_clicked: &mut bool,
+        row_middle_clicked: &mut bool,
+        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
@@ -761,9 +840,12 @@ impl LogTable {
             if response.clicked() {
                 *row_clicked = true;
             }
-            if response.secondary_clicked() {
-                *row_right_clicked = true;
+            if response.middle_clicked() {
+                *row_middle_clicked = true;
             }
+            
+            // Show context menu on right-click
+            Self::show_line_context_menu(&response, store, line_idx, events);
         });
     }
 }
