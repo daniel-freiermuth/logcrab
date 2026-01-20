@@ -17,7 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::core::log_store::StoreID;
-use crate::parser::line::LogLine;
+use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::log_table::{
@@ -186,7 +186,7 @@ impl BookmarkPanel {
             return;
         };
 
-        let color = score_to_color(line.anomaly_score, dark_mode);
+        let color = score_to_color(line.anomaly_score(), dark_mode);
 
         let mut row_clicked = false;
 
@@ -260,7 +260,7 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            let line_number = line.line_number;
+            let line_number = line.line_number();
             let text = if is_selected {
                 RichText::new(format!("★ ▶ {line_number}"))
                     .color(color)
@@ -293,7 +293,7 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            let timestamp_str = line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            let timestamp_str = line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
 
             let response = ui.interact(
@@ -397,9 +397,9 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, dark_mode);
 
-            let message = &line.message;
+            let message = line.message();
             let job = FilterHighlight::highlight_text_with_filters(
-                message,
+                &message,
                 color,
                 all_filter_highlights,
                 dark_mode,

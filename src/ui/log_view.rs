@@ -118,11 +118,8 @@ impl CrabSession {
 
         log::info!("Adding file to session: {}", path.display());
 
-        let source = LogFileLoader::load_async(
-            path,
-            toast,
-            self.global_config.dlt_timestamp_source,
-        );
+        let source =
+            LogFileLoader::load_async(path, toast, self.global_config.dlt_timestamp_source);
         let (filters, highlights) = source.load_saved_filters_and_highlights();
         self.state.store.add_source(&source);
         for saved_filter in &filters {

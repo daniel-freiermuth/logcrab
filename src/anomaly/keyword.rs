@@ -1,5 +1,5 @@
 use crate::anomaly::scorer::AnomalyScorer;
-use crate::parser::line::LogLine;
+use crate::parser::line::{LogLine, LogLineCore};
 use fancy_regex::Regex;
 use std::sync::LazyLock;
 
@@ -61,7 +61,7 @@ impl KeywordScorer {
 
 impl AnomalyScorer for KeywordScorer {
     fn score(&mut self, line: &LogLine) -> f64 {
-        Self::score_message(&line.message)
+        Self::score_message(&line.message())
     }
 
     fn update(&mut self, _line: &LogLine) {

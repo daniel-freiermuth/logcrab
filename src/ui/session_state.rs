@@ -29,6 +29,7 @@ use egui::Color32;
 use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::log_store::StoreID;
 use crate::core::{FilterWorkerHandle, LogStore, SearchRule};
+use crate::parser::line::LogLineCore;
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 
 /// Shared state for a log viewing session.
@@ -138,7 +139,7 @@ impl SessionState {
             log::debug!("Removing bookmark at line {line_index:?}");
             self.store.remove_bookmark(&line_index);
         } else if let Some(line) = self.store.get_by_id(&line_index) {
-            let bookmark_name = format!("Line {}", line.line_number);
+            let bookmark_name = format!("Line {}", line.line_number());
             log::debug!("Adding bookmark: {bookmark_name}");
             self.store.set_bookmark(&line_index, bookmark_name);
         }

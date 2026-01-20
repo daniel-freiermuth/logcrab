@@ -1,4 +1,4 @@
-use super::line::LogLine;
+use super::line::{GenericLogLine, LogLine};
 use chrono::{DateTime, Datelike, Local, TimeZone};
 use fancy_regex::Regex;
 use std::sync::LazyLock;
@@ -104,18 +104,19 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
         remaining.to_string()
     };
 
-    timestamp.map(|ts| LogLine::new(raw, line_number, message, ts))
+    timestamp.map(|ts| LogLine::Generic(GenericLogLine::new(raw, ts, message, line_number)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::line::LogLineCore;
 
     #[test]
     fn test_iso_timestamp() {
         let raw = "2025-11-20T14:23:45.123Z ERROR Connection failed".to_string();
         let line = parse_generic(raw, 1);
-        assert_eq!(line.unwrap().message, "ERROR Connection failed");
+        assert_eq!(line.unwrap().message(), "ERROR Connection failed");
     }
 
     #[test]
@@ -126,11 +127,11 @@ mod tests {
         assert!(line.is_some());
         let line = line.unwrap();
         assert_eq!(
-            line.message,
+            line.message(),
             ", [402.037] ,cnss: fatal: SMMU fault happened with IOVA 0x0"
         );
         assert_eq!(
-            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-26 09:58:05"
         );
     }
@@ -139,7 +140,7 @@ mod tests {
     fn test_syslog_format() {
         let raw = "Nov 20 14:23:45 INFO Application started".to_string();
         let line = parse_generic(raw, 1);
-        assert_eq!(line.unwrap().message, "INFO Application started");
+        assert_eq!(line.unwrap().message(), "INFO Application started");
     }
 
     #[test]
@@ -152,9 +153,9 @@ mod tests {
             "Should parse ISO timestamp with space and milliseconds"
         );
         let line = line.unwrap();
-        assert_eq!(line.message, "ERROR Connection failed");
+        assert_eq!(line.message(), "ERROR Connection failed");
         assert_eq!(
-            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             "2025-11-20 14:23:45.123"
         );
     }
@@ -169,9 +170,9 @@ mod tests {
             "Should parse ISO timestamp with space, no milliseconds"
         );
         let line = line.unwrap();
-        assert_eq!(line.message, "WARN Timeout occurred");
+        assert_eq!(line.message(), "WARN Timeout occurred");
         assert_eq!(
-            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-20 14:23:45"
         );
     }
@@ -185,9 +186,9 @@ mod tests {
             "Should parse bracketed timestamp with milliseconds"
         );
         let line = line.unwrap();
-        assert_eq!(line.message, "DEBUG Processing request");
+        assert_eq!(line.message(), "DEBUG Processing request");
         assert_eq!(
-            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             "2025-11-20 14:23:45.123"
         );
     }
@@ -201,9 +202,9 @@ mod tests {
             "Should parse bracketed timestamp without milliseconds"
         );
         let line = line.unwrap();
-        assert_eq!(line.message, "INFO Service started");
+        assert_eq!(line.message(), "INFO Service started");
         assert_eq!(
-            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-20 14:23:45"
         );
     }
@@ -215,11 +216,11 @@ mod tests {
         let line = parse_generic(raw, 1);
         assert!(line.is_some(), "Should parse logcat timestamp format");
         let line = line.unwrap();
-        assert_eq!(line.message, "E/ActivityManager: Process crashed");
+        assert_eq!(line.message(), "E/ActivityManager: Process crashed");
         // Year is assumed to be current year
         let current_year = Local::now().year();
         assert_eq!(
-            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             format!("{current_year}-11-20 14:23:45.123")
         );
     }
@@ -233,6 +234,6 @@ mod tests {
             line.is_some(),
             "Should parse ISO timestamp with timezone offset"
         );
-        assert_eq!(line.unwrap().message, "INFO Server running");
+        assert_eq!(line.unwrap().message(), "INFO Server running");
     }
 }

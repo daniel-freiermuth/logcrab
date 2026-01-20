@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use crate::{
     core::{log_store::StoreID, LogStore},
-    parser::line::LogLine,
+    parser::line::{LogLine, LogLineCore},
     ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
 use chrono::Local;
@@ -350,7 +350,7 @@ impl LogTable {
 
         let is_selected = selected_line_index.as_ref() == Some(&line_idx);
         let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
-        let color = score_to_color(line.anomaly_score, dark_mode);
+        let color = score_to_color(line.anomaly_score(), dark_mode);
         let source_name = store.get_source_name(&line_idx);
 
         let mut row_clicked = false;
@@ -559,9 +559,9 @@ impl LogTable {
 
             let bookmark_icon = if is_bookmarked { "★ " } else { "" };
             let line_text = if is_selected {
-                format!("▶ {}{}", bookmark_icon, line.line_number)
+                format!("▶ {}{}", bookmark_icon, line.line_number())
             } else {
-                format!("{}{}", bookmark_icon, line.line_number)
+                format!("{}{}", bookmark_icon, line.line_number())
             };
 
             let text = if is_selected {
@@ -626,7 +626,7 @@ impl LogTable {
                 );
             }
 
-            let timestamp_str = line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            let timestamp_str = line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             let text = RichText::new(timestamp_str).color(color);
             ui.label(text);
 
@@ -678,8 +678,9 @@ impl LogTable {
                 );
             }
 
+            let message = line.message();
             let job = FilterHighlight::highlight_text_with_filters(
-                &line.message,
+                &message,
                 bg_color,
                 all_filter_highlights,
                 dark_mode,
@@ -701,7 +702,7 @@ impl LogTable {
 
             // Only show hover tooltip if text was clipped
             let response = if is_clipped {
-                response.on_hover_text(&line.raw)
+                response.on_hover_text(line.raw())
             } else {
                 response
             };
@@ -748,7 +749,7 @@ impl LogTable {
                 );
             }
 
-            let anomaly_str = format!("{:.1}", line.anomaly_score);
+            let anomaly_str = format!("{:.1}", line.anomaly_score());
             let text = RichText::new(anomaly_str).strong().color(color);
             ui.label(text);
 

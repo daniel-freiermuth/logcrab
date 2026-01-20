@@ -2,9 +2,9 @@ use crate::config::DltTimestampSource;
 use crate::core::log_file::ProgressCallback;
 use crate::core::log_store::SourceData;
 
-use super::line::LogLine;
-use chrono::{DateTime, Local, TimeDelta, TimeZone};
-use dlt_core::dlt::{DltTimeStamp, Message};
+use super::line::{DltLogLine, LogLine};
+use chrono::{DateTime, Local, TimeDelta};
+use dlt_core::dlt::Message;
 use dlt_core::read::{read_message, DltMessageReader};
 use std::cell::Cell;
 use std::fs::File;
@@ -12,41 +12,6 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-
-/// Format a time difference with 4 significant digits and appropriate unit
-fn format_time_diff(diff: TimeDelta) -> String {
-    let sign = if diff < TimeDelta::zero() { "-" } else { "+" };
-    let nanos = diff.num_nanoseconds().unwrap_or(0).unsigned_abs();
-
-    let (value, unit) = if nanos >= 60_000_000_000 {
-        // Minutes
-        (nanos as f64 / 60_000_000_000.0, "m")
-    } else if nanos >= 1_000_000_000 {
-        // Seconds
-        (nanos as f64 / 1_000_000_000.0, "s")
-    } else if nanos >= 1_000_000 {
-        // Milliseconds
-        (nanos as f64 / 1_000_000.0, "ms")
-    } else if nanos >= 1_000 {
-        // Microseconds
-        (nanos as f64 / 1_000.0, "µs")
-    } else {
-        // Nanoseconds
-        (nanos as f64, "ns")
-    };
-
-    // Format with 4 significant digits
-    let formatted = if value >= 1000.0 {
-        format!("{sign}{value:>4.0}{unit}")
-    } else if value >= 100.0 {
-        format!("{sign}{value:>4.1}{unit}")
-    } else if value >= 10.0 {
-        format!("{sign}{value:>4.2}{unit}")
-    } else {
-        format!("{sign}{value:>4.3}{unit}")
-    };
-    formatted
-}
 
 /// Returns the offset to add to header timestamps (time since boot) to get absolute time
 fn calc_boot_time_from_message(msg: &Message) -> Option<DateTime<Local>> {
@@ -85,7 +50,8 @@ fn calc_boot_time_from_file(path: &Path) -> Result<DateTime<Local>, String> {
     }
 }
 
-fn storage_time_to_datetime(storage_time: &DltTimeStamp) -> Option<DateTime<Local>> {
+fn storage_time_to_datetime(storage_time: &dlt_core::dlt::DltTimeStamp) -> Option<DateTime<Local>> {
+    use chrono::TimeZone;
     Local
         .timestamp_opt(
             i64::from(storage_time.seconds),
@@ -250,100 +216,28 @@ fn convert_dlt_message(
         let storage_header = msg.storage_header.as_ref()?;
         storage_time_to_datetime(&storage_header.timestamp)?
     };
-    let ecu_header = if let Some(ecu_id) = &msg.header.ecu_id {
-        ecu_id.clone()
-    } else {
+
+    // Validate message has required components (lazy formatting will extract them later)
+    if msg.header.ecu_id.is_none() {
         log::warn!("DLT message missing ECU ID for line {line_number}");
-        "UnknownECU".to_string()
-    };
-    let session_id = msg.header.session_id.unwrap_or_else(|| {
+    }
+    if msg.header.session_id.is_none() {
         log::warn!("DLT message missing Session ID for line {line_number}");
-        0
-    });
-    let (message_type, app_id, ctx_id) = if let Some(ext_header) = &msg.extended_header {
-        (
-            ext_header.message_type.clone(),
-            ext_header.application_id.clone(),
-            ext_header.context_id.clone(),
-        )
-    } else {
+    }
+    if msg.extended_header.is_none() {
         log::error!("DLT message missing Extended Header for line {line_number}");
         return None;
-    };
-    let (storage_ecu, storage_time) = if let Some(storage_header) = &msg.storage_header {
-        let Some(ts) = storage_time_to_datetime(&storage_header.timestamp) else {
-            log::error!("DLT message has invalid storage timestamp for line {line_number}");
-            return None;
-        };
-        (storage_header.ecu_id.clone(), ts)
-    } else {
+    }
+    if msg.storage_header.is_none() {
         log::error!("DLT message missing Storage Header for line {line_number}");
         return None;
-    };
+    }
 
-    // Extract the payload as message (PayloadContent)
-    let payload = if let dlt_core::dlt::PayloadContent::Verbose(args) = &msg.payload {
-        args.iter()
-            .filter_map(|arg| match &arg.value {
-                dlt_core::dlt::Value::StringVal(s) => Some(s.clone()),
-                dlt_core::dlt::Value::U32(v) => Some(format!("{v}")),
-                dlt_core::dlt::Value::U64(v) => Some(format!("{v}")),
-                dlt_core::dlt::Value::U8(v) => Some(format!("{v}")),
-                dlt_core::dlt::Value::U16(v) => Some(format!("{v}")),
-                dlt_core::dlt::Value::I32(v) => Some(format!("{v}")),
-                _ => {
-                    log::error!(
-                        "Unsupported DLT verbose argument {:?} for line {}",
-                        arg.value,
-                        line_number
-                    );
-                    None
-                }
-            })
-            .collect::<Vec<String>>()
-            .join(" || ")
-    } else {
-        log::error!(
-            "Unsupported DLT payload {:?} for line {}",
-            msg.payload,
-            line_number
-        );
-        return None;
-    };
-
-    // Format message with appropriate timestamp info based on mode
-    let message = if boot_time.is_some() {
-        // CalibratedMonotonic mode: show storage time with diff to calibrated time
-        let time_diff = storage_time.signed_duration_since(timestamp);
-        let diff_str = format_time_diff(time_diff);
-        format!(
-            "[{storage_time} ({diff_str}) {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type:?} {payload}"
-        )
-    } else {
-        // StorageTime mode: show monotonic timestamp (header timestamp)
-        if let Some(header_ts) = msg.header.timestamp {
-            let monotonic_delta = dlt_header_time_to_timedelta(header_ts);
-            // Format as seconds with millisecond precision
-            let monotonic_secs = monotonic_delta.num_milliseconds() as f64 / 1000.0;
-            format!(
-                "[{monotonic_secs:.3}s {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type:?} {payload}"
-            )
-        } else {
-            // Fallback if no header timestamp
-            format!(
-                "[{storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type:?} {payload}"
-            )
-        }
-    };
-
-    let raw = format!("{msg:?}");
-
-    Some(LogLine {
-        raw,
-        line_number,
+    // Return DLT-specific variant - message formatting is now deferred
+    Some(LogLine::Dlt(DltLogLine::new(
+        msg.clone(),
         timestamp,
-        message,
-        template_key: String::new(),
-        anomaly_score: 0.0,
-    })
+        boot_time,
+        line_number,
+    )))
 }

@@ -331,12 +331,11 @@ impl LogFileLoader {
                 continue;
             }
 
-            let Some(mut log_line) = parse_fn(line_buffer.to_string(), file_line_number) else {
+            let Some(log_line) = parse_fn(line_buffer.to_string(), file_line_number) else {
                 continue;
             };
 
-            // Normalize template key
-            log_line.template_key = crate::parser::normalize_message(&log_line.message);
+            // Template key is now computed lazily in LogLineCore trait
             chunk_lines.push(log_line);
 
             if chunk_lines.len() >= CHUNK_SIZE {

@@ -18,7 +18,7 @@
 
 use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
-use crate::parser::line::LogLine;
+use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 use chrono::Local;
 use rayon::prelude::*;
@@ -206,7 +206,7 @@ impl SourceData {
         let new_by_ts = {
             profiling::scope!("sort_new_indices");
             let mut indices: Vec<usize> = (new_start_idx..lines.len()).collect();
-            indices.par_sort_by_key(|&idx| lines[idx].timestamp);
+            indices.par_sort_by_key(|&idx| lines[idx].timestamp());
             indices
         };
 
@@ -217,8 +217,8 @@ impl SourceData {
             let mut i_exist = 0;
             let mut j_new = 0;
             while i_exist < existing_by_ts.len() && j_new < new_by_ts.len() {
-                let ts_exist = lines[existing_by_ts[i_exist]].timestamp;
-                let ts_new = lines[new_by_ts[j_new]].timestamp;
+                let ts_exist = lines[existing_by_ts[i_exist]].timestamp();
+                let ts_new = lines[new_by_ts[j_new]].timestamp();
                 if ts_exist <= ts_new {
                     merged.push(existing_by_ts[i_exist]);
                     i_exist += 1;
@@ -247,7 +247,7 @@ impl SourceData {
         let mut guard = self.lines.write().unwrap();
         for (idx, &score) in scores.iter().enumerate() {
             if let Some(line) = guard.get_mut(idx) {
-                line.anomaly_score = score;
+                line.set_anomaly_score(score);
             }
         }
         drop(guard);
@@ -331,8 +331,8 @@ impl StoreID {
         let other_line = store
             .get_by_id(other)
             .expect("Tried to compare non-existent line (other).");
-        let t1 = self_line.timestamp;
-        let t2 = other_line.timestamp;
+        let t1 = self_line.timestamp();
+        let t2 = other_line.timestamp();
 
         match t1.cmp(&t2) {
             Ordering::Equal => match self.source_index.cmp(&other.source_index) {
@@ -553,7 +553,7 @@ impl LogStore {
         for (src_idx, iter) in iters.iter_mut().enumerate() {
             if let Some(id) = iter.next() {
                 if let Some(line) = self.get_by_id(&id) {
-                    heap.push(Reverse((line.timestamp, src_idx, id)));
+                    heap.push(Reverse((line.timestamp(), src_idx, id)));
                 }
             }
         }
@@ -565,7 +565,7 @@ impl LogStore {
             // Push the next element from this source onto the heap
             if let Some(next_id) = iters[src_idx].next() {
                 if let Some(line) = self.get_by_id(&next_id) {
-                    heap.push(Reverse((line.timestamp, src_idx, next_id)));
+                    heap.push(Reverse((line.timestamp(), src_idx, next_id)));
                 }
             }
         }

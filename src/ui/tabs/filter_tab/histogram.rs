@@ -21,6 +21,7 @@ use crate::core::histogram_worker::{
     HistogramWorkerHandle, NUM_BUCKETS, SCORE_BUCKETS,
 };
 use crate::core::{log_store::StoreID, LogStore};
+use crate::parser::line::LogLineCore;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table;
 use egui::{Color32, Ui};
@@ -231,7 +232,7 @@ impl Histogram {
         end_time: chrono::DateTime<chrono::Local>,
     ) -> Option<f32> {
         let selected_line_index = selected_line_index?;
-        let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp;
+        let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp();
         let total_duration = (end_time.timestamp() - start_time.timestamp()) as f64;
 
         if total_duration <= 0.0 {
@@ -401,7 +402,7 @@ impl Histogram {
 
         for marker in markers {
             for line_idx in &marker.indices {
-                let ts = store.get_by_id(line_idx).unwrap().timestamp;
+                let ts = store.get_by_id(line_idx).unwrap().timestamp();
                 let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
 
                 let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
@@ -438,7 +439,7 @@ impl Histogram {
 
         for marker in markers {
             for line_idx in &marker.indices {
-                let ts = store.get_by_id(line_idx).unwrap().timestamp;
+                let ts = store.get_by_id(line_idx).unwrap().timestamp();
                 let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
                 let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
 
@@ -529,7 +530,7 @@ impl Histogram {
         let idx = filtered_indices.partition_point(|line_idx| {
             store
                 .get_by_id(line_idx)
-                .map(|line| line.timestamp.timestamp() < target_time)
+                .map(|line| line.timestamp().timestamp() < target_time)
                 .expect("Logline not found during histogram search.")
         });
 
@@ -541,12 +542,12 @@ impl Histogram {
                 let before_ts = store
                     .get_by_id(&filtered_indices[i - 1])
                     .expect("Logline not found during histogram search.")
-                    .timestamp
+                    .timestamp()
                     .timestamp();
                 let after_ts = store
                     .get_by_id(&filtered_indices[i])
                     .expect("Logline not found during histogram search.")
-                    .timestamp
+                    .timestamp()
                     .timestamp();
 
                 let dist_before = (target_time - before_ts).abs();
@@ -583,7 +584,7 @@ impl Histogram {
                 end_time.format("%H:%M:%S")
             ));
             if let Some(selected_line_index) = selected_line_index {
-                let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp;
+                let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp();
                 ui.separator();
                 ui.colored_label(
                     selected_color,

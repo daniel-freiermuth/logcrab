@@ -2,6 +2,7 @@ pub mod dlt;
 pub mod generic;
 pub mod line;
 pub mod logcat;
+pub mod logline_types;
 
 use chrono::Datelike;
 use fancy_regex::Regex;

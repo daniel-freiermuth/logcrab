@@ -23,18 +23,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// DLT timestamp source configuration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DltTimestampSource {
     /// Use storage header timestamp (wall-clock time, less precise)
     StorageTime,
     /// Use calibrated monotonic clock (boot time + header timestamp, more precise)
+    #[default]
     CalibratedMonotonic,
-}
-
-impl Default for DltTimestampSource {
-    fn default() -> Self {
-        Self::CalibratedMonotonic
-    }
 }
 
 /// Global user configuration stored in config directory

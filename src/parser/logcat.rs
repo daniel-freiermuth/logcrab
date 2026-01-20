@@ -1,4 +1,4 @@
-use super::line::LogLine;
+use super::line::{LogLine, LogcatLogLine};
 use chrono::{DateTime, Local, NaiveDateTime};
 use fancy_regex::Regex;
 use std::sync::LazyLock;
@@ -38,7 +38,7 @@ pub fn parse_logcat_with_year(raw: String, line_number: usize, year: i32) -> Opt
     if let Ok(Some(caps)) = LOGCAT_TIMESTAMP.captures(&raw) {
         let message = caps[2].to_string();
         return parse_logcat_timestamp(&caps[1], year)
-            .map(|ts| LogLine::new(raw, line_number, message, ts));
+            .map(|ts| LogLine::Logcat(LogcatLogLine::new(raw, ts, message, line_number)));
     }
     None
 }
@@ -58,6 +58,7 @@ fn parse_logcat_timestamp(s: &str, year: i32) -> Option<DateTime<Local>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::line::LogLineCore;
     use chrono::Datelike;
 
     #[test]
@@ -67,7 +68,7 @@ mod tests {
         let line = parse_logcat_with_year(raw, 1, 2024).unwrap();
         // Message is everything after the timestamp
         assert_eq!(
-            line.message,
+            line.message(),
             "1234  5678 I ActivityManager: Start proc com.example.app"
         );
     }
@@ -80,7 +81,7 @@ mod tests {
         let line = parse_logcat_with_year(raw, 1, 2024).unwrap();
         // Message is everything after the timestamp
         assert_eq!(
-            line.message,
+            line.message(),
             "root     8     8 I CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf"
         );
     }
@@ -89,7 +90,7 @@ mod tests {
     fn test_fallback_format() {
         let raw = "11-20 14:23:45.123 Some message without tag".to_string();
         let line = parse_logcat_with_year(raw, 1, 2024).unwrap();
-        assert_eq!(line.message, "Some message without tag");
+        assert_eq!(line.message(), "Some message without tag");
     }
 
     #[test]
@@ -106,7 +107,7 @@ mod tests {
     fn test_parse_with_detected_year() {
         let raw = "11-20 14:23:45.123 Test message".to_string();
         let line = parse_logcat_with_year(raw, 1, 2023).unwrap();
-        assert!(line.timestamp.year() == 2023);
+        assert!(line.timestamp().year() == 2023);
     }
 
     #[test]

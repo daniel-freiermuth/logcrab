@@ -25,6 +25,7 @@
 
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
+use crate::parser::line::LogLineCore;
 use chrono::{DateTime, Datelike, Local};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -204,7 +205,7 @@ impl HistogramWorker {
                 .iter()
                 .filter_map(|idx| {
                     store.get_by_id(idx).and_then(|line| {
-                        let ts = line.timestamp;
+                        let ts = line.timestamp();
                         // Exclude all timestamps that are January 1st (any year)
                         if ts.month0() == 0 && ts.day0() == 0 {
                             None
@@ -254,13 +255,13 @@ impl HistogramWorker {
         let first_ts = filtered_indices
             .iter()
             .filter_map(|idx| store.get_by_id(idx))
-            .map(|line| line.timestamp)
+            .map(|line| line.timestamp())
             .next();
         let last_ts = filtered_indices
             .iter()
             .rev()
             .filter_map(|idx| store.get_by_id(idx))
-            .map(|line| line.timestamp)
+            .map(|line| line.timestamp())
             .next();
 
         match (first_ts, last_ts) {
@@ -282,12 +283,12 @@ impl HistogramWorker {
         // possible optimization: par_iter
         for line_idx in filtered_indices {
             if let Some(line) = store.get_by_id(line_idx) {
-                let ts = line.timestamp;
+                let ts = line.timestamp();
                 let bucket_idx = Self::timestamp_to_bucket(ts, start_time, bucket_size);
                 buckets[bucket_idx] += 1;
 
                 // Use anomaly_score from the line
-                let score = line.anomaly_score / 100.0;
+                let score = line.anomaly_score() / 100.0;
                 // Determine which score bucket this falls into
                 let score_bucket =
                     ((score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);

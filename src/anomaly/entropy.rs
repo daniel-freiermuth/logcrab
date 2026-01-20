@@ -1,5 +1,5 @@
 use crate::anomaly::scorer::AnomalyScorer;
-use crate::parser::line::LogLine;
+use crate::parser::line::{LogLine, LogLineCore};
 
 /// Message entropy scorer - measures information content
 /// Higher entropy = more unique/random content = potentially more interesting
@@ -51,8 +51,9 @@ impl AnomalyScorer for EntropyScorer {
             return 0.5; // Neutral score for first line
         }
 
-        let entropy = Self::calculate_entropy(&line.message);
-        let length = line.message.len() as f64;
+        let message = line.message();
+        let entropy = Self::calculate_entropy(&message);
+        let length = message.len() as f64;
 
         // Score based on deviation from average
         let entropy_deviation = (entropy - self.avg_entropy).abs() / self.avg_entropy.max(1.0);
@@ -65,8 +66,9 @@ impl AnomalyScorer for EntropyScorer {
     }
 
     fn update(&mut self, line: &LogLine) {
-        let entropy = Self::calculate_entropy(&line.message);
-        let length = line.message.len() as f64;
+        let message = line.message();
+        let entropy = Self::calculate_entropy(&message);
+        let length = message.len() as f64;
 
         // Running average
         self.avg_entropy = (self.avg_entropy * f64::from(self.sample_count) + entropy)

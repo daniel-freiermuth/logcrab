@@ -25,6 +25,7 @@
 
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
+use crate::parser::line::LogLineCore;
 use fancy_regex::Regex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -150,8 +151,8 @@ impl FilterWorker {
 
                     // Parallel filtering with rayon
                     request.store.get_matching_ids(|line| {
-                        request.regex.is_match(&line.message).unwrap_or(false)
-                            || request.regex.is_match(&line.raw).unwrap_or(false)
+                        request.regex.is_match(&line.message()).unwrap_or(false)
+                            || request.regex.is_match(&line.raw()).unwrap_or(false)
                     })
                 };
 
