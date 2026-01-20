@@ -50,7 +50,7 @@ fn calc_boot_time_from_file(path: &Path) -> Result<DateTime<Local>, String> {
     }
 }
 
-fn storage_time_to_datetime(storage_time: &dlt_core::dlt::DltTimeStamp) -> Option<DateTime<Local>> {
+pub fn storage_time_to_datetime(storage_time: &dlt_core::dlt::DltTimeStamp) -> Option<DateTime<Local>> {
     use chrono::TimeZone;
     Local
         .timestamp_opt(
@@ -60,7 +60,7 @@ fn storage_time_to_datetime(storage_time: &dlt_core::dlt::DltTimeStamp) -> Optio
         .single()
 }
 
-const fn dlt_header_time_to_timedelta(header_time: u32) -> TimeDelta {
+pub const fn dlt_header_time_to_timedelta(header_time: u32) -> TimeDelta {
     TimeDelta::microseconds(header_time as i64 * 100)
 }
 

@@ -23,7 +23,7 @@ use crate::{
     parser::line::{LogLine, LogLineCore},
     ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
-use chrono::Local;
+use chrono::{DateTime, Local};
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -32,6 +32,10 @@ use egui_extras::{Column, TableBuilder};
 pub enum LogTableEvent {
     LineClicked { line_index: StoreID },
     BookmarkToggled { line_index: StoreID },
+    SyncDltTime { 
+        line_index: StoreID,
+        storage_time: DateTime<Local>,
+    },
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -140,7 +144,7 @@ impl LogTable {
         line_idx: StoreID,
         events: &mut Vec<LogTableEvent>,
     ) {
-        use crate::parser::line::LogLineCore;
+        use crate::parser::line::{LogLineCore, LogLineVariant};
         response.context_menu(|ui| {
             if ui.button("📑 Toggle Bookmark").clicked() {
                 events.push(LogTableEvent::BookmarkToggled {
@@ -154,6 +158,22 @@ impl LogTable {
                     line_index: line_idx,
                 });
                 ui.close();
+            }
+
+            // DLT-specific: Sync time option
+            if let Some(LogLineVariant::Dlt(dlt_line)) = store.get_by_id(&line_idx) {
+                if ui.button("⏱ Sync Time Here").clicked() {
+                    // Extract storage timestamp from the DLT message
+                    if let Some(ref storage_header) = dlt_line.dlt_message.storage_header {
+                        if let Some(storage_time) = crate::parser::dlt::storage_time_to_datetime(&storage_header.timestamp) {
+                            events.push(LogTableEvent::SyncDltTime {
+                                line_index: line_idx,
+                                storage_time,
+                            });
+                            ui.close();
+                        }
+                    }
+                }
             }
 
             ui.separator();

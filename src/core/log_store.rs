@@ -279,6 +279,71 @@ impl SourceData {
         guard.get(id).cloned()
     }
 
+    /// Resynchronize DLT timestamps to a custom target time
+    /// Uses the reference line to calculate `boot_time` such that it results in the target timestamp
+    pub fn resync_dlt_time_to_target(
+        &self,
+        reference_line_index: usize,
+        target_time: chrono::DateTime<chrono::Local>,
+    ) -> Result<(), String> {
+        use crate::parser::line::LogLineVariant;
+
+        profiling::scope!("SourceData::resync_dlt_time_to_target");
+
+        // Get the reference line and extract timing info
+        let reference_line = {
+            let guard = self.lines.read().unwrap();
+            guard.get(reference_line_index).cloned()
+                .ok_or_else(|| "Reference line not found".to_string())?
+        };
+
+        // Extract header timestamp (time since boot) from reference line
+        let header_timestamp = match &reference_line {
+            LogLineVariant::Dlt(dlt_line) => {
+                // Get header timestamp (time since boot)
+                let header_ts = dlt_line.dlt_message.header.timestamp
+                    .ok_or_else(|| "DLT message missing header timestamp".to_string())?;
+                crate::parser::dlt::dlt_header_time_to_timedelta(header_ts)
+            }
+            _ => return Err("Reference line is not a DLT entry".to_string()),
+        };
+
+        // Calculate new boot_time: target_time - time_since_boot
+        let new_boot_time = target_time.checked_sub_signed(header_timestamp)
+            .ok_or_else(|| "Failed to calculate boot time".to_string())?;
+
+        log::info!("Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time})");
+
+        // Update all DLT entries with new boot_time
+        {
+            profiling::scope!("SourceData::lines::write");
+            let mut guard = self.lines.write().unwrap();
+            for line in guard.iter_mut() {
+                if let LogLineVariant::Dlt(dlt_line) = line {
+                    // Recalculate timestamp: new_boot_time + time_since_boot
+                    if let Some(header_ts) = dlt_line.dlt_message.header.timestamp {
+                        let time_since_boot = crate::parser::dlt::dlt_header_time_to_timedelta(header_ts);
+                        if let Some(new_timestamp) = new_boot_time.checked_add_signed(time_since_boot) {
+                            dlt_line.timestamp = new_timestamp;
+                            dlt_line.boot_time = Some(new_boot_time);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Rebuild timestamp-sorted index
+        let mut indices: Vec<usize> = (0..self.lines.read().unwrap().len()).collect();
+        let lines = self.lines.read().unwrap();
+        indices.par_sort_by_key(|&idx| lines[idx].timestamp());
+        drop(lines);
+        *self.by_timestamp.write().unwrap() = indices;
+        
+        self.bump_version();
+
+        Ok(())
+    }
+
     /// Load and merge filters and highlights
     pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
         if let Some(crab_path) = self.crab_file_path() {
@@ -426,6 +491,19 @@ impl LogStore {
         sources
             .get(id.source_index)
             .and_then(|s| s.remove_bookmark(id.line_index))
+    }
+
+    /// Resynchronize DLT timestamps to a custom target time
+    pub fn resync_dlt_time_to_target(
+        &self,
+        id: &StoreID,
+        target_time: chrono::DateTime<chrono::Local>,
+    ) -> Result<(), String> {
+        profiling::scope!("LogStore::sources::read");
+        let sources = self.sources.read().unwrap();
+        let source = sources.get(id.source_index)
+            .ok_or_else(|| "Source not found".to_string())?;
+        source.resync_dlt_time_to_target(id.line_index, target_time)
     }
 
     /// Check if a line has a bookmark

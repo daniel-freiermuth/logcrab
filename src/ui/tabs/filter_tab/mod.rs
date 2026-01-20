@@ -33,7 +33,8 @@ use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::{FilterToHighlightData, SessionState};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
-use crate::ui::windows::ChangeFilternameWindow;
+use crate::ui::windows::{ChangeFilternameWindow, SyncDltTimeWindow};
+use chrono::{DateTime, Local};
 use egui::Ui;
 use std::collections::HashMap;
 
@@ -46,6 +47,10 @@ pub enum FilterViewEvent {
     BookmarkToggled {
         store_id: StoreID,
     },
+    SyncDltTime {
+        store_id: StoreID,
+        storage_time: DateTime<Local>,
+    },
     FilterNameEditRequested,
     FavoriteToggled,
     /// Convert this filter to a highlight
@@ -57,6 +62,7 @@ pub struct FilterView {
     should_focus_search: bool,
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
+    sync_dlt_time_window: Option<(StoreID, SyncDltTimeWindow)>,
     filter_bar: FilterBar,
 }
 
@@ -66,6 +72,7 @@ impl FilterView {
             should_focus_search: false,
             state,
             change_filtername_window: None,
+            sync_dlt_time_window: None,
             filter_bar: FilterBar::new(),
         }
     }
@@ -205,6 +212,12 @@ impl FilterView {
                         store_id: line_index,
                     });
                 }
+                LogTableEvent::SyncDltTime { line_index, storage_time } => {
+                    events.push(FilterViewEvent::SyncDltTime {
+                        store_id: line_index,
+                        storage_time,
+                    });
+                }
             }
         }
 
@@ -247,6 +260,11 @@ impl FilterView {
                     data_state.selected_line_index = Some(store_id);
                     data_state.toggle_bookmark(store_id);
                     data_state.modified = true;
+                }
+                FilterViewEvent::SyncDltTime { store_id, storage_time } => {
+                    // Open the sync DLT time window with the storage time pre-filled
+                    self.sync_dlt_time_window = Some((store_id, SyncDltTimeWindow::new(storage_time)));
+                    data_state.selected_line_index = Some(store_id);
                 }
                 FilterViewEvent::FilterNameEditRequested => {
                     // Prompt for new name
@@ -307,6 +325,32 @@ impl FilterView {
                 Err(()) => {
                     // Cancelled
                     self.change_filtername_window = None;
+                }
+            }
+        }
+
+        // Handle DLT time sync dialog
+        if let Some((store_id, ref mut window)) = self.sync_dlt_time_window {
+            match window.render(ui) {
+                Ok(Some(target_time)) => {
+                    // User confirmed - perform the sync with the custom target time
+                    match data_state.store.resync_dlt_time_to_target(&store_id, target_time) {
+                        Ok(()) => {
+                            log::info!("Successfully resynced DLT timestamps to target: {target_time}");
+                            data_state.modified = true;
+                        }
+                        Err(e) => {
+                            log::error!("Failed to resync DLT time: {e}");
+                        }
+                    }
+                    self.sync_dlt_time_window = None;
+                }
+                Ok(None) => {
+                    // Still editing
+                }
+                Err(()) => {
+                    // Cancelled
+                    self.sync_dlt_time_window = None;
                 }
             }
         }
