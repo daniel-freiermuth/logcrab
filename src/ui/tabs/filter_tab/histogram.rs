@@ -24,9 +24,11 @@ use crate::core::{log_store::StoreID, LogStore};
 use crate::parser::line::LogLineCore;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table;
+use chrono::{DateTime, Local};
 use egui::{Color32, Ui};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Marker data for showing filter matches in histogram
 #[derive(Clone)]
@@ -393,19 +395,21 @@ impl Histogram {
         rect: egui::Rect,
         store: &LogStore,
         start_time: chrono::DateTime<chrono::Local>,
-        bucket_size: f64,
+        bucket_size: Duration,
         markers: &[HistogramMarker],
     ) {
         profiling::scope!("Histogram::draw_markers");
         let total_width = rect.width();
-        let total_time = NUM_BUCKETS as f64 * bucket_size;
+        let total_time = NUM_BUCKETS as u32 * bucket_size;
 
         for marker in markers {
             for line_idx in &marker.indices {
                 let ts = store.get_by_id(line_idx).unwrap().timestamp();
-                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
+                let elapsed = ts - start_time;
 
-                let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
+                let x = rect.min.x
+                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * total_width as f64)
+                        as f32;
 
                 painter.vline(x, rect.y_range(), (1.0, marker.color));
             }
@@ -418,7 +422,7 @@ impl Histogram {
         rect: egui::Rect,
         store: &LogStore,
         start_time: chrono::DateTime<chrono::Local>,
-        bucket_size: f64,
+        bucket_size: Duration,
         markers: &[HistogramMarker],
     ) {
         let Some(hover_pos) = response.hover_pos() else {
@@ -426,7 +430,7 @@ impl Histogram {
         };
 
         let total_width = rect.width();
-        let total_time = NUM_BUCKETS as f64 * bucket_size;
+        let total_time = NUM_BUCKETS as u32 * bucket_size;
         let hover_threshold = 3.0; // pixels
 
         struct MarkerMatch<'a> {
@@ -440,8 +444,10 @@ impl Histogram {
         for marker in markers {
             for line_idx in &marker.indices {
                 let ts = store.get_by_id(line_idx).unwrap().timestamp();
-                let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-                let x = rect.min.x + (elapsed / total_time * total_width as f64) as f32;
+                let elapsed = ts - start_time;
+                let x = rect.min.x
+                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * total_width as f64)
+                        as f32;
 
                 let distance = (hover_pos.x - x).abs();
                 if distance < hover_threshold
@@ -488,7 +494,7 @@ impl Histogram {
         store: &LogStore,
         filtered_indices: &[StoreID],
         start_time: chrono::DateTime<chrono::Local>,
-        bucket_size: f64,
+        bucket_size: Duration,
     ) -> Option<HistogramClickEvent> {
         profiling::scope!("Histogram::handle_click");
         // Handle both click and drag - timeline acts like a scrubber
@@ -502,10 +508,15 @@ impl Histogram {
             return None;
         }
 
-        // Calculate click time directly from x position - no need for bucket math
-        let total_time = NUM_BUCKETS as f64 * bucket_size;
+        // Calculate click time directly from x position
+        // to match how the selected indicator position is calculated
+        let total_time = bucket_size * (NUM_BUCKETS as u32);
         let click_fraction = (relative_x / rect.width()) as f64;
-        let click_time = start_time.timestamp() + (click_fraction * total_time) as i64;
+        let click_time = start_time
+            + chrono::Duration::from_std(Duration::from_secs_f64(
+                total_time.as_secs_f64() * click_fraction,
+            ))
+            .unwrap();
 
         // Binary search to find the closest line by timestamp
         // Since filtered_indices are sorted by timestamp, we can use binary search
@@ -519,7 +530,7 @@ impl Histogram {
     fn find_closest_line_by_time(
         store: &LogStore,
         filtered_indices: &[StoreID],
-        target_time: i64,
+        target_time: DateTime<Local>,
     ) -> Option<StoreID> {
         profiling::scope!("Histogram::find_closest_line_by_time");
         if filtered_indices.is_empty() {
@@ -530,7 +541,7 @@ impl Histogram {
         let idx = filtered_indices.partition_point(|line_idx| {
             store
                 .get_by_id(line_idx)
-                .map(|line| line.timestamp().timestamp() < target_time)
+                .map(|line| line.timestamp() < target_time)
                 .expect("Logline not found during histogram search.")
         });
 
@@ -542,12 +553,10 @@ impl Histogram {
                 let before_ts = store
                     .get_by_id(&filtered_indices[i - 1])
                     .expect("Logline not found during histogram search.")
-                    .timestamp()
                     .timestamp();
                 let after_ts = store
                     .get_by_id(&filtered_indices[i])
                     .expect("Logline not found during histogram search.")
-                    .timestamp()
                     .timestamp();
 
                 let dist_before = (target_time - before_ts).abs();

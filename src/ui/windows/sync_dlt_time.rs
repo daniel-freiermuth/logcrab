@@ -18,7 +18,7 @@ impl SyncDltTimeWindow {
     /// Err(()) if the operation was cancelled.
     pub fn render(&mut self, ui: &mut egui::Ui) -> Result<Option<DateTime<Local>>, ()> {
         let mut result = Ok(None);
-        
+
         egui::Window::new("⏱ Sync DLT Time")
             .collapsible(false)
             .resizable(false)
@@ -38,7 +38,10 @@ impl SyncDltTimeWindow {
                 let parsed_time = self.parse_time();
                 match &parsed_time {
                     Ok(dt) => {
-                        ui.label(format!("✓ Valid: {}", dt.format("%Y-%m-%d %H:%M:%S%.3f %z")));
+                        ui.label(format!(
+                            "✓ Valid: {}",
+                            dt.format("%Y-%m-%d %H:%M:%S%.3f %z")
+                        ));
                     }
                     Err(e) => {
                         ui.colored_label(egui::Color32::RED, format!("✗ {e}"));
@@ -55,8 +58,10 @@ impl SyncDltTimeWindow {
 
                 ui.horizontal(|ui| {
                     let sync_enabled = parsed_time.is_ok();
-                    let should_sync = ui.add_enabled(sync_enabled, egui::Button::new("Sync")).clicked()
-                        || (sync_enabled && (enter_pressed || enter_submitted)) ;
+                    let should_sync = ui
+                        .add_enabled(sync_enabled, egui::Button::new("Sync"))
+                        .clicked()
+                        || (sync_enabled && (enter_pressed || enter_submitted));
                     let should_cancel = ui.button("Cancel").clicked() || escape_pressed;
 
                     if should_sync {
@@ -75,25 +80,33 @@ impl SyncDltTimeWindow {
     /// Parse the time string with multiple format attempts
     fn parse_time(&self) -> Result<DateTime<Local>, String> {
         use chrono::NaiveDateTime;
-        
+
         let s = self.target_time_str.trim();
 
         // Try parsing with milliseconds: "YYYY-MM-DD HH:MM:SS.mmm"
         if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.3f") {
-            return Ok(Local.from_local_datetime(&naive).single()
-                .ok_or_else(|| "Ambiguous or invalid local time".to_string())?);
+            return Local
+                .from_local_datetime(&naive)
+                .single()
+                .ok_or_else(|| "Ambiguous or invalid local time".to_string());
         }
 
         // Try parsing without milliseconds: "YYYY-MM-DD HH:MM:SS"
         if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-            return Ok(Local.from_local_datetime(&naive).single()
-                .ok_or_else(|| "Ambiguous or invalid local time".to_string())?);
+            return Local
+                .from_local_datetime(&naive)
+                .single()
+                .ok_or_else(|| "Ambiguous or invalid local time".to_string());
         }
 
         // Try parsing with just date: "YYYY-MM-DD"
-        if let Ok(naive) = NaiveDateTime::parse_from_str(&format!("{s} 00:00:00"), "%Y-%m-%d %H:%M:%S") {
-            return Ok(Local.from_local_datetime(&naive).single()
-                .ok_or_else(|| "Ambiguous or invalid local time".to_string())?);
+        if let Ok(naive) =
+            NaiveDateTime::parse_from_str(&format!("{s} 00:00:00"), "%Y-%m-%d %H:%M:%S")
+        {
+            return Local
+                .from_local_datetime(&naive)
+                .single()
+                .ok_or_else(|| "Ambiguous or invalid local time".to_string());
         }
 
         Err("Invalid format. Use: YYYY-MM-DD HH:MM:SS.mmm".to_string())

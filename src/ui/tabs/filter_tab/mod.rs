@@ -212,7 +212,10 @@ impl FilterView {
                         store_id: line_index,
                     });
                 }
-                LogTableEvent::SyncDltTime { line_index, storage_time } => {
+                LogTableEvent::SyncDltTime {
+                    line_index,
+                    storage_time,
+                } => {
                     events.push(FilterViewEvent::SyncDltTime {
                         store_id: line_index,
                         storage_time,
@@ -261,9 +264,13 @@ impl FilterView {
                     data_state.toggle_bookmark(store_id);
                     data_state.modified = true;
                 }
-                FilterViewEvent::SyncDltTime { store_id, storage_time } => {
+                FilterViewEvent::SyncDltTime {
+                    store_id,
+                    storage_time,
+                } => {
                     // Open the sync DLT time window with the storage time pre-filled
-                    self.sync_dlt_time_window = Some((store_id, SyncDltTimeWindow::new(storage_time)));
+                    self.sync_dlt_time_window =
+                        Some((store_id, SyncDltTimeWindow::new(storage_time)));
                     data_state.selected_line_index = Some(store_id);
                 }
                 FilterViewEvent::FilterNameEditRequested => {
@@ -334,9 +341,14 @@ impl FilterView {
             match window.render(ui) {
                 Ok(Some(target_time)) => {
                     // User confirmed - perform the sync with the custom target time
-                    match data_state.store.resync_dlt_time_to_target(&store_id, target_time) {
+                    match data_state
+                        .store
+                        .resync_dlt_time_to_target(&store_id, target_time)
+                    {
                         Ok(()) => {
-                            log::info!("Successfully resynced DLT timestamps to target: {target_time}");
+                            log::info!(
+                                "Successfully resynced DLT timestamps to target: {target_time}"
+                            );
                             data_state.modified = true;
                         }
                         Err(e) => {

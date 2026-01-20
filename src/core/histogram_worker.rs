@@ -30,6 +30,7 @@ use chrono::{DateTime, Datelike, Local};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Number of horizontal time buckets in the histogram
 pub const NUM_BUCKETS: usize = 100;
@@ -82,7 +83,7 @@ pub struct HistogramData {
     pub start_time: DateTime<Local>,
     pub end_time: DateTime<Local>,
     /// Bucket size in seconds
-    pub bucket_size: f64,
+    pub bucket_size: Duration,
     /// Count per time bucket
     pub buckets: Vec<usize>,
     /// Anomaly score distribution per bucket
@@ -221,8 +222,9 @@ impl HistogramWorker {
 
         if let Some((start_time, end_time)) = Self::calculate_time_range(store, &effective_indices)
         {
-            let time_span = (end_time - start_time).as_seconds_f64();
-            let bucket_size = time_span / NUM_BUCKETS as f64;
+            let time_span = end_time - start_time;
+            let bucket_size =
+                Duration::from_secs_f64(time_span.as_seconds_f64() / NUM_BUCKETS as f64);
 
             let (buckets, anomaly_buckets) =
                 Self::create_buckets(store, &effective_indices, start_time, bucket_size);
@@ -274,7 +276,7 @@ impl HistogramWorker {
         store: &LogStore,
         filtered_indices: &[StoreID],
         start_time: DateTime<Local>,
-        bucket_size: f64,
+        bucket_size: Duration,
     ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
         profiling::scope!("Histogram::create_buckets");
         let mut buckets = vec![0usize; NUM_BUCKETS];
@@ -302,10 +304,10 @@ impl HistogramWorker {
     fn timestamp_to_bucket(
         ts: DateTime<Local>,
         start_time: DateTime<Local>,
-        bucket_size: f64,
+        bucket_size: Duration,
     ) -> usize {
-        let elapsed = (ts.timestamp() - start_time.timestamp()) as f64;
-        ((elapsed / bucket_size) as usize).min(NUM_BUCKETS - 1)
+        let elapsed = ts - start_time;
+        ((elapsed.as_seconds_f64() / bucket_size.as_secs_f64()) as usize).min(NUM_BUCKETS - 1)
     }
 }
 

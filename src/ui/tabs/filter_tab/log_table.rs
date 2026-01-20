@@ -30,9 +30,13 @@ use egui_extras::{Column, TableBuilder};
 /// Events emitted by the log table
 #[derive(Clone)]
 pub enum LogTableEvent {
-    LineClicked { line_index: StoreID },
-    BookmarkToggled { line_index: StoreID },
-    SyncDltTime { 
+    LineClicked {
+        line_index: StoreID,
+    },
+    BookmarkToggled {
+        line_index: StoreID,
+    },
+    SyncDltTime {
         line_index: StoreID,
         storage_time: DateTime<Local>,
     },
@@ -165,7 +169,9 @@ impl LogTable {
                 if ui.button("⏱ Sync Time Here").clicked() {
                     // Extract storage timestamp from the DLT message
                     if let Some(ref storage_header) = dlt_line.dlt_message.storage_header {
-                        if let Some(storage_time) = crate::parser::dlt::storage_time_to_datetime(&storage_header.timestamp) {
+                        if let Some(storage_time) =
+                            crate::parser::dlt::storage_time_to_datetime(&storage_header.timestamp)
+                        {
                             events.push(LogTableEvent::SyncDltTime {
                                 line_index: line_idx,
                                 storage_time,
@@ -599,7 +605,7 @@ impl LogTable {
             if response.middle_clicked() {
                 *row_middle_clicked = true;
             }
-            
+
             // Show context menu on right-click
             Self::show_line_context_menu(&response, store, line_idx, events);
         });
@@ -674,7 +680,7 @@ impl LogTable {
             if response.middle_clicked() {
                 *row_middle_clicked = true;
             }
-            
+
             // Show context menu on right-click
             Self::show_line_context_menu(&response, store, line_idx, events);
         });
@@ -730,7 +736,7 @@ impl LogTable {
             if response.middle_clicked() {
                 *row_middle_clicked = true;
             }
-            
+
             // Show context menu on right-click
             Self::show_line_context_menu(&response, store, line_idx, events);
         });
@@ -807,7 +813,7 @@ impl LogTable {
             if response.middle_clicked() {
                 *row_middle_clicked = true;
             }
-            
+
             // Show context menu on right-click
             Self::show_line_context_menu(&response, store, line_idx, events);
         });
@@ -863,7 +869,7 @@ impl LogTable {
             if response.middle_clicked() {
                 *row_middle_clicked = true;
             }
-            
+
             // Show context menu on right-click
             Self::show_line_context_menu(&response, store, line_idx, events);
         });

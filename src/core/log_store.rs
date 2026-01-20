@@ -293,7 +293,9 @@ impl SourceData {
         // Get the reference line and extract timing info
         let reference_line = {
             let guard = self.lines.read().unwrap();
-            guard.get(reference_line_index).cloned()
+            guard
+                .get(reference_line_index)
+                .cloned()
                 .ok_or_else(|| "Reference line not found".to_string())?
         };
 
@@ -301,7 +303,10 @@ impl SourceData {
         let header_timestamp = match &reference_line {
             LogLineVariant::Dlt(dlt_line) => {
                 // Get header timestamp (time since boot)
-                let header_ts = dlt_line.dlt_message.header.timestamp
+                let header_ts = dlt_line
+                    .dlt_message
+                    .header
+                    .timestamp
                     .ok_or_else(|| "DLT message missing header timestamp".to_string())?;
                 crate::parser::dlt::dlt_header_time_to_timedelta(header_ts)
             }
@@ -309,10 +314,13 @@ impl SourceData {
         };
 
         // Calculate new boot_time: target_time - time_since_boot
-        let new_boot_time = target_time.checked_sub_signed(header_timestamp)
+        let new_boot_time = target_time
+            .checked_sub_signed(header_timestamp)
             .ok_or_else(|| "Failed to calculate boot time".to_string())?;
 
-        log::info!("Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time})");
+        log::info!(
+            "Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time})"
+        );
 
         // Update all DLT entries with new boot_time
         {
@@ -322,8 +330,11 @@ impl SourceData {
                 if let LogLineVariant::Dlt(dlt_line) = line {
                     // Recalculate timestamp: new_boot_time + time_since_boot
                     if let Some(header_ts) = dlt_line.dlt_message.header.timestamp {
-                        let time_since_boot = crate::parser::dlt::dlt_header_time_to_timedelta(header_ts);
-                        if let Some(new_timestamp) = new_boot_time.checked_add_signed(time_since_boot) {
+                        let time_since_boot =
+                            crate::parser::dlt::dlt_header_time_to_timedelta(header_ts);
+                        if let Some(new_timestamp) =
+                            new_boot_time.checked_add_signed(time_since_boot)
+                        {
                             dlt_line.timestamp = new_timestamp;
                             dlt_line.boot_time = Some(new_boot_time);
                         }
@@ -338,7 +349,7 @@ impl SourceData {
         indices.par_sort_by_key(|&idx| lines[idx].timestamp());
         drop(lines);
         *self.by_timestamp.write().unwrap() = indices;
-        
+
         self.bump_version();
 
         Ok(())
@@ -501,7 +512,8 @@ impl LogStore {
     ) -> Result<(), String> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
-        let source = sources.get(id.source_index)
+        let source = sources
+            .get(id.source_index)
             .ok_or_else(|| "Source not found".to_string())?;
         source.resync_dlt_time_to_target(id.line_index, target_time)
     }
