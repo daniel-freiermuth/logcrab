@@ -425,6 +425,29 @@ impl FilterView {
     }
 }
 
+impl FilterView {
+    /// Get the display name for this filter (used in both tab title and histogram marker)
+    /// 
+    /// Priority:
+    /// 1. Use explicit name if set
+    /// 2. Otherwise use filter text (truncated) if present  
+    /// 3. Otherwise show "everything"
+    fn get_display_name(&self) -> String {
+        if !self.state.name.is_empty() {
+            self.state.name.clone()
+        } else if self.state.search.search_text.is_empty() {
+            "everything".to_string()
+        } else {
+            let filter_text = &self.state.search.search_text;
+            if filter_text.chars().count() > 10 {
+                format!("{}…", filter_text.chars().take(9).collect::<String>())
+            } else {
+                filter_text.clone()
+            }
+        }
+    }
+}
+
 impl LogCrabTab for FilterView {
     fn title(&mut self) -> egui::WidgetText {
         let mut layout_job = egui::text::LayoutJob::default();
@@ -438,23 +461,7 @@ impl LogCrabTab for FilterView {
             },
         );
 
-        // Determine display name:
-        // 1. Use explicit name if set
-        // 2. Otherwise use filter text (truncated) if present
-        // 3. Otherwise show "everything"
-        let display_name = if !self.state.name.is_empty() {
-            self.state.name.clone()
-        } else if self.state.search.search_text.is_empty() {
-            "everything".to_string()
-        } else {
-            let filter_text = &self.state.search.search_text;
-            if filter_text.chars().count() > 10 {
-                format!("{}…", filter_text.chars().take(9).collect::<String>())
-            } else {
-                filter_text.clone()
-            }
-        };
-
+        let display_name = self.get_display_name();
         layout_job.append(&display_name, 0.0, egui::TextFormat::default());
 
         layout_job.into()
@@ -582,7 +589,7 @@ impl LogCrabTab for FilterView {
             return None;
         }
         Some(HistogramMarker {
-            name: self.state.name.clone(),
+            name: self.get_display_name(),
             indices,
             color: self.state.color,
         })
