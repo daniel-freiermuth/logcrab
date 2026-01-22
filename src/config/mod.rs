@@ -62,6 +62,10 @@ pub struct GlobalConfig {
     /// DLT timestamp source (storage time or calibrated monotonic clock)
     #[serde(default)]
     pub dlt_timestamp_source: DltTimestampSource,
+
+    /// Show bookmarks as markers in the timeline/histogram (default: false)
+    #[serde(default)]
+    pub show_bookmarks_in_timeline: bool,
 }
 
 const fn default_hide_epoch() -> bool {
@@ -78,6 +82,7 @@ impl Default for GlobalConfig {
             last_log_directory: None,
             last_filters_directory: None,
             dlt_timestamp_source: DltTimestampSource::default(),
+            show_bookmarks_in_timeline: false,
         }
     }
 }

@@ -283,6 +283,18 @@ impl CrabSession {
             }
         }
 
+        // Add histogram markers from bookmarks if enabled
+        if global_config.show_bookmarks_in_timeline {
+            let bookmarks = self.state.get_all_bookmarks();
+            for bookmark in bookmarks {
+                histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
+                    name: bookmark.name,
+                    color: egui::Color32::from_rgb(255, 215, 0), // Gold color
+                    indices: vec![bookmark.store_id],
+                });
+            }
+        }
+
         // Use dock area for VS Code-like draggable/tiling layout
         {
             profiling::scope!("DockArea::show");

@@ -355,6 +355,19 @@ impl LogCrabApp {
                 }
             }
 
+            if ui
+                .checkbox(
+                    &mut self.global_config.show_bookmarks_in_timeline,
+                    "Show Bookmarks in Timeline",
+                )
+                .changed()
+            {
+                // Save config when changed
+                if let Err(e) = self.global_config.save() {
+                    log::error!("Failed to save config: {e}");
+                }
+            }
+
             ui.separator();
 
             if ui

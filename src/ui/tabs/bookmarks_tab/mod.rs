@@ -212,10 +212,27 @@ impl LogCrabTab for BookmarksView {
         &mut self,
         ui: &mut egui::Ui,
         data_state: &mut SessionState,
-        _global_config: &mut crate::config::GlobalConfig,
+        global_config: &mut crate::config::GlobalConfig,
         all_filter_highlights: &[FilterHighlight],
         _histogram_markers: &[HistogramMarker],
     ) {
+        // Add timeline toggle button at the top
+        ui.horizontal(|ui| {
+            if ui
+                .toggle_value(&mut global_config.show_bookmarks_in_timeline, "📊")
+                .on_hover_text("Show bookmarks as markers in timeline")
+                .changed()
+            {
+                // Save config when changed
+                if let Err(e) = global_config.save() {
+                    log::error!("Failed to save config: {e}");
+                }
+            }
+            ui.label("Show in Timeline");
+        });
+        
+        ui.separator();
+        
         self.render_bookmarks(ui, data_state, all_filter_highlights);
     }
 
