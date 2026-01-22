@@ -83,11 +83,11 @@ impl SearchState {
     }
 
     /// Get the unique identifier for this search.
-    pub fn id(&self) -> usize {
+    pub const fn id(&self) -> usize {
         self.id
     }
 
-    pub fn get_filtered_indices_cached(&self) -> &Vec<StoreID> {
+    pub const fn get_filtered_indices_cached(&self) -> &Vec<StoreID> {
         profiling::scope!("SearchState::get_filtered_indices");
         &self.filtered_indices
     }

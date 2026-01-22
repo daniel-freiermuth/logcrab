@@ -111,7 +111,7 @@ pub fn score_to_color(score: f64, dark_mode: bool) -> Color32 {
 }
 
 /// Get the background color for a selected row
-pub fn selected_row_color(dark_mode: bool) -> Color32 {
+pub const fn selected_row_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(60, 60, 80) // Dark blue-gray
     } else {
@@ -120,7 +120,7 @@ pub fn selected_row_color(dark_mode: bool) -> Color32 {
 }
 
 /// Get the background color for a bookmarked row
-pub fn bookmarked_row_color(dark_mode: bool) -> Color32 {
+pub const fn bookmarked_row_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(100, 80, 30) // Dark golden/brown
     } else {
@@ -129,7 +129,7 @@ pub fn bookmarked_row_color(dark_mode: bool) -> Color32 {
 }
 
 /// Get the background color for a row that is both selected and bookmarked
-pub fn selected_bookmarked_row_color(dark_mode: bool) -> Color32 {
+pub const fn selected_bookmarked_row_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(140, 100, 60) // Brighter golden/orange
     } else {

@@ -128,7 +128,7 @@ pub struct GenericLogLine {
 }
 
 impl GenericLogLine {
-    pub fn new(
+    pub const fn new(
         raw_line: String,
         timestamp: DateTime<Local>,
         message_text: String,
@@ -194,7 +194,7 @@ pub struct LogcatLogLine {
 }
 
 impl LogcatLogLine {
-    pub fn new(
+    pub const fn new(
         raw_line: String,
         timestamp: DateTime<Local>,
         message_text: String,
@@ -260,7 +260,7 @@ pub struct DltLogLine {
 }
 
 impl DltLogLine {
-    pub fn new(
+    pub const fn new(
         dlt_message: dlt_core::dlt::Message,
         timestamp: DateTime<Local>,
         boot_time: Option<DateTime<Local>>,

@@ -85,7 +85,7 @@ pub struct FilterToHighlightData {
 
 impl SessionState {
     /// Create a new session state with the given log store and worker handles.
-    pub fn new(
+    pub const fn new(
         store: Arc<LogStore>,
         filter_worker: FilterWorkerHandle,
         histogram_worker: HistogramWorkerHandle,

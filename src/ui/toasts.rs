@@ -251,7 +251,7 @@ impl ToastManager {
         let toast_margin = 10.0;
         let bottom_offset = 40.0; // Space for status bar
 
-        for (idx, state, state_arc) in active_states.iter() {
+        for (idx, state, state_arc) in &active_states {
             let toast_height = if state.progress.is_some() {
                 100.0
             } else {

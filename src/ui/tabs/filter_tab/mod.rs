@@ -240,7 +240,7 @@ impl FilterView {
         let bookmarked_lines: HashMap<StoreID, String> = data_state
             .get_all_bookmarks()
             .into_iter()
-            .map(|bookmark_data| (bookmark_data.store_id, bookmark_data.name.clone()))
+            .map(|bookmark_data| (bookmark_data.store_id, bookmark_data.name))
             .collect();
 
         // Render using FilterView
@@ -393,7 +393,7 @@ impl FilterView {
     /// Jump to the first line in a filtered view (Vim-style gg)
     pub fn jump_to_top_in_filter(&mut self, data_state: &mut SessionState) {
         let indices = self.state.search.get_filtered_indices_cached();
-        if let Some(first_line_index) = indices.first().cloned() {
+        if let Some(first_line_index) = indices.first().copied() {
             data_state.selected_line_index = Some(first_line_index);
         }
     }
@@ -405,7 +405,7 @@ impl FilterView {
             .search
             .get_filtered_indices_cached()
             .last()
-            .cloned()
+            .copied()
         {
             data_state.selected_line_index = Some(last_line_index);
         }
