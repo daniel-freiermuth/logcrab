@@ -1,22 +1,38 @@
 use chrono::{DateTime, Local, TimeZone};
 
+/// Scope of DLT time synchronization
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DltSyncScope {
+    /// Sync all DLT entries in the file
+    EntireFile,
+    /// Sync only entries matching the reference ECU
+    PerEcu,
+    /// Sync only entries matching both ECU and Context
+    PerEcuAndContext,
+}
+
 pub struct SyncDltTimeWindow {
     target_time_str: String,
+    sync_scope: DltSyncScope,
 }
 
 impl SyncDltTimeWindow {
     pub fn new(storage_time: DateTime<Local>) -> Self {
         Self {
             target_time_str: storage_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            sync_scope: DltSyncScope::EntireFile,
         }
     }
 
     /// Render the sync DLT time window
     ///
-    /// Returns `Ok(Some(target_time))` if the user confirmed the sync,
+    /// Returns `Ok(Some((target_time, scope)))` if the user confirmed the sync,
     /// Ok(None) if the window is still open,
     /// Err(()) if the operation was cancelled.
-    pub fn render(&mut self, ui: &mut egui::Ui) -> Result<Option<DateTime<Local>>, ()> {
+    pub fn render(
+        &mut self,
+        ui: &egui::Ui,
+    ) -> Result<Option<(DateTime<Local>, DltSyncScope)>, ()> {
         let mut result = Ok(None);
 
         egui::Window::new("⏱ Sync DLT Time")
@@ -50,6 +66,26 @@ impl SyncDltTimeWindow {
 
                 ui.add_space(10.0);
 
+                // Sync scope selection
+                ui.label("Synchronization scope:");
+                ui.radio_value(
+                    &mut self.sync_scope,
+                    DltSyncScope::EntireFile,
+                    "Entire file (all ECUs and Contexts)",
+                );
+                ui.radio_value(
+                    &mut self.sync_scope,
+                    DltSyncScope::PerEcu,
+                    "Only this ECU (all Contexts)",
+                );
+                ui.radio_value(
+                    &mut self.sync_scope,
+                    DltSyncScope::PerEcuAndContext,
+                    "Only this ECU and Context",
+                );
+
+                ui.add_space(10.0);
+
                 // Check if Enter was pressed
                 let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let enter_submitted =
@@ -66,7 +102,7 @@ impl SyncDltTimeWindow {
 
                     if should_sync {
                         if let Ok(target_time) = parsed_time {
-                            result = Ok(Some(target_time));
+                            result = Ok(Some((target_time, self.sync_scope)));
                         }
                     }
                     if should_cancel {

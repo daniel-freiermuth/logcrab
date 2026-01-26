@@ -39,6 +39,8 @@ pub enum LogTableEvent {
     SyncDltTime {
         line_index: StoreID,
         storage_time: DateTime<Local>,
+        ecu_id: Option<String>,
+        context_id: Option<String>,
     },
 }
 
@@ -172,9 +174,24 @@ impl LogTable {
                         if let Some(storage_time) =
                             crate::parser::dlt::storage_time_to_datetime(&storage_header.timestamp)
                         {
+                            // Extract ECU ID and Context ID
+                            let ecu_id = dlt_line
+                                .dlt_message
+                                .header
+                                .ecu_id
+                                .as_ref()
+                                .map(|s| s.to_string());
+                            let context_id = dlt_line
+                                .dlt_message
+                                .extended_header
+                                .as_ref()
+                                .map(|ext| ext.context_id.to_string());
+
                             events.push(LogTableEvent::SyncDltTime {
                                 line_index: line_idx,
                                 storage_time,
+                                ecu_id,
+                                context_id,
                             });
                             ui.close();
                         }
