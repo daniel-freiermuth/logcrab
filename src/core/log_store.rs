@@ -279,12 +279,15 @@ impl SourceData {
         guard.get(id).cloned()
     }
 
-    /// Resynchronize DLT timestamps to a custom target time
+    /// Resynchronize DLT timestamps to a custom target time (per file, per ECU, per Context)
     /// Uses the reference line to calculate `boot_time` such that it results in the target timestamp
+    /// Only updates entries in this source file that match both the ECU ID and Context ID
     pub fn resync_dlt_time_to_target(
         &self,
         reference_line_index: usize,
         target_time: chrono::DateTime<chrono::Local>,
+        ecu_id: &Option<String>,
+        context_id: &Option<String>,
     ) -> Result<(), String> {
         use crate::parser::line::LogLineVariant;
 
@@ -319,24 +322,45 @@ impl SourceData {
             .ok_or_else(|| "Failed to calculate boot time".to_string())?;
 
         log::info!(
-            "Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time})"
+            "Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time}) for file, ECU: {ecu_id:?}, Context: {context_id:?}"
         );
 
-        // Update all DLT entries with new boot_time
+        // Update all DLT entries in this file matching the ECU and Context
         {
             profiling::scope!("SourceData::lines::write");
             let mut guard = self.lines.write().unwrap();
             for line in guard.iter_mut() {
                 if let LogLineVariant::Dlt(dlt_line) = line {
-                    // Recalculate timestamp: new_boot_time + time_since_boot
-                    if let Some(header_ts) = dlt_line.dlt_message.header.timestamp {
-                        let time_since_boot =
-                            crate::parser::dlt::dlt_header_time_to_timedelta(header_ts);
-                        if let Some(new_timestamp) =
-                            new_boot_time.checked_add_signed(time_since_boot)
-                        {
-                            dlt_line.timestamp = new_timestamp;
-                            dlt_line.boot_time = Some(new_boot_time);
+                    // Check if this line matches the target ECU and Context
+                    let should_update =
+                        if let (Some(target_ecu), Some(target_ctx)) = (ecu_id, context_id) {
+                            let ecu_matches = dlt_line
+                                .dlt_message
+                                .header
+                                .ecu_id
+                                .as_ref()
+                                .is_some_and(|ecu| ecu.as_str() == target_ecu);
+                            let ctx_matches = dlt_line
+                                .dlt_message
+                                .extended_header
+                                .as_ref()
+                                .is_some_and(|ext| ext.context_id.as_str() == target_ctx.as_str());
+                            ecu_matches && ctx_matches
+                        } else {
+                            false
+                        };
+
+                    if should_update {
+                        // Recalculate timestamp: new_boot_time + time_since_boot
+                        if let Some(header_ts) = dlt_line.dlt_message.header.timestamp {
+                            let time_since_boot =
+                                crate::parser::dlt::dlt_header_time_to_timedelta(header_ts);
+                            if let Some(new_timestamp) =
+                                new_boot_time.checked_add_signed(time_since_boot)
+                            {
+                                dlt_line.timestamp = new_timestamp;
+                                dlt_line.boot_time = Some(new_boot_time);
+                            }
                         }
                     }
                 }
@@ -504,18 +528,20 @@ impl LogStore {
             .and_then(|s| s.remove_bookmark(id.line_index))
     }
 
-    /// Resynchronize DLT timestamps to a custom target time
+    /// Resynchronize DLT timestamps to a custom target time (per file, per ECU, per Context)
     pub fn resync_dlt_time_to_target(
         &self,
         id: &StoreID,
         target_time: chrono::DateTime<chrono::Local>,
+        ecu_id: &Option<String>,
+        context_id: &Option<String>,
     ) -> Result<(), String> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();
         let source = sources
             .get(id.source_index)
             .ok_or_else(|| "Source not found".to_string())?;
-        source.resync_dlt_time_to_target(id.line_index, target_time)
+        source.resync_dlt_time_to_target(id.line_index, target_time, ecu_id, context_id)
     }
 
     /// Check if a line has a bookmark

@@ -230,9 +230,9 @@ impl LogCrabTab for BookmarksView {
             }
             ui.label("Show in Timeline");
         });
-        
+
         ui.separator();
-        
+
         self.render_bookmarks(ui, data_state, all_filter_highlights);
     }
 

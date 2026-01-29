@@ -16,7 +16,7 @@ impl SyncDltTimeWindow {
     /// Returns `Ok(Some(target_time))` if the user confirmed the sync,
     /// Ok(None) if the window is still open,
     /// Err(()) if the operation was cancelled.
-    pub fn render(&mut self, ui: &mut egui::Ui) -> Result<Option<DateTime<Local>>, ()> {
+    pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<DateTime<Local>>, ()> {
         let mut result = Ok(None);
 
         egui::Window::new("⏱ Sync DLT Time")

@@ -28,28 +28,6 @@ fn calc_boot_time_from_message(msg: &Message) -> Option<DateTime<Local>> {
     storage_time.checked_sub_signed(boot_time_offset)
 }
 
-fn calc_boot_time_from_file(path: &Path) -> Result<DateTime<Local>, String> {
-    let file = File::open(path).map_err(|e| format!("Failed to open DLT file: {e}"))?;
-    let mut reader = DltMessageReader::new(file, true);
-    loop {
-        match read_message(&mut reader, None) {
-            Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
-                if let Some(offset) = calc_boot_time_from_message(&msg) {
-                    return Ok(offset);
-                }
-                log::warn!("First DLT message missing timestamp info, trying next");
-            }
-            Ok(Some(_)) => continue,
-            Ok(None) => {
-                return Err("No valid DLT messages found to calculate boot offset".to_owned());
-            }
-            Err(e) => {
-                log::warn!("Failed to parse DLT message while finding offset: {e:?}");
-            }
-        }
-    }
-}
-
 pub fn storage_time_to_datetime(
     storage_time: &dlt_core::dlt::DltTimeStamp,
 ) -> Option<DateTime<Local>> {
@@ -117,19 +95,20 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
         .map(|m| m.len())
         .map_err(|e| format!("{e:?}"))?;
 
-    let boot_time = match timestamp_source {
-        DltTimestampSource::CalibratedMonotonic => {
-            let bt = calc_boot_time_from_file(path)?;
-            log::info!("Calculated DLT boot time: {bt}");
-            Some(bt)
-        }
-        DltTimestampSource::StorageTime => {
-            log::info!("Using DLT storage time for timestamps");
-            None
-        }
-    };
+    let use_calibrated_monotonic =
+        matches!(timestamp_source, DltTimestampSource::CalibratedMonotonic);
 
-    // Second pass: parse all messages with the calculated offset
+    if use_calibrated_monotonic {
+        log::info!("Using calibrated monotonic timestamps (per ECU, per Context)");
+    } else {
+        log::info!("Using DLT storage time for timestamps");
+    }
+
+    // Track boot times per (ECU, Context) pair for CalibratedMonotonic mode
+    let mut boot_times: std::collections::HashMap<(String, String), DateTime<Local>> =
+        std::collections::HashMap::new();
+
+    // Parse all messages with per-(ECU, Context) boot time calculation
     let file = File::open(path).map_err(|e| format!("Failed to open DLT file: {e}"))?;
     let progress_reader = ProgressReader::new(BufReader::new(file));
     let bytes_read_counter = progress_reader.bytes_read_counter();
@@ -141,6 +120,39 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     loop {
         match read_message(&mut reader, None) {
             Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
+                // Determine boot_time for this message based on its (ECU, Context)
+                let boot_time = if use_calibrated_monotonic {
+                    // Extract ECU and Context identifiers
+                    let ecu_id = msg.header.ecu_id.as_ref().map(|s| s.to_string());
+                    let context_id = msg
+                        .extended_header
+                        .as_ref()
+                        .map(|ext| ext.context_id.to_string());
+
+                    if let (Some(ecu), Some(ctx)) = (ecu_id, context_id) {
+                        let key = (ecu.clone(), ctx.clone());
+
+                        // If we haven't calculated boot_time for this (ECU, Context), do it now
+                        if !boot_times.contains_key(&key) {
+                            if let Some(bt) = calc_boot_time_from_message(&msg) {
+                                log::info!(
+                                    "Calculated boot time for ECU '{}', Context '{}': {}",
+                                    ecu,
+                                    ctx,
+                                    bt
+                                );
+                                boot_times.insert(key.clone(), bt);
+                            }
+                        }
+
+                        boot_times.get(&key).copied()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 if let Some(log_line) = convert_dlt_message(&msg, line_number, boot_time) {
                     chunk_lines.push(log_line);
                     line_number += 1;

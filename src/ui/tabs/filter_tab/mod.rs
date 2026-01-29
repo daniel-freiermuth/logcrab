@@ -50,6 +50,8 @@ pub enum FilterViewEvent {
     SyncDltTime {
         store_id: StoreID,
         storage_time: DateTime<Local>,
+        ecu_id: Option<String>,
+        context_id: Option<String>,
     },
     FilterNameEditRequested,
     FavoriteToggled,
@@ -62,7 +64,7 @@ pub struct FilterView {
     should_focus_search: bool,
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
-    sync_dlt_time_window: Option<(StoreID, SyncDltTimeWindow)>,
+    sync_dlt_time_window: Option<(StoreID, SyncDltTimeWindow, Option<String>, Option<String>)>,
     filter_bar: FilterBar,
 }
 
@@ -215,10 +217,14 @@ impl FilterView {
                 LogTableEvent::SyncDltTime {
                     line_index,
                     storage_time,
+                    ecu_id,
+                    context_id,
                 } => {
                     events.push(FilterViewEvent::SyncDltTime {
                         store_id: line_index,
                         storage_time,
+                        ecu_id,
+                        context_id,
                     });
                 }
             }
@@ -267,10 +273,16 @@ impl FilterView {
                 FilterViewEvent::SyncDltTime {
                     store_id,
                     storage_time,
+                    ecu_id,
+                    context_id,
                 } => {
                     // Open the sync DLT time window with the storage time pre-filled
-                    self.sync_dlt_time_window =
-                        Some((store_id, SyncDltTimeWindow::new(storage_time)));
+                    self.sync_dlt_time_window = Some((
+                        store_id,
+                        SyncDltTimeWindow::new(storage_time),
+                        ecu_id,
+                        context_id,
+                    ));
                     data_state.selected_line_index = Some(store_id);
                 }
                 FilterViewEvent::FilterNameEditRequested => {
@@ -337,14 +349,18 @@ impl FilterView {
         }
 
         // Handle DLT time sync dialog
-        if let Some((store_id, ref mut window)) = self.sync_dlt_time_window {
+        if let Some((store_id, ref mut window, ref ecu_id, ref context_id)) =
+            self.sync_dlt_time_window
+        {
             match window.render(ui) {
                 Ok(Some(target_time)) => {
-                    // User confirmed - perform the sync with the custom target time
-                    match data_state
-                        .store
-                        .resync_dlt_time_to_target(&store_id, target_time)
-                    {
+                    // User confirmed - perform the sync with the custom target time (per file, per ECU, per Context)
+                    match data_state.store.resync_dlt_time_to_target(
+                        &store_id,
+                        target_time,
+                        ecu_id,
+                        context_id,
+                    ) {
                         Ok(()) => {
                             log::info!(
                                 "Successfully resynced DLT timestamps to target: {target_time}"
@@ -427,7 +443,7 @@ impl FilterView {
 
 impl FilterView {
     /// Get the display name for this filter (used in both tab title and histogram marker)
-    /// 
+    ///
     /// Priority:
     /// 1. Use explicit name if set
     /// 2. Otherwise use filter text (truncated) if present  
