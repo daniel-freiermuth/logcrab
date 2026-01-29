@@ -44,6 +44,16 @@ pub const fn dlt_header_time_to_timedelta(header_time: u32) -> TimeDelta {
     TimeDelta::microseconds(header_time as i64 * 100)
 }
 
+/// Convert a u32 timestamp with wraparound correction to TimeDelta
+/// wraparound_count is how many times the u32 has wrapped (0 for no wrap)
+/// Note: DLT timestamps appear to wrap at i32::MAX, not u32::MAX
+const fn dlt_header_time_to_timedelta_with_wraparound(header_time: u32, wraparound_count: u32) -> TimeDelta {
+    // Each wraparound adds i32::MAX * 0.1ms = ~214,748 seconds ≈ 2.48 days
+    let base_micros = header_time as i64 * 100;
+    let wraparound_micros = wraparound_count as i64 * (i32::MAX as i64 + 1) * 100;
+    TimeDelta::microseconds(base_micros + wraparound_micros)
+}
+
 /// A reader wrapper that tracks bytes read for progress reporting
 struct ProgressReader<R> {
     inner: R,
@@ -107,6 +117,12 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     // Track boot times per (ECU, Context) pair for CalibratedMonotonic mode
     let mut boot_times: std::collections::HashMap<(String, String), DateTime<Local>> =
         std::collections::HashMap::new();
+    // Track last seen timestamp per (ECU, Context) to detect wraparound
+    let mut last_timestamps: std::collections::HashMap<(String, String), u32> =
+        std::collections::HashMap::new();
+    // Track wraparound count per (ECU, Context) - how many times we've wrapped around
+    let mut wraparound_counts: std::collections::HashMap<(String, String), u32> =
+        std::collections::HashMap::new();
 
     // Parse all messages with per-(ECU, Context) boot time calculation
     let file = File::open(path).map_err(|e| format!("Failed to open DLT file: {e}"))?;
@@ -136,6 +152,31 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                     if let (Some(ecu), Some(ctx)) = (ecu_id, context_id) {
                         let key = (ecu.clone(), ctx.clone());
 
+                        // Detect timestamp wraparound for this (ECU, Context)
+                        if let Some(current_ts) = msg.header.timestamp {
+                            let wraparound_count = wraparound_counts.entry(key.clone()).or_insert(0);
+                            
+                            if let Some(&last_ts) = last_timestamps.get(&key) {
+                                // Detect wraparound: timestamp went backwards by a large amount
+                                // DLT timestamps appear to wrap at i32::MAX (not u32::MAX)
+                                // Use a threshold of 3/4 of i32::MAX - if we jump back by more than this, it's a wrap
+                                const WRAPAROUND_THRESHOLD: u32 = (i32::MAX as u32 / 4) * 3;
+                                
+                                if current_ts < last_ts {
+                                    let backwards_distance = last_ts - current_ts;
+                                    if backwards_distance > WRAPAROUND_THRESHOLD {
+                                        *wraparound_count += 1;
+                                        log::info!(
+                                            "Detected timestamp wraparound for ECU '{}', Context '{}' (wrap count: {}, last_ts: {}, current_ts: {}, jumped back by {})",
+                                            ecu, ctx, *wraparound_count, last_ts, current_ts, backwards_distance
+                                        );
+                                    }
+                                }
+                            }
+                            
+                            last_timestamps.insert(key.clone(), current_ts);
+                        }
+
                         // If we haven't calculated boot_time for this (ECU, Context), do it now
                         if !boot_times.contains_key(&key) {
                             if let Some(bt) = calc_boot_time_from_message(&msg) {
@@ -154,7 +195,28 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                     None
                 };
 
-                if let Some(log_line) = convert_dlt_message(&msg, line_number, boot_time) {
+                // Get wraparound count for this message
+                let wraparound_count = if use_calibrated_monotonic {
+                    let ecu_id = msg
+                        .header
+                        .ecu_id
+                        .as_ref()
+                        .map(std::string::ToString::to_string);
+                    let context_id = msg
+                        .extended_header
+                        .as_ref()
+                        .map(|ext| ext.context_id.to_string());
+                    
+                    if let (Some(ecu), Some(ctx)) = (ecu_id, context_id) {
+                        *wraparound_counts.get(&(ecu, ctx)).unwrap_or(&0)
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
+                if let Some(log_line) = convert_dlt_message(&msg, line_number, boot_time, wraparound_count) {
                     chunk_lines.push(log_line);
                     line_number += 1;
 
@@ -219,12 +281,13 @@ fn convert_dlt_message(
     msg: &Message,
     line_number: usize,
     boot_time: Option<DateTime<Local>>,
+    wraparound_count: u32,
 ) -> Option<LogLine> {
     // Extract timestamp based on configuration
     let timestamp = if let Some(boot_time) = boot_time {
-        // Use calibrated monotonic clock: boot_time + time_since_boot
+        // Use calibrated monotonic clock: boot_time + time_since_boot (with wraparound correction)
         let ts = msg.header.timestamp?;
-        let time_since_boot = dlt_header_time_to_timedelta(ts);
+        let time_since_boot = dlt_header_time_to_timedelta_with_wraparound(ts, wraparound_count);
         boot_time.checked_add_signed(time_since_boot)?
     } else {
         // Use storage time directly
