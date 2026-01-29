@@ -19,7 +19,7 @@ impl SyncDltTimeWindow {
     pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<DateTime<Local>>, ()> {
         let mut result = Ok(None);
 
-        egui::Window::new("⏱ Sync DLT Time")
+        egui::Window::new("⏱ Calibrate DLT Time")
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {

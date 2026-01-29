@@ -168,7 +168,7 @@ impl LogTable {
 
             // DLT-specific: Sync time option
             if let Some(LogLineVariant::Dlt(dlt_line)) = store.get_by_id(&line_idx) {
-                if ui.button("⏱ Sync Time Here").clicked() {
+                if ui.button("⏱ Calibrate Time Here").clicked() {
                     // Extract storage timestamp from the DLT message
                     if let Some(ref storage_header) = dlt_line.dlt_message.storage_header {
                         if let Some(storage_time) =
