@@ -123,7 +123,11 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                 // Determine boot_time for this message based on its (ECU, Context)
                 let boot_time = if use_calibrated_monotonic {
                     // Extract ECU and Context identifiers
-                    let ecu_id = msg.header.ecu_id.as_ref().map(|s| s.to_string());
+                    let ecu_id = msg
+                        .header
+                        .ecu_id
+                        .as_ref()
+                        .map(std::string::ToString::to_string);
                     let context_id = msg
                         .extended_header
                         .as_ref()
@@ -136,10 +140,7 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                         if !boot_times.contains_key(&key) {
                             if let Some(bt) = calc_boot_time_from_message(&msg) {
                                 log::info!(
-                                    "Calculated boot time for ECU '{}', Context '{}': {}",
-                                    ecu,
-                                    ctx,
-                                    bt
+                                    "Calculated boot time for ECU '{ecu}', Context '{ctx}': {bt}"
                                 );
                                 boot_times.insert(key.clone(), bt);
                             }

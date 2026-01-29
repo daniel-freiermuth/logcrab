@@ -53,7 +53,7 @@ impl FilterState {
     }
 
     /// Get the unique filter ID
-    pub fn get_id(&self) -> usize {
+    pub const fn get_id(&self) -> usize {
         self.rule.id()
     }
 }

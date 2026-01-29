@@ -60,7 +60,7 @@ impl SearchRule {
     }
 
     /// Get the unique identifier for this rule (delegates to `SearchState`).
-    pub fn id(&self) -> usize {
+    pub const fn id(&self) -> usize {
         self.search.id()
     }
 

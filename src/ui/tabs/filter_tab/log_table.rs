@@ -180,7 +180,7 @@ impl LogTable {
                                 .header
                                 .ecu_id
                                 .as_ref()
-                                .map(|s| s.to_string());
+                                .map(std::string::ToString::to_string);
                             let context_id = dlt_line
                                 .dlt_message
                                 .extended_header
