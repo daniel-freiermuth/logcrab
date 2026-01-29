@@ -294,12 +294,17 @@ impl SourceData {
         profiling::scope!("SourceData::resync_dlt_time_to_target");
 
         // Get the reference line and extract timing info
-        let reference_line = {
+        let (reference_line, reference_boot_time) = {
             let guard = self.lines.read().unwrap();
-            guard
+            let line = guard
                 .get(reference_line_index)
                 .cloned()
-                .ok_or_else(|| "Reference line not found".to_string())?
+                .ok_or_else(|| "Reference line not found".to_string())?;
+            let boot_time = match &line {
+                LogLineVariant::Dlt(dlt_line) => dlt_line.boot_time,
+                _ => None,
+            };
+            (line, boot_time)
         };
 
         // Extract header timestamp (time since boot) from reference line
@@ -322,16 +327,16 @@ impl SourceData {
             .ok_or_else(|| "Failed to calculate boot time".to_string())?;
 
         log::info!(
-            "Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time}) for file, ECU: {ecu_id:?}, Context: {context_id:?}"
+            "Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time}) for file, ECU: {ecu_id:?}, Context: {context_id:?}, boot cycle: {reference_boot_time:?}"
         );
 
-        // Update all DLT entries in this file matching the ECU and Context
+        // Update all DLT entries in this file matching the ECU, Context, and boot cycle
         {
             profiling::scope!("SourceData::lines::write");
             let mut guard = self.lines.write().unwrap();
             for line in guard.iter_mut() {
                 if let LogLineVariant::Dlt(dlt_line) = line {
-                    // Check if this line matches the target ECU and Context
+                    // Check if this line matches the target ECU, Context, and boot cycle
                     let should_update =
                         if let (Some(target_ecu), Some(target_ctx)) = (ecu_id, context_id) {
                             let ecu_matches = dlt_line
@@ -345,7 +350,9 @@ impl SourceData {
                                 .extended_header
                                 .as_ref()
                                 .is_some_and(|ext| ext.context_id.as_str() == target_ctx.as_str());
-                            ecu_matches && ctx_matches
+                            // Also check boot_time to ensure we're in the same boot cycle
+                            let boot_cycle_matches = dlt_line.boot_time == reference_boot_time;
+                            ecu_matches && ctx_matches && boot_cycle_matches
                         } else {
                             false
                         };
