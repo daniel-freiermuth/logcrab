@@ -424,22 +424,27 @@ pub struct StoreID {
 }
 
 impl StoreID {
+    /// Compare two `StoreIDs` by their line timestamps.
+    ///
+    /// When both lines exist in the store, compares by timestamp first,
+    /// then by `source_index` and `line_index` for stability.
+    /// When lines are missing (e.g., during file loading), falls back to
+    /// structural ordering to maintain a valid total order.
     pub fn cmp(&self, other: &StoreID, store: &LogStore) -> Ordering {
-        let self_line = store
-            .get_by_id(self)
-            .expect("Tried to compare non-existent line (self).");
-        let other_line = store
-            .get_by_id(other)
-            .expect("Tried to compare non-existent line (other).");
-        let t1 = self_line.timestamp();
-        let t2 = other_line.timestamp();
+        let self_line = store.get_by_id(self);
+        let other_line = store.get_by_id(other);
 
-        match t1.cmp(&t2) {
-            Ordering::Equal => match self.source_index.cmp(&other.source_index) {
-                Ordering::Equal => self.line_index.cmp(&other.line_index),
-                ord => ord,
-            },
-            ord => ord,
+        match (self_line, other_line) {
+            (Some(l1), Some(l2)) => {
+                // Both lines exist: compare by timestamp, then structurally for stability
+                l1.timestamp()
+                    .cmp(&l2.timestamp())
+                    .then_with(|| self.source_index.cmp(&other.source_index))
+                    .then_with(|| self.line_index.cmp(&other.line_index))
+            }
+            (Some(_), None) => Ordering::Less, // existing lines come first
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ord::cmp(self, other), // both missing: use derived Ord
         }
     }
 }
