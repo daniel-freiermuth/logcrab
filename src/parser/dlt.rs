@@ -236,9 +236,6 @@ fn convert_dlt_message(
     if msg.header.ecu_id.is_none() {
         log::warn!("DLT message missing ECU ID for line {line_number}");
     }
-    if msg.header.session_id.is_none() {
-        log::warn!("DLT message missing Session ID for line {line_number}");
-    }
     if msg.extended_header.is_none() {
         log::error!("DLT message missing Extended Header for line {line_number}");
         return None;
