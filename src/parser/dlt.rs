@@ -99,16 +99,16 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
         matches!(timestamp_source, DltTimestampSource::CalibratedMonotonic);
 
     if use_calibrated_monotonic {
-        log::info!("Using calibrated monotonic timestamps (per ECU, per Context)");
+        log::info!("Using calibrated monotonic timestamps (per ECU, per App)");
     } else {
         log::info!("Using DLT storage time for timestamps");
     }
 
-    // Track boot times per (ECU, Context) pair for CalibratedMonotonic mode
+    // Track boot times per (ECU, App) pair for CalibratedMonotonic mode
     let mut boot_times: std::collections::HashMap<(String, String), DateTime<Local>> =
         std::collections::HashMap::new();
 
-    // Parse all messages with per-(ECU, Context) boot time calculation
+    // Parse all messages with per-(ECU, App) boot time calculation
     let file = File::open(path).map_err(|e| format!("Failed to open DLT file: {e}"))?;
     let progress_reader = ProgressReader::new(BufReader::new(file));
     let bytes_read_counter = progress_reader.bytes_read_counter();
@@ -120,27 +120,27 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     loop {
         match read_message(&mut reader, None) {
             Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
-                // Determine boot_time for this message based on its (ECU, Context)
+                // Determine boot_time for this message based on its (ECU, App)
                 let boot_time = if use_calibrated_monotonic {
-                    // Extract ECU and Context identifiers
+                    // Extract ECU and App identifiers
                     let ecu_id = msg
                         .header
                         .ecu_id
                         .as_ref()
                         .map(std::string::ToString::to_string);
-                    let context_id = msg
+                    let app_id = msg
                         .extended_header
                         .as_ref()
-                        .map(|ext| ext.context_id.to_string());
+                        .map(|ext| ext.application_id.to_string());
 
-                    if let (Some(ecu), Some(ctx)) = (ecu_id, context_id) {
-                        let key = (ecu.clone(), ctx.clone());
+                    if let (Some(ecu), Some(app)) = (ecu_id, app_id) {
+                        let key = (ecu.clone(), app.clone());
 
-                        // If we haven't calculated boot_time for this (ECU, Context), do it now
+                        // If we haven't calculated boot_time for this (ECU, App), do it now
                         if !boot_times.contains_key(&key) {
                             if let Some(bt) = calc_boot_time_from_message(&msg) {
                                 log::info!(
-                                    "Calculated boot time for ECU '{ecu}', Context '{ctx}': {bt}"
+                                    "Calculated boot time for ECU '{ecu}', App '{app}': {bt}"
                                 );
                                 boot_times.insert(key.clone(), bt);
                             }

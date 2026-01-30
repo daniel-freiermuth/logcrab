@@ -51,7 +51,7 @@ pub enum FilterViewEvent {
         store_id: StoreID,
         storage_time: DateTime<Local>,
         ecu_id: Option<String>,
-        context_id: Option<String>,
+        app_id: Option<String>,
     },
     FilterNameEditRequested,
     FavoriteToggled,
@@ -218,13 +218,13 @@ impl FilterView {
                     line_index,
                     storage_time,
                     ecu_id,
-                    context_id,
+                    app_id,
                 } => {
                     events.push(FilterViewEvent::SyncDltTime {
                         store_id: line_index,
                         storage_time,
                         ecu_id,
-                        context_id,
+                        app_id,
                     });
                 }
             }
@@ -274,14 +274,14 @@ impl FilterView {
                     store_id,
                     storage_time,
                     ecu_id,
-                    context_id,
+                    app_id,
                 } => {
                     // Open the sync DLT time window with the storage time pre-filled
                     self.sync_dlt_time_window = Some((
                         store_id,
                         SyncDltTimeWindow::new(storage_time),
                         ecu_id,
-                        context_id,
+                        app_id,
                     ));
                     data_state.selected_line_index = Some(store_id);
                 }
@@ -349,17 +349,17 @@ impl FilterView {
         }
 
         // Handle DLT time sync dialog
-        if let Some((store_id, ref mut window, ref ecu_id, ref context_id)) =
+        if let Some((store_id, ref mut window, ref ecu_id, ref app_id)) =
             self.sync_dlt_time_window
         {
             match window.render(ui) {
                 Ok(Some(target_time)) => {
-                    // User confirmed - perform the sync with the custom target time (per file, per ECU, per Context)
+                    // User confirmed - perform the sync with the custom target time (per file, per ECU, per App)
                     match data_state.store.resync_dlt_time_to_target(
                         &store_id,
                         target_time,
                         ecu_id,
-                        context_id,
+                        app_id,
                     ) {
                         Ok(()) => {
                             log::info!(
