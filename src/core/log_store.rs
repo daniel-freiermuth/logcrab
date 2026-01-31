@@ -538,6 +538,8 @@ impl LogStore {
     }
 
     /// Resynchronize DLT timestamps to a custom target time (per file, per ECU, per App)
+    #[allow(clippy::significant_drop_tightening)] // sources can't be dropped
+    // early since source is a reference into it
     pub fn resync_dlt_time_to_target(
         &self,
         id: &StoreID,

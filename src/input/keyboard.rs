@@ -104,6 +104,7 @@ const fn is_letter_key(key: egui::Key) -> bool {
     )
 }
 
+#[allow(clippy::cognitive_complexity)] // Many branches trigger false positive
 const fn map_egui_key_to_kb_key(key: egui::Key, shift: bool) -> keybinds::Key {
     use keybinds::Key;
 
