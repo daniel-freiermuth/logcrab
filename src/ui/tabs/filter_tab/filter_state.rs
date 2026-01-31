@@ -95,6 +95,6 @@ impl From<&SavedFilter> for FilterState {
 
 impl From<&FilterState> for SavedFilter {
     fn from(filter: &FilterState) -> Self {
-        SavedFilter::from(&filter.rule)
+        Self::from(&filter.rule)
     }
 }

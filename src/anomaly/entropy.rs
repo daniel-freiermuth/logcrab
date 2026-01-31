@@ -71,9 +71,13 @@ impl AnomalyScorer for EntropyScorer {
         let length = message.len() as f64;
 
         // Running average
-        self.avg_entropy = (self.avg_entropy * f64::from(self.sample_count) + entropy)
+        self.avg_entropy = self
+            .avg_entropy
+            .mul_add(f64::from(self.sample_count), entropy)
             / f64::from(self.sample_count + 1);
-        self.avg_length = (self.avg_length * f64::from(self.sample_count) + length)
+        self.avg_length = self
+            .avg_length
+            .mul_add(f64::from(self.sample_count), length)
             / f64::from(self.sample_count + 1);
 
         self.sample_count += 1;

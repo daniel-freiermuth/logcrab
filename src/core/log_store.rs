@@ -332,23 +332,24 @@ impl SourceData {
             for line in guard.iter_mut() {
                 if let LogLineVariant::Dlt(dlt_line) = line {
                     // Check if this line matches the target ECU and App
-                    let should_update =
-                        if let (Some(target_ecu), Some(target_app)) = (ecu_id, app_id) {
-                            let ecu_matches = dlt_line
-                                .dlt_message
-                                .header
-                                .ecu_id
-                                .as_ref()
-                                .is_some_and(|ecu| ecu.as_str() == target_ecu);
-                            let app_matches = dlt_line
-                                .dlt_message
-                                .extended_header
-                                .as_ref()
-                                .is_some_and(|ext| ext.application_id.as_str() == target_app.as_str());
-                            ecu_matches && app_matches
-                        } else {
-                            false
-                        };
+                    let should_update = if let (Some(target_ecu), Some(target_app)) =
+                        (ecu_id, app_id)
+                    {
+                        let ecu_matches = dlt_line
+                            .dlt_message
+                            .header
+                            .ecu_id
+                            .as_ref()
+                            .is_some_and(|ecu| ecu.as_str() == target_ecu);
+                        let app_matches = dlt_line
+                            .dlt_message
+                            .extended_header
+                            .as_ref()
+                            .is_some_and(|ext| ext.application_id.as_str() == target_app.as_str());
+                        ecu_matches && app_matches
+                    } else {
+                        false
+                    };
 
                     if should_update {
                         // Recalculate timestamp: new_boot_time + time_since_boot
@@ -430,7 +431,7 @@ impl StoreID {
     /// then by `source_index` and `line_index` for stability.
     /// When lines are missing (e.g., during file loading), falls back to
     /// structural ordering to maintain a valid total order.
-    pub fn cmp(&self, other: &StoreID, store: &LogStore) -> Ordering {
+    pub fn cmp(&self, other: &Self, store: &LogStore) -> Ordering {
         let self_line = store.get_by_id(self);
         let other_line = store.get_by_id(other);
 

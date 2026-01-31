@@ -53,57 +53,57 @@ pub enum LogLineVariant {
 impl LogLineCore for LogLineVariant {
     fn timestamp(&self) -> DateTime<Local> {
         match self {
-            LogLineVariant::Generic(l) => l.timestamp(),
-            LogLineVariant::Logcat(l) => l.timestamp(),
-            LogLineVariant::Dlt(l) => l.timestamp(),
+            Self::Generic(l) => l.timestamp(),
+            Self::Logcat(l) => l.timestamp(),
+            Self::Dlt(l) => l.timestamp(),
         }
     }
 
     fn message(&self) -> String {
         match self {
-            LogLineVariant::Generic(l) => l.message(),
-            LogLineVariant::Logcat(l) => l.message(),
-            LogLineVariant::Dlt(l) => l.message(),
+            Self::Generic(l) => l.message(),
+            Self::Logcat(l) => l.message(),
+            Self::Dlt(l) => l.message(),
         }
     }
 
     fn raw(&self) -> String {
         match self {
-            LogLineVariant::Generic(l) => l.raw(),
-            LogLineVariant::Logcat(l) => l.raw(),
-            LogLineVariant::Dlt(l) => l.raw(),
+            Self::Generic(l) => l.raw(),
+            Self::Logcat(l) => l.raw(),
+            Self::Dlt(l) => l.raw(),
         }
     }
 
     fn template_key(&self) -> String {
         match self {
-            LogLineVariant::Generic(l) => l.template_key(),
-            LogLineVariant::Logcat(l) => l.template_key(),
-            LogLineVariant::Dlt(l) => l.template_key(),
+            Self::Generic(l) => l.template_key(),
+            Self::Logcat(l) => l.template_key(),
+            Self::Dlt(l) => l.template_key(),
         }
     }
 
     fn line_number(&self) -> usize {
         match self {
-            LogLineVariant::Generic(l) => l.line_number(),
-            LogLineVariant::Logcat(l) => l.line_number(),
-            LogLineVariant::Dlt(l) => l.line_number(),
+            Self::Generic(l) => l.line_number(),
+            Self::Logcat(l) => l.line_number(),
+            Self::Dlt(l) => l.line_number(),
         }
     }
 
     fn anomaly_score(&self) -> f64 {
         match self {
-            LogLineVariant::Generic(l) => l.anomaly_score(),
-            LogLineVariant::Logcat(l) => l.anomaly_score(),
-            LogLineVariant::Dlt(l) => l.anomaly_score(),
+            Self::Generic(l) => l.anomaly_score(),
+            Self::Logcat(l) => l.anomaly_score(),
+            Self::Dlt(l) => l.anomaly_score(),
         }
     }
 
     fn set_anomaly_score(&mut self, score: f64) {
         match self {
-            LogLineVariant::Generic(l) => l.set_anomaly_score(score),
-            LogLineVariant::Logcat(l) => l.set_anomaly_score(score),
-            LogLineVariant::Dlt(l) => l.set_anomaly_score(score),
+            Self::Generic(l) => l.set_anomaly_score(score),
+            Self::Logcat(l) => l.set_anomaly_score(score),
+            Self::Dlt(l) => l.set_anomaly_score(score),
         }
     }
 }
@@ -394,7 +394,7 @@ impl DltLogLine {
         } else {
             // StorageTime mode: show monotonic timestamp (header timestamp)
             if let Some(header_ts) = self.dlt_message.header.timestamp {
-                let monotonic_micros = header_ts as i64 * 100; // header timestamp in 0.1ms units
+                let monotonic_micros = i64::from(header_ts) * 100; // header timestamp in 0.1ms units
                 let monotonic_secs = monotonic_micros as f64 / 1_000_000.0;
                 format!(
                     "[{monotonic_secs:.3}s {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}"

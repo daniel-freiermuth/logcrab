@@ -56,7 +56,7 @@ pub fn score_to_color(score: f64, dark_mode: bool) -> Color32 {
         if normalized < 0.3 {
             // Low scores: light gray to white
             let t = normalized / 0.3;
-            let gray = (150.0 + t * 105.0) as u8; // 150 -> 255
+            let gray = t.mul_add(105.0, 150.0) as u8; // 150 -> 255
             Color32::from_rgb(gray, gray, gray)
         } else if normalized < 0.6 {
             // Medium-low scores: white to yellow
@@ -69,7 +69,7 @@ pub fn score_to_color(score: f64, dark_mode: bool) -> Color32 {
             // Medium-high scores: yellow to orange
             let t = (normalized - 0.6) / 0.2;
             let r = 255;
-            let g = (255.0 * (1.0 - t * 0.4)) as u8; // 255 -> 153
+            let g = (255.0 * t.mul_add(-0.4, 1.0)) as u8; // 255 -> 153
             let b = 0;
             Color32::from_rgb(r, g, b)
         } else {
@@ -85,27 +85,27 @@ pub fn score_to_color(score: f64, dark_mode: bool) -> Color32 {
         if normalized < 0.3 {
             // Low scores: medium gray to dark gray
             let t = normalized / 0.3;
-            let gray = (140.0 - t * 40.0) as u8; // 140 -> 100
+            let gray = t.mul_add(-40.0, 140.0) as u8; // 140 -> 100
             Color32::from_rgb(gray, gray, gray)
         } else if normalized < 0.6 {
             // Medium-low scores: dark gray to dark yellow/olive
             let t = (normalized - 0.3) / 0.3;
-            let r = (100.0 + t * 80.0) as u8; // 100 -> 180
-            let g = (100.0 + t * 60.0) as u8; // 100 -> 160
+            let r = t.mul_add(80.0, 100.0) as u8; // 100 -> 180
+            let g = t.mul_add(60.0, 100.0) as u8; // 100 -> 160
             let b = (100.0 * (1.0 - t)) as u8; // 100 -> 0
             Color32::from_rgb(r, g, b)
         } else if normalized < 0.8 {
             // Medium-high scores: dark yellow to dark orange
             let t = (normalized - 0.6) / 0.2;
-            let r = (180.0 + t * 20.0) as u8; // 180 -> 200
-            let g = (160.0 - t * 60.0) as u8; // 160 -> 100
+            let r = t.mul_add(20.0, 180.0) as u8; // 180 -> 200
+            let g = t.mul_add(-60.0, 160.0) as u8; // 160 -> 100
             let b = 0;
             Color32::from_rgb(r, g, b)
         } else {
             // High scores: dark orange to dark red
             let t = (normalized - 0.8) / 0.2;
-            let r = (200.0 + t * 20.0) as u8; // 200 -> 220
-            let g = (100.0 - t * 70.0) as u8; // 100 -> 30
+            let r = t.mul_add(20.0, 200.0) as u8; // 200 -> 220
+            let g = t.mul_add(-70.0, 100.0) as u8; // 100 -> 30
             let b = (t * 30.0) as u8; // 0 -> 30
             Color32::from_rgb(r, g, b)
         }

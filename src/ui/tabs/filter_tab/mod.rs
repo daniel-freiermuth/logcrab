@@ -349,8 +349,7 @@ impl FilterView {
         }
 
         // Handle DLT time sync dialog
-        if let Some((store_id, ref mut window, ref ecu_id, ref app_id)) =
-            self.sync_dlt_time_window
+        if let Some((store_id, ref mut window, ref ecu_id, ref app_id)) = self.sync_dlt_time_window
         {
             match window.render(ui) {
                 Ok(Some(target_time)) => {

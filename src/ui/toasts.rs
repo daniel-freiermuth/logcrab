@@ -257,7 +257,7 @@ impl ToastManager {
             } else {
                 80.0
             };
-            let y_offset = bottom_offset + (*idx as f32) * (toast_height + toast_margin);
+            let y_offset = (*idx as f32).mul_add(toast_height + toast_margin, bottom_offset);
 
             let pos = egui::pos2(
                 screen_rect.right() - toast_width - toast_margin,
@@ -274,9 +274,10 @@ impl ToastManager {
                         if let Ok(mut s) = state_arc.write() {
                             s.dismissed_at = Some(
                                 Instant::now()
-                                    - std::time::Duration::from_secs_f32(
+                                    .checked_sub(std::time::Duration::from_secs_f32(
                                         DISMISSED_TOAST_LINGER_SECS + 1.0,
-                                    ),
+                                    ))
+                                    .unwrap(),
                             );
                         }
                     }

@@ -299,7 +299,7 @@ impl LogCrabApp {
                         for path in paths {
                             match log_view.import_filters(&path) {
                                 Ok(count) => {
-                                    log::info!("Imported {count} filters from {}", path.display())
+                                    log::info!("Imported {count} filters from {}", path.display());
                                 }
                                 Err(e) => log::error!(
                                     "Failed to import filters from {}: {e}",

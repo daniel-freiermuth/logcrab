@@ -320,7 +320,7 @@ impl Histogram {
     ) {
         for (i, &count) in buckets.iter().enumerate() {
             if count > 0 {
-                let x = rect.min.x + i as f32 * bar_width;
+                let x = (i as f32).mul_add(bar_width, rect.min.x);
                 let total_height = (count as f32 / max_count as f32) * rect.height();
 
                 // Draw gradient based on anomaly distribution
@@ -377,7 +377,7 @@ impl Histogram {
 
             let score = ((bucket_idx as f32 + 1.0) / SCORE_BUCKETS as f32) * 100.0;
 
-            let color = log_table::score_to_color(score as f64, dark_mode);
+            let color = log_table::score_to_color(f64::from(score), dark_mode);
 
             let y = current_y - segment_height;
             let segment_rect = egui::Rect::from_min_size(
@@ -408,7 +408,7 @@ impl Histogram {
                 let elapsed = ts - start_time;
 
                 let x = rect.min.x
-                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * total_width as f64)
+                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * f64::from(total_width))
                         as f32;
 
                 painter.vline(x, rect.y_range(), (1.0, marker.color));
@@ -446,7 +446,7 @@ impl Histogram {
                 let ts = store.get_by_id(line_idx).unwrap().timestamp();
                 let elapsed = ts - start_time;
                 let x = rect.min.x
-                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * total_width as f64)
+                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * f64::from(total_width))
                         as f32;
 
                 let distance = (hover_pos.x - x).abs();
@@ -483,7 +483,7 @@ impl Histogram {
         selected_x_fraction: Option<f32>,
     ) {
         if let Some(fraction) = selected_x_fraction {
-            let x = rect.min.x + fraction * rect.width();
+            let x = fraction.mul_add(rect.width(), rect.min.x);
             painter.vline(x, rect.y_range(), (2.0, Color32::RED));
         }
     }
@@ -511,7 +511,7 @@ impl Histogram {
         // Calculate click time directly from x position
         // to match how the selected indicator position is calculated
         let total_time = bucket_size * (NUM_BUCKETS as u32);
-        let click_fraction = (relative_x / rect.width()) as f64;
+        let click_fraction = f64::from(relative_x / rect.width());
         let click_time = start_time
             + chrono::Duration::from_std(Duration::from_secs_f64(
                 total_time.as_secs_f64() * click_fraction,

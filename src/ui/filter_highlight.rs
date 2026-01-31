@@ -135,9 +135,12 @@ impl FilterHighlight {
         };
 
         // Blend highlight color with base background
-        let effective_r = (f32::from(background.r()) / 255.0) * alpha + base_r * (1.0 - alpha);
-        let effective_g = (f32::from(background.g()) / 255.0) * alpha + base_g * (1.0 - alpha);
-        let effective_b = (f32::from(background.b()) / 255.0) * alpha + base_b * (1.0 - alpha);
+        let effective_r =
+            (f32::from(background.r()) / 255.0).mul_add(alpha, base_r * (1.0 - alpha));
+        let effective_g =
+            (f32::from(background.g()) / 255.0).mul_add(alpha, base_g * (1.0 - alpha));
+        let effective_b =
+            (f32::from(background.b()) / 255.0).mul_add(alpha, base_b * (1.0 - alpha));
 
         // Linearize (gamma correction) for proper luminance calculation
         let linearize = |c_norm: f32| -> f32 {
@@ -171,7 +174,7 @@ impl FilterHighlight {
         let top_a = f32::from(top.a()) / 255.0;
 
         // Alpha compositing: out_a = top_a + bottom_a * (1 - top_a)
-        let out_a = top_a + bottom_a * (1.0 - top_a);
+        let out_a = bottom_a.mul_add(1.0 - top_a, top_a);
 
         if out_a == 0.0 {
             return Color32::TRANSPARENT;
@@ -182,7 +185,7 @@ impl FilterHighlight {
             let top_cf = f32::from(top_c) / 255.0;
             let bottom_cf = f32::from(bottom_c) / 255.0;
 
-            let out_cf = (top_cf * top_a + bottom_cf * bottom_a * (1.0 - top_a)) / out_a;
+            let out_cf = top_cf.mul_add(top_a, bottom_cf * bottom_a * (1.0 - top_a)) / out_a;
             (out_cf * 255.0).round() as u8
         };
 

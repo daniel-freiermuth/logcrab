@@ -232,12 +232,12 @@ impl HistogramWorker {
             HistogramResult {
                 cache_key: request.key.clone(),
                 data: Some(HistogramData {
-                    effective_indices,
                     start_time,
                     end_time,
                     bucket_size,
                     buckets,
                     anomaly_buckets,
+                    effective_indices,
                 }),
             }
         } else {
