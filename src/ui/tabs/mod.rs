@@ -84,11 +84,10 @@ impl TabViewer for LogCrabTabViewer<'_> {
 
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
         // Use stable UUID if available, otherwise fall back to title-based ID
-        if let Some(uuid) = tab.get_uuid() {
-            egui::Id::new(("logcrab_tab", uuid))
-        } else {
-            egui::Id::new(self.title(tab).text())
-        }
+        tab.get_uuid().map_or_else(
+            || egui::Id::new(self.title(tab).text()),
+            |uuid| egui::Id::new(("logcrab_tab", uuid)),
+        )
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {

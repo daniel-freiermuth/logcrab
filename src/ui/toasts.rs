@@ -160,7 +160,7 @@ impl ToastManager {
     /// Create a new progress toast and return a handle.
     /// The handle can be sent to background threads.
     pub fn create_progress_toast(
-        &mut self,
+        &self,
         title: impl Into<String>,
         message: impl Into<String>,
     ) -> ProgressToastHandle {
@@ -222,7 +222,7 @@ impl ToastManager {
         self.toasts.show(ctx);
     }
 
-    fn render_progress_toasts(&mut self, ctx: &egui::Context) {
+    fn render_progress_toasts(&self, ctx: &egui::Context) {
         // Clean up dismissed handles and collect active ones
         let active_states: Vec<(usize, ProgressToastState, Arc<RwLock<ProgressToastState>>)> = {
             let mut handles = self.progress_handles.lock().unwrap();

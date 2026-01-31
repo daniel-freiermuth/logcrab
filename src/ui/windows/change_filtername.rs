@@ -14,7 +14,7 @@ impl ChangeFilternameWindow {
     /// Returns `Ok(Some(new_name))` if the name was changed,
     /// Ok(None) if the window is still open,
     /// Err(()) if the operation was cancelled.
-    pub fn render(&mut self, ui: &mut egui::Ui) -> Result<Option<String>, ()> {
+    pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<String>, ()> {
         let mut result = Ok(None);
         egui::Window::new("Rename Filter")
             .collapsible(false)

@@ -435,7 +435,7 @@ impl BookmarkPanel {
         });
     }
 
-    fn paint_selection_background(ui: &mut Ui, is_selected: bool, dark_mode: bool) {
+    fn paint_selection_background(ui: &Ui, is_selected: bool, dark_mode: bool) {
         // All bookmark rows have the bookmark background
         let bg_color = if is_selected {
             selected_row_color(dark_mode)

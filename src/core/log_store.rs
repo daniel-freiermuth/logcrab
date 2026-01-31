@@ -227,6 +227,7 @@ impl SourceData {
                     j_new += 1;
                 }
             }
+            drop(lines);
             merged.extend_from_slice(&existing_by_ts[i_exist..]);
             merged.extend_from_slice(&new_by_ts[j_new..]);
             merged
@@ -286,8 +287,8 @@ impl SourceData {
         &self,
         reference_line_index: usize,
         target_time: chrono::DateTime<chrono::Local>,
-        ecu_id: &Option<String>,
-        app_id: &Option<String>,
+        ecu_id: Option<&String>,
+        app_id: Option<&String>,
     ) -> Result<(), String> {
         use crate::parser::line::LogLineVariant;
 
@@ -313,7 +314,9 @@ impl SourceData {
                     .ok_or_else(|| "DLT message missing header timestamp".to_string())?;
                 crate::parser::dlt::dlt_header_time_to_timedelta(header_ts)
             }
-            _ => return Err("Reference line is not a DLT entry".to_string()),
+            LogLineVariant::Generic(_) | LogLineVariant::Logcat(_) => {
+                return Err("Reference line is not a DLT entry".to_string())
+            }
         };
 
         // Calculate new boot_time: target_time - time_since_boot
@@ -539,8 +542,8 @@ impl LogStore {
         &self,
         id: &StoreID,
         target_time: chrono::DateTime<chrono::Local>,
-        ecu_id: &Option<String>,
-        app_id: &Option<String>,
+        ecu_id: Option<&String>,
+        app_id: Option<&String>,
     ) -> Result<(), String> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().unwrap();

@@ -294,12 +294,12 @@ impl LogFileLoader {
     where
         F: Fn(String, usize) -> Option<crate::parser::line::LogLine>,
     {
+        const CHUNK_SIZE: usize = 10_000;
+
         let mut chunk_lines = Vec::new();
         let mut bytes_read: usize = 0;
 
         profiling::scope!("parse_lines");
-
-        const CHUNK_SIZE: usize = 10_000;
 
         let parse_start = std::time::Instant::now();
         let mut file_line_number = 0;

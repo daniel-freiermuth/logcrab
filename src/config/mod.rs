@@ -125,12 +125,10 @@ impl FavoriteFilter {
 impl GlobalConfig {
     /// Get the path to the global config file
     pub fn config_path() -> Option<PathBuf> {
-        if let Some(config_dir) = dirs::config_dir() {
+        dirs::config_dir().map(|config_dir| {
             let app_config = config_dir.join("logcrab");
-            Some(app_config.join("config.json"))
-        } else {
-            None
-        }
+            app_config.join("config.json")
+        })
     }
 
     /// Load global config from disk, returning defaults if not found

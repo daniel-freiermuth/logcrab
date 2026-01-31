@@ -417,7 +417,7 @@ impl Histogram {
     }
 
     fn handle_marker_hover(
-        ui: &mut Ui,
+        ui: &Ui,
         response: &egui::Response,
         rect: egui::Rect,
         store: &LogStore,
@@ -425,6 +425,12 @@ impl Histogram {
         bucket_size: Duration,
         markers: &[HistogramMarker],
     ) {
+        struct MarkerMatch<'a> {
+            marker: &'a HistogramMarker,
+            distance: f32,
+            x_pos: f32,
+        }
+
         let Some(hover_pos) = response.hover_pos() else {
             return;
         };
@@ -432,12 +438,6 @@ impl Histogram {
         let total_width = rect.width();
         let total_time = NUM_BUCKETS as u32 * bucket_size;
         let hover_threshold = 3.0; // pixels
-
-        struct MarkerMatch<'a> {
-            marker: &'a HistogramMarker,
-            distance: f32,
-            x_pos: f32,
-        }
 
         let mut closest_match: Option<MarkerMatch> = None;
 

@@ -41,7 +41,23 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
                 key,
                 mods: modifiers,
             }),
-            _ => Err(()),
+            egui::Event::Copy
+            | egui::Event::Cut
+            | egui::Event::Paste(_)
+            | egui::Event::Text(_)
+            | egui::Event::Key { .. }
+            | egui::Event::PointerMoved(_)
+            | egui::Event::MouseMoved(_)
+            | egui::Event::PointerButton { .. }
+            | egui::Event::PointerGone
+            | egui::Event::Zoom(_)
+            | egui::Event::Rotate(_)
+            | egui::Event::Ime(_)
+            | egui::Event::Touch { .. }
+            | egui::Event::MouseWheel { .. }
+            | egui::Event::WindowFocused(_)
+            | egui::Event::AccessKitActionRequest(_)
+            | egui::Event::Screenshot { .. } => Err(()),
         }
     }
 }
@@ -50,7 +66,7 @@ impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
     fn from(key_event: EguiKeyEvent<'_>) -> Self {
         let is_letter_key = is_letter_key(*key_event.key);
         let kb_key = map_egui_key_to_kb_key(*key_event.key, key_event.mods.shift);
-        let kb_mods = map_modifiers(key_event.mods, is_letter_key);
+        let kb_mods = map_modifiers(*key_event.mods, is_letter_key);
 
         Self::new(kb_key, kb_mods)
     }
@@ -159,11 +175,56 @@ const fn map_egui_key_to_kb_key(key: egui::Key, shift: bool) -> keybinds::Key {
         egui::Key::F11 => Key::Char('\u{E00B}'),
         egui::Key::F12 => Key::Char('\u{E00C}'),
         // For unsupported keys, return a placeholder
-        _ => Key::Char('\0'),
+        egui::Key::Insert
+        | egui::Key::Copy
+        | egui::Key::Cut
+        | egui::Key::Paste
+        | egui::Key::Colon
+        | egui::Key::Comma
+        | egui::Key::Backslash
+        | egui::Key::Slash
+        | egui::Key::Pipe
+        | egui::Key::Questionmark
+        | egui::Key::Exclamationmark
+        | egui::Key::OpenBracket
+        | egui::Key::CloseBracket
+        | egui::Key::OpenCurlyBracket
+        | egui::Key::CloseCurlyBracket
+        | egui::Key::Backtick
+        | egui::Key::Minus
+        | egui::Key::Period
+        | egui::Key::Plus
+        | egui::Key::Equals
+        | egui::Key::Semicolon
+        | egui::Key::Quote
+        | egui::Key::F13
+        | egui::Key::F14
+        | egui::Key::F15
+        | egui::Key::F16
+        | egui::Key::F17
+        | egui::Key::F18
+        | egui::Key::F19
+        | egui::Key::F20
+        | egui::Key::F21
+        | egui::Key::F22
+        | egui::Key::F23
+        | egui::Key::F24
+        | egui::Key::F25
+        | egui::Key::F26
+        | egui::Key::F27
+        | egui::Key::F28
+        | egui::Key::F29
+        | egui::Key::F30
+        | egui::Key::F31
+        | egui::Key::F32
+        | egui::Key::F33
+        | egui::Key::F34
+        | egui::Key::F35
+        | egui::Key::BrowserBack => Key::Char('\0'),
     }
 }
 
-fn map_modifiers(mods: &egui::Modifiers, is_letter_key: bool) -> keybinds::Mods {
+fn map_modifiers(mods: egui::Modifiers, is_letter_key: bool) -> keybinds::Mods {
     use keybinds::Mods;
 
     let mut kb_mods = Mods::empty();

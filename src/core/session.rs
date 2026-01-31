@@ -60,6 +60,7 @@ impl From<SerializableColor> for Color32 {
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde requires passing the color by ref
 fn serialize_color<S>(color: &Color32, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,

@@ -50,10 +50,8 @@ impl FilterHighlight {
         for (start, end, color) in matches {
             let range_end = end.min(text.len());
             for char_color in &mut char_colors[start..range_end] {
-                *char_color = Some(match *char_color {
-                    None => color,
-                    Some(existing) => Self::blend_colors(existing, color),
-                });
+                *char_color =
+                    Some(char_color.map_or(color, |existing| Self::blend_colors(existing, color)));
             }
         }
 

@@ -60,7 +60,7 @@ impl FilterBar {
         }
     }
 
-    pub fn save_favorite_name(&mut self, filter: &FilterState, global_config: &mut GlobalConfig) {
+    pub fn save_favorite_name(&self, filter: &FilterState, global_config: &mut GlobalConfig) {
         let new_name = self.temp_favorite_name.clone();
         if let Some(fav) = global_config
             .favorite_filters
@@ -141,7 +141,7 @@ impl FilterBar {
     fn render_favorites_dropdown(
         &mut self,
         ui: &mut Ui,
-        filter: &mut FilterState,
+        filter: &FilterState,
         global_config: &mut GlobalConfig,
         events: &mut Vec<FilterInternalEvent>,
     ) {
@@ -276,7 +276,7 @@ impl FilterBar {
 
     fn handle_history_navigation(
         &mut self,
-        ui: &mut Ui,
+        ui: &Ui,
         search_response: &egui::Response,
         search_id: egui::Id,
         filter: &mut FilterState,

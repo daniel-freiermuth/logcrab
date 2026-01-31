@@ -327,20 +327,21 @@ impl DltLogLine {
         let session_id = self.dlt_message.header.session_id.unwrap_or(0);
 
         // Extract extended header info (app_id, context_id, message_type)
-        let (message_type, app_id, ctx_id) =
-            if let Some(ext_header) = &self.dlt_message.extended_header {
+        let (message_type, app_id, ctx_id) = self.dlt_message.extended_header.as_ref().map_or_else(
+            || ("Unknown".to_string(), "", ""),
+            |ext_header| {
                 (
                     format!("{:?}", ext_header.message_type),
                     ext_header.application_id.as_str(),
                     ext_header.context_id.as_str(),
                 )
-            } else {
-                ("Unknown".to_string(), "", "")
-            };
+            },
+        );
 
         // Extract storage time and ECU
-        let (storage_ecu, storage_time) =
-            if let Some(storage_header) = &self.dlt_message.storage_header {
+        let (storage_ecu, storage_time) = &self.dlt_message.storage_header.as_ref().map_or(
+            ("", self.timestamp),
+            |storage_header| {
                 use chrono::TimeZone;
                 let secs = i64::from(storage_header.timestamp.seconds);
                 let nsecs = storage_header.timestamp.microseconds * 1000;
@@ -349,9 +350,8 @@ impl DltLogLine {
                     .single()
                     .unwrap_or(self.timestamp);
                 (storage_header.ecu_id.as_str(), ts)
-            } else {
-                ("", self.timestamp)
-            };
+            },
+        );
 
         // Extract payload
         let payload = match &self.dlt_message.payload {
@@ -371,7 +371,9 @@ impl DltLogLine {
                         dlt_core::dlt::Value::F32(v) => Some(format!("{v}")),
                         dlt_core::dlt::Value::F64(v) => Some(format!("{v}")),
                         dlt_core::dlt::Value::Bool(v) => Some(format!("{v}")),
-                        _ => None,
+                        dlt_core::dlt::Value::U128(_)
+                        | dlt_core::dlt::Value::I128(_)
+                        | dlt_core::dlt::Value::Raw(_) => None,
                     })
                     .collect();
                 formatted_args.join(" || ")
@@ -393,18 +395,18 @@ impl DltLogLine {
             )
         } else {
             // StorageTime mode: show monotonic timestamp (header timestamp)
-            if let Some(header_ts) = self.dlt_message.header.timestamp {
-                let monotonic_micros = i64::from(header_ts) * 100; // header timestamp in 0.1ms units
-                let monotonic_secs = monotonic_micros as f64 / 1_000_000.0;
-                format!(
-                    "[{monotonic_secs:.3}s {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}"
-                )
-            } else {
-                // Fallback if no header timestamp
+            self.dlt_message.header.timestamp.map_or_else(
+                || // Fallback if no header timestamp
                 format!(
                     "[{storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}"
-                )
-            }
+                ),
+                |header_ts| {
+                    let monotonic_micros = i64::from(header_ts) * 100; // header timestamp in 0.1ms units
+                    let monotonic_secs = monotonic_micros as f64 / 1_000_000.0;
+                    format!(
+                        "[{monotonic_secs:.3}s {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}"
+                    )
+                })
         }
     }
 }

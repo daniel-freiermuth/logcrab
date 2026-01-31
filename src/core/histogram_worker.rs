@@ -290,10 +290,10 @@ impl HistogramWorker {
                 buckets[bucket_idx] += 1;
 
                 // Use anomaly_score from the line
-                let score = line.anomaly_score() / 100.0;
+                let line_score = line.anomaly_score() / 100.0;
                 // Determine which score bucket this falls into
                 let score_bucket =
-                    ((score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);
+                    ((line_score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);
                 anomaly_distributions[bucket_idx].buckets[score_bucket] += 1;
             }
         }
