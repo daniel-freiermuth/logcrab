@@ -103,13 +103,14 @@ impl LogFileLoader {
         );
 
         // Get file size for progress tracking
-        let metadata = std::fs::metadata(&path);
-        if let Err(e) = metadata {
-            log::error!("Cannot read file metadata: {e}");
-            toast.set_error(format!("Cannot read file: {e}"));
-            return;
-        }
-        let file_size = metadata.unwrap().len();
+        let file_size = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata.len(),
+            Err(e) => {
+                log::error!("Cannot read file metadata: {e}");
+                toast.set_error(format!("Cannot read file: {e}"));
+                return;
+            }
+        };
         log::info!("File size: {file_size} bytes");
 
         // Check if this is a DLT binary file by extension
@@ -173,15 +174,16 @@ impl LogFileLoader {
 
     /// Read file content and handle errors
     fn read_file_content(path: &Path, toast: &ProgressToastHandle) -> Option<String> {
-        let file = File::open(path);
-        if let Err(e) = file {
-            log::error!("Cannot open file: {e}");
-            toast.set_error(format!("Cannot open file: {e}"));
-            return None;
-        }
+        let mut file = match File::open(path) {
+            Ok(f) => f,
+            Err(e) => {
+                log::error!("Cannot open file: {e}");
+                toast.set_error(format!("Cannot open file: {e}"));
+                return None;
+            }
+        };
 
         let read_start = std::time::Instant::now();
-        let mut file = file.unwrap();
         let mut buffer = Vec::new();
         if let Err(e) = file.read_to_end(&mut buffer) {
             log::error!("Cannot read file content: {e}");

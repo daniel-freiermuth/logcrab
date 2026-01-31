@@ -5,20 +5,22 @@ use std::sync::LazyLock;
 
 // Keywords that indicate potential issues (case-insensitive)
 static ERROR_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(error|err|exception|fatal|critical|crash|panic|abort)\b").unwrap()
+    Regex::new(r"(?i)\b(error|err|exception|fatal|critical|crash|panic|abort)\b")
+        .expect("valid regex literal")
 });
 
-static WARNING_KEYWORDS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b(warn|warning|caution|alert)\b").unwrap());
+static WARNING_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(warn|warning|caution|alert)\b").expect("valid regex literal")
+});
 
 static FAILURE_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(fail|failed|failure|unsuccessful|denied|rejected|time(?:d|s|out)? out|timing out)\b")
-        .unwrap()
+        .expect("valid regex literal")
 });
 
 static ISSUE_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(issue|problem|unable|cannot|can't|couldn't|invalid|illegal|unexpected)\b")
-        .unwrap()
+        .expect("valid regex literal")
 });
 
 /// Keyword-based scorer - detects important keywords in messages

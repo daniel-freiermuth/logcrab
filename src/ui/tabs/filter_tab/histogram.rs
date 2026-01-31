@@ -234,7 +234,7 @@ impl Histogram {
         end_time: chrono::DateTime<chrono::Local>,
     ) -> Option<f32> {
         let selected_line_index = selected_line_index?;
-        let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp();
+        let sel_ts = store.get_by_id(&selected_line_index)?.timestamp();
         let total_duration = (end_time.timestamp() - start_time.timestamp()) as f64;
 
         if total_duration <= 0.0 {
@@ -404,7 +404,10 @@ impl Histogram {
 
         for marker in markers {
             for line_idx in &marker.indices {
-                let ts = store.get_by_id(line_idx).unwrap().timestamp();
+                let Some(line) = store.get_by_id(line_idx) else {
+                    continue;
+                };
+                let ts = line.timestamp();
                 let elapsed = ts - start_time;
 
                 let x = rect.min.x
@@ -443,7 +446,10 @@ impl Histogram {
 
         for marker in markers {
             for line_idx in &marker.indices {
-                let ts = store.get_by_id(line_idx).unwrap().timestamp();
+                let Some(line) = store.get_by_id(line_idx) else {
+                    continue;
+                };
+                let ts = line.timestamp();
                 let elapsed = ts - start_time;
                 let x = rect.min.x
                     + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * f64::from(total_width))
@@ -516,7 +522,7 @@ impl Histogram {
             + chrono::Duration::from_std(Duration::from_secs_f64(
                 total_time.as_secs_f64() * click_fraction,
             ))
-            .unwrap();
+            .expect("histogram click time within representable range");
 
         // Binary search to find the closest line by timestamp
         // Since filtered_indices are sorted by timestamp, we can use binary search
@@ -593,12 +599,14 @@ impl Histogram {
                 end_time.format("%H:%M:%S")
             ));
             if let Some(selected_line_index) = selected_line_index {
-                let sel_ts = store.get_by_id(&selected_line_index).unwrap().timestamp();
-                ui.separator();
-                ui.colored_label(
-                    selected_color,
-                    format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
-                );
+                if let Some(line) = store.get_by_id(&selected_line_index) {
+                    let sel_ts = line.timestamp();
+                    ui.separator();
+                    ui.colored_label(
+                        selected_color,
+                        format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
+                    );
+                }
             }
         });
     }

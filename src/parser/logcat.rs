@@ -4,13 +4,15 @@ use fancy_regex::Regex;
 use std::sync::LazyLock;
 
 // Just extract timestamp - everything after it is the message
-static LOGCAT_TIMESTAMP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(.*)$").unwrap());
+static LOGCAT_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(.*)$").expect("valid regex literal")
+});
 
 // Pattern to detect bugreport dumpstate header with year
 // Matches: == dumpstate: 2025-11-27 14:08:01 ==
 static DUMPSTATE_HEADER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"==\s*dumpstate:\s*(\d{4})-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}").unwrap()
+    Regex::new(r"==\s*dumpstate:\s*(\d{4})-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
+        .expect("valid regex literal")
 });
 
 /// Check if a line looks like a logcat line (starts with MM-DD HH:MM:SS.mmm)
@@ -65,7 +67,7 @@ mod tests {
     fn test_threadtime_format() {
         let raw = "11-20 14:23:45.123  1234  5678 I ActivityManager: Start proc com.example.app"
             .to_string();
-        let line = parse_logcat_with_year(raw, 1, 2024).unwrap();
+        let line = parse_logcat_with_year(raw, 1, 2024).expect("should parse logcat line");
         // Message is everything after the timestamp
         assert_eq!(
             line.message(),
@@ -78,7 +80,7 @@ mod tests {
         let raw =
             "01-01 00:00:07.329  root     8     8 I CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf"
                 .to_string();
-        let line = parse_logcat_with_year(raw, 1, 2024).unwrap();
+        let line = parse_logcat_with_year(raw, 1, 2024).expect("should parse logcat line");
         // Message is everything after the timestamp
         assert_eq!(
             line.message(),
@@ -89,7 +91,7 @@ mod tests {
     #[test]
     fn test_fallback_format() {
         let raw = "11-20 14:23:45.123 Some message without tag".to_string();
-        let line = parse_logcat_with_year(raw, 1, 2024).unwrap();
+        let line = parse_logcat_with_year(raw, 1, 2024).expect("should parse logcat line");
         assert_eq!(line.message(), "Some message without tag");
     }
 
@@ -106,7 +108,7 @@ mod tests {
     #[test]
     fn test_parse_with_detected_year() {
         let raw = "11-20 14:23:45.123 Test message".to_string();
-        let line = parse_logcat_with_year(raw, 1, 2023).unwrap();
+        let line = parse_logcat_with_year(raw, 1, 2023).expect("should parse logcat line");
         assert!(line.timestamp().year() == 2023);
     }
 

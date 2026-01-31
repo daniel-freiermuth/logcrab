@@ -9,15 +9,19 @@ use fancy_regex::Regex;
 use std::sync::LazyLock;
 
 // Normalization patterns
-static NUMBER_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\d+\b").unwrap());
-static HEX_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b0x[0-9a-fA-F]+\b|[0-9a-fA-F]{8,}").unwrap());
+static NUMBER_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\d+\b").expect("valid regex literal"));
+static HEX_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b0x[0-9a-fA-F]+\b|[0-9a-fA-F]{8,}").expect("valid regex literal")
+});
 static UUID_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
-        .unwrap()
+        .expect("valid regex literal")
 });
-static URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://[^\s]+").unwrap());
-static WHITESPACE_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+static URL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"https?://[^\s]+").expect("valid regex literal"));
+static WHITESPACE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s+").expect("valid regex literal"));
 
 /// Detected log format for a file
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

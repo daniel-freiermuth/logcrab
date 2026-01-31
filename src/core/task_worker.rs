@@ -103,7 +103,7 @@ where
             drain(&mut pending, &request_rx);
 
             while let Some(key) = pending.keys().next().cloned() {
-                let task = pending.remove(&key).unwrap();
+                let task = pending.remove(&key).expect("key exists from keys().next()");
                 task();
                 drain(&mut pending, &request_rx);
             }

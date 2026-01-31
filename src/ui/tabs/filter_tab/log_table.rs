@@ -432,7 +432,9 @@ impl LogTable {
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
         let line_idx = filtered_indices[row_index];
-        let line = store.get_by_id(&line_idx).unwrap();
+        let line = store
+            .get_by_id(&line_idx)
+            .expect("filtered index must exist in store");
 
         let is_selected = selected_line_index.as_ref() == Some(&line_idx);
         let is_bookmarked = bookmarked_lines.contains_key(&line_idx);

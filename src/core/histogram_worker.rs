@@ -169,9 +169,10 @@ impl HistogramWorker {
             // Collect any additional pending requests
             drain_pending(&mut pending_requests);
 
-            while !pending_requests.is_empty() {
-                let first_key = *pending_requests.keys().next().unwrap();
-                let request = pending_requests.remove(&first_key).unwrap();
+            while let Some(&first_key) = pending_requests.keys().next() {
+                let request = pending_requests
+                    .remove(&first_key)
+                    .expect("key exists from keys().next()");
                 let filter_id = request.filter_id;
 
                 profiling::scope!("process_single_histogram");

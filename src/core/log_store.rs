@@ -88,31 +88,49 @@ impl SourceData {
     fn set_bookmark(&self, line_index: usize, name: String) {
         profiling::scope!("SourceData::bookmarks::write");
         let bookmark = Bookmark { line_index, name };
-        self.bookmarks.write().unwrap().insert(line_index, bookmark);
+        self.bookmarks
+            .write()
+            .expect("bookmarks lock poisoned")
+            .insert(line_index, bookmark);
     }
 
     /// Remove a bookmark from this source
     fn remove_bookmark(&self, line_index: usize) -> Option<Bookmark> {
         profiling::scope!("SourceData::bookmarks::write");
-        self.bookmarks.write().unwrap().remove(&line_index)
+        self.bookmarks
+            .write()
+            .expect("bookmarks lock poisoned")
+            .remove(&line_index)
     }
 
     /// Check if a line has a bookmark
     fn has_bookmark(&self, line_index: usize) -> bool {
         profiling::scope!("SourceData::bookmarks::read");
-        self.bookmarks.read().unwrap().contains_key(&line_index)
+        self.bookmarks
+            .read()
+            .expect("bookmarks lock poisoned")
+            .contains_key(&line_index)
     }
 
     /// Get a bookmark by line index
     fn get_bookmark(&self, line_index: usize) -> Option<Bookmark> {
         profiling::scope!("SourceData::bookmarks::read");
-        self.bookmarks.read().unwrap().get(&line_index).cloned()
+        self.bookmarks
+            .read()
+            .expect("bookmarks lock poisoned")
+            .get(&line_index)
+            .cloned()
     }
 
     /// Get all bookmarks for this source
     fn get_bookmarks(&self) -> Vec<Bookmark> {
         profiling::scope!("SourceData::bookmarks::read");
-        self.bookmarks.read().unwrap().values().cloned().collect()
+        self.bookmarks
+            .read()
+            .expect("bookmarks lock poisoned")
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Load bookmarks from this source's .crab file
@@ -129,7 +147,7 @@ impl SourceData {
                     crab_path.display()
                 );
                 profiling::scope!("SourceData::bookmarks::write");
-                let mut bookmarks = self.bookmarks.write().unwrap();
+                let mut bookmarks = self.bookmarks.write().expect("bookmarks lock poisoned");
                 for bookmark in crab_data.bookmarks {
                     bookmarks.insert(bookmark.line_index, bookmark);
                 }
@@ -186,20 +204,26 @@ impl SourceData {
         profiling::scope!("SourceData::append_lines");
         let new_start_idx = {
             profiling::scope!("SourceData::lines::read");
-            self.lines.read().unwrap().len()
+            self.lines.read().expect("lines lock poisoned").len()
         };
         {
             profiling::scope!("SourceData::lines::write");
-            self.lines.write().unwrap().extend(lines);
+            self.lines
+                .write()
+                .expect("lines lock poisoned")
+                .extend(lines);
         }
 
         let lines = {
             profiling::scope!("SourceData::lines::read");
-            self.lines.read().unwrap()
+            self.lines.read().expect("lines lock poisoned")
         };
         let existing_by_ts = {
             profiling::scope!("SourceData::by_timestamp::read");
-            self.by_timestamp.read().unwrap().clone()
+            self.by_timestamp
+                .read()
+                .expect("by_timestamp lock poisoned")
+                .clone()
         };
 
         // Build timestamp index for new lines, sorted by timestamp
@@ -235,7 +259,10 @@ impl SourceData {
 
         {
             profiling::scope!("SourceData::by_timestamp::write");
-            *self.by_timestamp.write().unwrap() = merged_by_ts;
+            *self
+                .by_timestamp
+                .write()
+                .expect("by_timestamp lock poisoned") = merged_by_ts;
         }
         self.bump_version();
     }
@@ -245,7 +272,7 @@ impl SourceData {
     pub fn set_scores(&self, scores: &[f64]) {
         profiling::scope!("SourceData::set_scores");
         profiling::scope!("SourceData::lines::write");
-        let mut guard = self.lines.write().unwrap();
+        let mut guard = self.lines.write().expect("lines lock poisoned");
         for (idx, &score) in scores.iter().enumerate() {
             if let Some(line) = guard.get_mut(idx) {
                 line.set_anomaly_score(score);
@@ -258,25 +285,25 @@ impl SourceData {
     /// Get the number of lines
     pub fn len(&self) -> usize {
         profiling::scope!("SourceData::lines::read");
-        self.lines.read().unwrap().len()
+        self.lines.read().expect("lines lock poisoned").len()
     }
 
     /// Check if this source has no lines
     pub fn is_empty(&self) -> bool {
         profiling::scope!("SourceData::lines::read");
-        self.lines.read().unwrap().is_empty()
+        self.lines.read().expect("lines lock poisoned").is_empty()
     }
 
     /// Get a clone of all lines for iteration
     /// This clones the entire Vec - use sparingly (e.g., one-time scoring)
     pub fn clone_lines(&self) -> Vec<LogLine> {
         profiling::scope!("SourceData::clone_lines");
-        self.lines.read().unwrap().clone()
+        self.lines.read().expect("lines lock poisoned").clone()
     }
 
     pub fn get_by_id(&self, id: usize) -> Option<LogLine> {
         profiling::scope!("SourceData::lines::read");
-        let guard = self.lines.read().unwrap();
+        let guard = self.lines.read().expect("lines lock poisoned");
         guard.get(id).cloned()
     }
 
@@ -296,7 +323,7 @@ impl SourceData {
 
         // Get the reference line and extract timing info
         let reference_line = {
-            let guard = self.lines.read().unwrap();
+            let guard = self.lines.read().expect("lines lock poisoned");
             guard
                 .get(reference_line_index)
                 .cloned()
@@ -331,7 +358,7 @@ impl SourceData {
         // Update all DLT entries in this file matching the ECU and App
         {
             profiling::scope!("SourceData::lines::write");
-            let mut guard = self.lines.write().unwrap();
+            let mut guard = self.lines.write().expect("lines lock poisoned");
             for line in guard.iter_mut() {
                 if let LogLineVariant::Dlt(dlt_line) = line {
                     // Check if this line matches the target ECU and App
@@ -372,11 +399,15 @@ impl SourceData {
         }
 
         // Rebuild timestamp-sorted index
-        let mut indices: Vec<usize> = (0..self.lines.read().unwrap().len()).collect();
-        let lines = self.lines.read().unwrap();
+        let mut indices: Vec<usize> =
+            (0..self.lines.read().expect("lines lock poisoned").len()).collect();
+        let lines = self.lines.read().expect("lines lock poisoned");
         indices.par_sort_by_key(|&idx| lines[idx].timestamp());
         drop(lines);
-        *self.by_timestamp.write().unwrap() = indices;
+        *self
+            .by_timestamp
+            .write()
+            .expect("by_timestamp lock poisoned") = indices;
 
         self.bump_version();
 
@@ -416,7 +447,7 @@ impl Clone for LogStore {
     fn clone(&self) -> Self {
         profiling::scope!("LogStore::sources::read");
         Self {
-            sources: RwLock::new(self.sources.read().unwrap().clone()),
+            sources: RwLock::new(self.sources.read().expect("sources lock poisoned").clone()),
         }
     }
 }
@@ -464,14 +495,17 @@ impl LogStore {
     /// Add a source to the store, returns the `SourceData` for appending lines
     pub fn add_source(self: &Arc<Self>, source_data: &Arc<SourceData>) {
         profiling::scope!("LogStore::sources::write");
-        self.sources.write().unwrap().push(Arc::clone(source_data));
+        self.sources
+            .write()
+            .expect("sources lock poisoned")
+            .push(Arc::clone(source_data));
     }
 
     /// Check if a file with the given path is already loaded in the store
     pub fn contains_file(&self, path: &Path) -> bool {
         profiling::scope!("LogStore::sources::read");
         let canonical_path = path.canonicalize().ok();
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         sources.iter().any(|source| {
             source.file_path.as_ref().is_some_and(|source_path| {
                 // Try canonical comparison first, fall back to direct comparison
@@ -491,7 +525,7 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         self.sources
             .read()
-            .unwrap()
+            .expect("sources lock poisoned")
             .iter()
             .map(|s| s.version())
             .sum()
@@ -500,13 +534,18 @@ impl LogStore {
     /// Get total number of lines across all sources
     pub fn total_lines(&self) -> usize {
         profiling::scope!("LogStore::sources::read");
-        self.sources.read().unwrap().iter().map(|s| s.len()).sum()
+        self.sources
+            .read()
+            .expect("sources lock poisoned")
+            .iter()
+            .map(|s| s.len())
+            .sum()
     }
 
     /// Get the source name (filename) for a given `StoreID`
     pub fn get_source_name(&self, id: &StoreID) -> Option<String> {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         sources.get(id.source_index).and_then(|source| {
             source.file_path.as_ref().and_then(|p| {
                 p.file_name()
@@ -522,7 +561,7 @@ impl LogStore {
     /// Add or update a bookmark
     pub fn set_bookmark(&self, id: &StoreID, name: String) {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         if let Some(source) = sources.get(id.source_index) {
             source.set_bookmark(id.line_index, name);
         }
@@ -531,7 +570,7 @@ impl LogStore {
     /// Remove a bookmark
     pub fn remove_bookmark(&self, id: &StoreID) -> Option<Bookmark> {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         sources
             .get(id.source_index)
             .and_then(|s| s.remove_bookmark(id.line_index))
@@ -539,7 +578,7 @@ impl LogStore {
 
     /// Resynchronize DLT timestamps to a custom target time (per file, per ECU, per App)
     #[allow(clippy::significant_drop_tightening)] // sources can't be dropped
-    // early since source is a reference into it
+                                                  // early since source is a reference into it
     pub fn resync_dlt_time_to_target(
         &self,
         id: &StoreID,
@@ -548,7 +587,7 @@ impl LogStore {
         app_id: Option<&String>,
     ) -> Result<(), String> {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         let source = sources
             .get(id.source_index)
             .ok_or_else(|| "Source not found".to_string())?;
@@ -558,7 +597,7 @@ impl LogStore {
     /// Check if a line has a bookmark
     pub fn has_bookmark(&self, id: &StoreID) -> bool {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         sources
             .get(id.source_index)
             .is_some_and(|s| s.has_bookmark(id.line_index))
@@ -567,7 +606,7 @@ impl LogStore {
     /// Get a bookmark by `StoreID`
     pub fn get_bookmark(&self, id: &StoreID) -> Option<BookmarkData> {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         sources
             .get(id.source_index)
             .and_then(|s| s.get_bookmark(id.line_index))
@@ -581,7 +620,7 @@ impl LogStore {
     pub fn get_all_bookmarks(&self) -> Vec<BookmarkData> {
         profiling::scope!("LogStore::get_all_bookmarks");
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         sources
             .iter()
             .enumerate()
@@ -604,7 +643,7 @@ impl LogStore {
     pub fn save_all_crab_files(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
         profiling::scope!("LogStore::save_all_crab_files");
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         for source in sources.iter() {
             source.save_crab_file(filters, highlights);
         }
@@ -624,7 +663,7 @@ impl LogStore {
     {
         profiling::scope!("LogStore::get_matching_ids");
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
 
         // Parallel filter each source, collect results
         let per_source: Vec<Vec<StoreID>> = {
@@ -633,12 +672,12 @@ impl LogStore {
                 .par_iter()
                 .enumerate()
                 .map(|(s_idx, source)| {
-                    let lines = source.lines.read().unwrap();
+                    let lines = source.lines.read().expect("lines lock poisoned");
                     // Iterate in timestamp order, filter, collect
                     source
                         .by_timestamp
                         .read()
-                        .unwrap()
+                        .expect("by_timestamp lock poisoned")
                         .par_iter()
                         .filter_map(|&idx| {
                             let line = &lines[idx];
@@ -702,7 +741,7 @@ impl LogStore {
 
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().unwrap();
+        let sources = self.sources.read().expect("sources lock poisoned");
         sources.get(id.source_index)?.get_by_id(id.line_index)
     }
 }

@@ -225,7 +225,10 @@ impl ToastManager {
     fn render_progress_toasts(&self, ctx: &egui::Context) {
         // Clean up dismissed handles and collect active ones
         let active_states: Vec<(usize, ProgressToastState, Arc<RwLock<ProgressToastState>>)> = {
-            let mut handles = self.progress_handles.lock().unwrap();
+            let mut handles = self
+                .progress_handles
+                .lock()
+                .expect("progress_handles lock poisoned");
             // Remove toasts that have been dismissed long enough
             handles.retain(|state| state.read().map(|s| !s.should_remove()).unwrap_or(false));
             handles
@@ -277,7 +280,7 @@ impl ToastManager {
                                     .checked_sub(std::time::Duration::from_secs_f32(
                                         DISMISSED_TOAST_LINGER_SECS + 1.0,
                                     ))
-                                    .unwrap(),
+                                    .expect("instant subtraction within valid range"),
                             );
                         }
                     }

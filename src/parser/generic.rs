@@ -6,25 +6,29 @@ use std::sync::LazyLock;
 // ISO 8601: 2025-11-20T14:23:45.123Z or 2025-11-20 14:23:45.123
 static ISO_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)")
-        .unwrap()
+        .expect("valid regex literal")
 });
 
 // Alternative date format with hyphens: 2025-11-26-09:58:05
-static HYPHENATED_TIMESTAMP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2}(?:\.\d{3})?)").unwrap());
+static HYPHENATED_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2}(?:\.\d{3})?)").expect("valid regex literal")
+});
 
 // Common syslog: Nov 20 14:23:45
-static SYSLOG_TIMESTAMP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})").unwrap());
+static SYSLOG_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})").expect("valid regex literal")
+});
 
 // Timestamp with milliseconds: [2025-11-20 14:23:45.123]
 static BRACKETED_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]").unwrap()
+    Regex::new(r"^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]")
+        .expect("valid regex literal")
 });
 
 // Logcat format: MM-DD HH:MM:SS.mmm
-static LOGCAT_TIMESTAMP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})").unwrap());
+static LOGCAT_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})").expect("valid regex literal")
+});
 
 pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
     let mut timestamp = None;
@@ -116,16 +120,17 @@ mod tests {
     fn test_iso_timestamp() {
         let raw = "2025-11-20T14:23:45.123Z ERROR Connection failed".to_string();
         let line = parse_generic(raw, 1);
-        assert_eq!(line.unwrap().message(), "ERROR Connection failed");
+        assert_eq!(
+            line.expect("should parse ISO timestamp").message(),
+            "ERROR Connection failed"
+        );
     }
 
     #[test]
     fn test_hyphenated_timestamp() {
         let raw = "2025-11-26-09:58:05 , [402.037] ,cnss: fatal: SMMU fault happened with IOVA 0x0"
             .to_string();
-        let line = parse_generic(raw, 1);
-        assert!(line.is_some());
-        let line = line.unwrap();
+        let line = parse_generic(raw, 1).expect("should parse hyphenated timestamp");
         assert_eq!(
             line.message(),
             ", [402.037] ,cnss: fatal: SMMU fault happened with IOVA 0x0"
@@ -140,19 +145,18 @@ mod tests {
     fn test_syslog_format() {
         let raw = "Nov 20 14:23:45 INFO Application started".to_string();
         let line = parse_generic(raw, 1);
-        assert_eq!(line.unwrap().message(), "INFO Application started");
+        assert_eq!(
+            line.expect("should parse syslog format").message(),
+            "INFO Application started"
+        );
     }
 
     #[test]
     fn test_iso_timestamp_with_space_and_milliseconds() {
         // ISO 8601 with space separator and milliseconds (no timezone)
         let raw = "2025-11-20 14:23:45.123 ERROR Connection failed".to_string();
-        let line = parse_generic(raw, 1);
-        assert!(
-            line.is_some(),
-            "Should parse ISO timestamp with space and milliseconds"
-        );
-        let line = line.unwrap();
+        let line =
+            parse_generic(raw, 1).expect("Should parse ISO timestamp with space and milliseconds");
         assert_eq!(line.message(), "ERROR Connection failed");
         assert_eq!(
             line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
@@ -164,12 +168,8 @@ mod tests {
     fn test_iso_timestamp_with_space_no_milliseconds() {
         // ISO 8601 with space separator, no milliseconds
         let raw = "2025-11-20 14:23:45 WARN Timeout occurred".to_string();
-        let line = parse_generic(raw, 1);
-        assert!(
-            line.is_some(),
-            "Should parse ISO timestamp with space, no milliseconds"
-        );
-        let line = line.unwrap();
+        let line =
+            parse_generic(raw, 1).expect("Should parse ISO timestamp with space, no milliseconds");
         assert_eq!(line.message(), "WARN Timeout occurred");
         assert_eq!(
             line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -180,12 +180,8 @@ mod tests {
     #[test]
     fn test_bracketed_timestamp_with_milliseconds() {
         let raw = "[2025-11-20 14:23:45.123] DEBUG Processing request".to_string();
-        let line = parse_generic(raw, 1);
-        assert!(
-            line.is_some(),
-            "Should parse bracketed timestamp with milliseconds"
-        );
-        let line = line.unwrap();
+        let line =
+            parse_generic(raw, 1).expect("Should parse bracketed timestamp with milliseconds");
         assert_eq!(line.message(), "DEBUG Processing request");
         assert_eq!(
             line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
@@ -196,12 +192,8 @@ mod tests {
     #[test]
     fn test_bracketed_timestamp_without_milliseconds() {
         let raw = "[2025-11-20 14:23:45] INFO Service started".to_string();
-        let line = parse_generic(raw, 1);
-        assert!(
-            line.is_some(),
-            "Should parse bracketed timestamp without milliseconds"
-        );
-        let line = line.unwrap();
+        let line =
+            parse_generic(raw, 1).expect("Should parse bracketed timestamp without milliseconds");
         assert_eq!(line.message(), "INFO Service started");
         assert_eq!(
             line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -213,9 +205,7 @@ mod tests {
     fn test_logcat_timestamp_format() {
         // Logcat format: MM-DD HH:MM:SS.mmm (no year)
         let raw = "11-20 14:23:45.123 E/ActivityManager: Process crashed".to_string();
-        let line = parse_generic(raw, 1);
-        assert!(line.is_some(), "Should parse logcat timestamp format");
-        let line = line.unwrap();
+        let line = parse_generic(raw, 1).expect("Should parse logcat timestamp format");
         assert_eq!(line.message(), "E/ActivityManager: Process crashed");
         // Year is assumed to be current year
         let current_year = Local::now().year();
@@ -229,11 +219,7 @@ mod tests {
     fn test_iso_timestamp_with_timezone_offset() {
         // ISO 8601 with timezone offset
         let raw = "2025-11-20T14:23:45+05:30 INFO Server running".to_string();
-        let line = parse_generic(raw, 1);
-        assert!(
-            line.is_some(),
-            "Should parse ISO timestamp with timezone offset"
-        );
-        assert_eq!(line.unwrap().message(), "INFO Server running");
+        let line = parse_generic(raw, 1).expect("Should parse ISO timestamp with timezone offset");
+        assert_eq!(line.message(), "INFO Server running");
     }
 }
