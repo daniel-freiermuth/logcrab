@@ -42,20 +42,24 @@ codegen-units = 1
 strip = true
 
 [lints.clippy]
-# all = "warn"                     # Enable all clippy lints
-# pedantic = "warn"                # Extra pedantic checks
-# nursery = "warn"                 # Experimental lints
-# cargo = "warn"                   # Cargo-specific lints
-# indexing_slicing = "deny"
+all = { level = "warn", priority = -1 }                     # Enable all clippy lints
+pedantic = { level = "warn", priority = -1 }                # Extra pedantic checks
+nursery = { level = "warn", priority = -1 }                 # Experimental lints
+cargo = { level = "warn", priority = -1 }                   # Cargo-specific lints
+indexing_slicing = "allow"
 fallible_impl_from = "deny"
-# wildcard_enum_match_arm = "deny"
+wildcard_enum_match_arm = "deny"
 unneeded_field_pattern = "deny"
 fn_params_excessive_bools = "deny"
 must_use_candidate = "deny"
+match_same_arms = "allow"
 unused_self = "deny"
 redundant_closure_for_method_calls = "deny"
 doc_markdown = "warn"
 map_unwrap_or = "warn"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
 too_many_lines = "allow"
 assigning_clones = "deny"
 if_not_else = "deny"
@@ -71,7 +75,7 @@ option_if_let_else = "deny"
 missing_const_for_fn = "deny"
 
 # Deny critical issues
-# unwrap_used = "deny"             # Force proper error handling
+unwrap_used = "deny"             # Force proper error handling
 # expect_used = "deny"             # No expect() in production code
 panic = "deny"                   # No panics in core
 todo = "deny"                    # No TODOs in releases
