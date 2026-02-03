@@ -131,7 +131,7 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                     let app_id = msg
                         .extended_header
                         .as_ref()
-                        .map(|ext| ext.application_id.to_string());
+                        .map(|ext| ext.application_id.clone());
 
                     if let (Some(ecu), Some(app)) = (ecu_id, app_id) {
                         let key = (ecu.clone(), app.clone());

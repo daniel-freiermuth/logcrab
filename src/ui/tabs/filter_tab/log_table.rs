@@ -185,7 +185,7 @@ impl LogTable {
                                 .dlt_message
                                 .extended_header
                                 .as_ref()
-                                .map(|ext| ext.application_id.to_string());
+                                .map(|ext| ext.application_id.clone());
 
                             events.push(LogTableEvent::SyncDltTime {
                                 line_index: line_idx,
