@@ -300,10 +300,7 @@ impl LogTable {
         let body_height = available_height - header_height - 1.0;
 
         // Calculate minimum message column width to fill remaining space
-        let other_cols_width = column_widths.source
-            + column_widths.line
-            + column_widths.timestamp
-            + column_widths.score;
+        let other_cols_width = column_widths.source + column_widths.line + column_widths.timestamp;
         let remainder = (available_width - other_cols_width).max(Self::MIN_MESSAGE_WIDTH);
 
         let mut table = TableBuilder::new(ui)
