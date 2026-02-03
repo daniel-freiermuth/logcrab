@@ -56,6 +56,9 @@ pub struct HistogramRequest {
     pub filtered_indices: Vec<StoreID>,
     /// Whether to hide January 1st timestamps (epoch)
     pub hide_epoch: bool,
+    /// Optional zoom range - if Some, compute buckets only for this range
+    /// If None, compute for full data range
+    pub zoom_range: Option<(DateTime<Local>, DateTime<Local>)>,
     /// Channel to send result back
     pub result_tx: Sender<HistogramResult>,
 }
@@ -67,6 +70,9 @@ pub struct HistogramCacheKey {
     pub hide_epoch: bool,
     pub search_str: String,
     pub case_sensitive: bool,
+    /// Zoom range in milliseconds (for cache invalidation)
+    /// None means full range
+    pub zoom_range_ms: Option<(i64, i64)>,
 }
 
 /// Result from background histogram computation
@@ -79,11 +85,12 @@ pub struct HistogramResult {
 
 #[derive(Clone)]
 pub struct HistogramData {
-    /// Time range of the histogram
+    /// Time range of the histogram (may be zoomed subset)
     pub start_time: DateTime<Local>,
     pub end_time: DateTime<Local>,
-    /// Bucket size in seconds
-    pub bucket_size: Duration,
+    /// Full data time range (for zoom reset)
+    pub full_start: DateTime<Local>,
+    pub full_end: DateTime<Local>,
     /// Count per time bucket
     pub buckets: Vec<usize>,
     /// Anomaly score distribution per bucket
@@ -221,31 +228,64 @@ impl HistogramWorker {
             filtered_indices.clone()
         };
 
-        if let Some((start_time, end_time)) = Self::calculate_time_range(store, &effective_indices)
-        {
-            let time_span = end_time - start_time;
-            let bucket_size =
-                Duration::from_secs_f64(time_span.as_seconds_f64() / NUM_BUCKETS as f64);
+        // Calculate full data range first
+        let full_range = Self::calculate_time_range(store, &effective_indices);
 
-            let (buckets, anomaly_buckets) =
-                Self::create_buckets(store, &effective_indices, start_time, bucket_size);
-
-            HistogramResult {
-                cache_key: request.key.clone(),
-                data: Some(HistogramData {
-                    start_time,
-                    end_time,
-                    bucket_size,
-                    buckets,
-                    anomaly_buckets,
-                    effective_indices,
-                }),
-            }
-        } else {
-            HistogramResult {
+        let Some((full_start, full_end)) = full_range else {
+            return HistogramResult {
                 cache_key: request.key.clone(),
                 data: None,
-            }
+            };
+        };
+
+        // Use zoom range if provided, otherwise use full range
+        let (start_time, end_time) = request.zoom_range.unwrap_or((full_start, full_end));
+
+        // Clamp zoom range to actual data bounds
+        let start_time = start_time.max(full_start);
+        let end_time = end_time.min(full_end);
+
+        if start_time >= end_time {
+            return HistogramResult {
+                cache_key: request.key.clone(),
+                data: None,
+            };
+        }
+
+        let time_span = end_time - start_time;
+        let bucket_size = Duration::from_secs_f64(time_span.as_seconds_f64() / NUM_BUCKETS as f64);
+
+        // Filter indices to only those within the zoom range
+        let zoomed_indices: Vec<StoreID> = if request.zoom_range.is_some() {
+            profiling::scope!("Histogram::filter_zoom_range");
+            effective_indices
+                .iter()
+                .filter(|idx| {
+                    store.get_by_id(idx).is_some_and(|line| {
+                        let ts = line.timestamp();
+                        ts >= start_time && ts <= end_time
+                    })
+                })
+                .copied()
+                .collect()
+        } else {
+            effective_indices.clone()
+        };
+
+        let (buckets, anomaly_buckets) =
+            Self::create_buckets(store, &zoomed_indices, start_time, bucket_size);
+
+        HistogramResult {
+            cache_key: request.key.clone(),
+            data: Some(HistogramData {
+                start_time,
+                end_time,
+                full_start,
+                full_end,
+                buckets,
+                anomaly_buckets,
+                effective_indices,
+            }),
         }
     }
 
