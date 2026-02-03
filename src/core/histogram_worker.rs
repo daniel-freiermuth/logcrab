@@ -26,7 +26,7 @@
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
 use crate::parser::line::LogLineCore;
-use chrono::{DateTime, Datelike, Local};
+use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -54,8 +54,6 @@ pub struct HistogramRequest {
     pub store: Arc<LogStore>,
     /// Filtered indices to compute histogram for
     pub filtered_indices: Vec<StoreID>,
-    /// Whether to hide January 1st timestamps (epoch)
-    pub hide_epoch: bool,
     /// Optional zoom range - if Some, compute buckets only for this range
     /// If None, compute for full data range
     pub zoom_range: Option<(DateTime<Local>, DateTime<Local>)>,
@@ -67,7 +65,6 @@ pub struct HistogramRequest {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HistogramCacheKey {
     pub store_version: u64,
-    pub hide_epoch: bool,
     pub search_str: String,
     pub case_sensitive: bool,
     /// Zoom range in milliseconds (for cache invalidation)
@@ -95,8 +92,8 @@ pub struct HistogramData {
     pub buckets: Vec<usize>,
     /// Anomaly score distribution per bucket
     pub anomaly_buckets: Vec<AnomalyDistribution>,
-    /// Filtered indices after epoch removal (if `hide_epoch` is true)
-    pub effective_indices: Vec<StoreID>,
+    /// Filtered indices used for histogram computation
+    pub filtered_indices: Vec<StoreID>,
 }
 
 /// Handle to send histogram requests to the background worker.
@@ -185,12 +182,14 @@ impl HistogramWorker {
                 profiling::scope!("process_single_histogram");
                 log::trace!("Processing histogram request for filter {filter_id}");
 
-                let result = Self::compute_histogram(&request);
+                let result_channel = request.result_tx.clone();
+
+                let result = Self::compute_histogram(request);
 
                 log::trace!("Histogram {filter_id} complete",);
 
                 // Send result back (ignore errors if receiver is gone)
-                let _ = request.result_tx.send(result);
+                let _ = result_channel.send(result);
 
                 // Check one more time if a newer request arrived during processing
                 drain_pending(&mut pending_requests);
@@ -200,36 +199,14 @@ impl HistogramWorker {
     }
 
     /// Compute histogram data
-    fn compute_histogram(request: &HistogramRequest) -> HistogramResult {
+    fn compute_histogram(request: HistogramRequest) -> HistogramResult {
         profiling::scope!("HistogramWorker::compute_histogram");
 
         let store = &request.store;
-        let filtered_indices = &request.filtered_indices;
-        let hide_epoch = request.hide_epoch;
-
-        // Filter out January 1st timestamps if requested
-        let effective_indices: Vec<StoreID> = if hide_epoch {
-            profiling::scope!("Histogram::filter_epoch");
-            filtered_indices
-                .iter()
-                .filter_map(|idx| {
-                    store.get_by_id(idx).and_then(|line| {
-                        let ts = line.timestamp();
-                        // Exclude all timestamps that are January 1st (any year)
-                        if ts.month0() == 0 && ts.day0() == 0 {
-                            None
-                        } else {
-                            Some(*idx)
-                        }
-                    })
-                })
-                .collect()
-        } else {
-            filtered_indices.clone()
-        };
+        let filtered_indices = request.filtered_indices;
 
         // Calculate full data range first
-        let full_range = Self::calculate_time_range(store, &effective_indices);
+        let full_range = Self::calculate_time_range(store, &filtered_indices);
 
         let Some((full_start, full_end)) = full_range else {
             return HistogramResult {
@@ -258,7 +235,7 @@ impl HistogramWorker {
         // Filter indices to only those within the zoom range
         let zoomed_indices: Vec<StoreID> = if request.zoom_range.is_some() {
             profiling::scope!("Histogram::filter_zoom_range");
-            effective_indices
+            filtered_indices
                 .iter()
                 .filter(|idx| {
                     store.get_by_id(idx).is_some_and(|line| {
@@ -269,7 +246,7 @@ impl HistogramWorker {
                 .copied()
                 .collect()
         } else {
-            effective_indices.clone()
+            filtered_indices.clone()
         };
 
         let (buckets, anomaly_buckets) =
@@ -284,7 +261,7 @@ impl HistogramWorker {
                 full_end,
                 buckets,
                 anomaly_buckets,
-                effective_indices,
+                filtered_indices,
             }),
         }
     }

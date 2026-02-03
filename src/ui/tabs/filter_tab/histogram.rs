@@ -111,7 +111,7 @@ pub struct HistogramCache {
     /// Channel to receive computation results
     result_rx: Receiver<HistogramResult>,
     result_tx: mpsc::Sender<HistogramResult>,
-    /// Filtered indices after epoch removal (if `hide_epoch` is true)
+    /// Cached histogram data
     data: Option<HistogramData>,
     /// Zoom state for the timeline
     pub zoom: HistogramZoomState,
@@ -163,7 +163,6 @@ impl HistogramCache {
         worker: &HistogramWorkerHandle,
         store: &Arc<LogStore>,
         filtered_indices: &[StoreID],
-        hide_epoch: bool,
         cache_key: &HistogramCacheKey,
         zoom_range: Option<(DateTime<Local>, DateTime<Local>)>,
     ) {
@@ -171,7 +170,6 @@ impl HistogramCache {
             filter_id: self.filter_id,
             store: Arc::clone(store),
             filtered_indices: filtered_indices.to_vec(),
-            hide_epoch,
             zoom_range,
             result_tx: self.result_tx.clone(),
             key: cache_key.clone(),
@@ -194,7 +192,6 @@ impl Histogram {
         store: &Arc<LogStore>,
         filtered_indices: &[StoreID],
         selected_line_index: Option<StoreID>,
-        hide_epoch: bool,
         markers: &[HistogramMarker],
         filter_state: &mut FilterState,
         worker: &HistogramWorkerHandle,
@@ -223,7 +220,6 @@ impl Histogram {
 
         let cache_key = HistogramCacheKey {
             store_version,
-            hide_epoch,
             search_str,
             case_sensitive: indices_case,
             zoom_range_ms,
@@ -241,7 +237,6 @@ impl Histogram {
                     worker,
                     store,
                     filtered_indices,
-                    hide_epoch,
                     &cache_key,
                     zoom_range,
                 );
@@ -427,7 +422,7 @@ impl Histogram {
             &response,
             rect,
             store,
-            &data.effective_indices,
+            &data.filtered_indices,
             view_start,
             view_bucket_size,
             num_visible_buckets,

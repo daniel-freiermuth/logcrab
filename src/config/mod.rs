@@ -33,7 +33,7 @@ pub enum DltTimestampSource {
 }
 
 /// Global user configuration stored in config directory
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     /// Keyboard shortcuts
     #[serde(default)]
@@ -42,10 +42,6 @@ pub struct GlobalConfig {
     /// Favorite filters that appear in all sessions
     #[serde(default)]
     pub favorite_filters: Vec<FavoriteFilter>,
-
-    /// Hide January 1st timestamps from histogram (default: true)
-    #[serde(default = "default_hide_epoch")]
-    pub hide_epoch_in_histogram: bool,
 
     /// Use bright/light theme instead of dark (default: false)
     #[serde(default)]
@@ -66,25 +62,6 @@ pub struct GlobalConfig {
     /// Show bookmarks as markers in the timeline/histogram (default: false)
     #[serde(default)]
     pub show_bookmarks_in_timeline: bool,
-}
-
-const fn default_hide_epoch() -> bool {
-    true
-}
-
-impl Default for GlobalConfig {
-    fn default() -> Self {
-        Self {
-            shortcuts: HashMap::new(),
-            favorite_filters: Vec::new(),
-            hide_epoch_in_histogram: true,
-            bright_mode: false,
-            last_log_directory: None,
-            last_filters_directory: None,
-            dlt_timestamp_source: DltTimestampSource::default(),
-            show_bookmarks_in_timeline: false,
-        }
-    }
 }
 
 /// A favorite filter that can be quickly added to any log
