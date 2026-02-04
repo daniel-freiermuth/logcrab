@@ -325,7 +325,14 @@ impl BookmarkPanel {
             if editing_bookmark == Some(store_id) {
                 Self::render_name_editor(ui, store_id, bookmark_name_input, events);
             } else {
-                ui.label(RichText::new(&bookmark.name).color(color).strong());
+                let text = if bookmark.name.is_empty() {
+                    RichText::new("Double-click to annotate")
+                        .color(ui.visuals().weak_text_color())
+                        .italics()
+                } else {
+                    RichText::new(&bookmark.name).color(color).strong()
+                };
+                ui.label(text);
                 let response = ui.interact(
                     ui.max_rect(),
                     ui.id().with(store_id).with("bm_name"),
