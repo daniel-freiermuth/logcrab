@@ -319,20 +319,15 @@ impl Histogram {
         selected_line_index: Option<StoreID>,
         start_time: chrono::DateTime<chrono::Local>,
         end_time: chrono::DateTime<chrono::Local>,
-    ) -> Option<f32> {
+    ) -> Option<f64> {
         let selected_line_index = selected_line_index?;
         let sel_ts = store.get_by_id(&selected_line_index)?.timestamp();
-        let total_duration = (end_time.timestamp() - start_time.timestamp()) as f64;
 
-        if total_duration <= 0.0 {
-            return None;
-        }
+        let elapsed = (sel_ts - start_time).as_seconds_f64();
+        let total = (end_time - start_time).as_seconds_f64();
 
-        let elapsed = (sel_ts.timestamp_millis() - start_time.timestamp_millis()) as f64;
-        let total_millis = (end_time.timestamp_millis() - start_time.timestamp_millis()) as f64;
-
-        if elapsed >= 0.0 && elapsed <= total_millis {
-            Some((elapsed / total_millis) as f32)
+        if elapsed >= 0.0 && elapsed <= total {
+            Some(elapsed / total)
         } else {
             None
         }
@@ -345,7 +340,7 @@ impl Histogram {
         visible_buckets: &[usize],
         visible_anomaly_buckets: &[AnomalyDistribution],
         max_count: usize,
-        selected_x_fraction: Option<f32>,
+        selected_x_fraction: Option<f64>,
         store: &LogStore,
         markers: &[HistogramMarker],
         dark_mode: bool,
@@ -805,10 +800,10 @@ impl Histogram {
     fn draw_selected_indicator(
         painter: &egui::Painter,
         rect: egui::Rect,
-        selected_x_fraction: Option<f32>,
+        selected_x_fraction: Option<f64>,
     ) {
         if let Some(fraction) = selected_x_fraction {
-            let x = fraction.mul_add(rect.width(), rect.min.x);
+            let x = (fraction as f32).mul_add(rect.width(), rect.min.x);
             painter.vline(x, rect.y_range(), (2.0, Color32::RED));
         }
     }
