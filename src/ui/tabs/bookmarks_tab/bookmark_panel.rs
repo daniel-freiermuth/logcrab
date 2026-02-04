@@ -123,15 +123,15 @@ impl BookmarkPanel {
             .column(Column::initial(40.0).resizable(false).clip(true))
             .header(header_height, |mut header| {
                 header.col(|ui| {
+                    ui.strong("Annotation");
+                });
+                header.col(|ui| {
                     ui.strong("Line");
                 });
                 header.col(|ui| {
                     let now = Local::now();
                     let offset = now.offset();
                     ui.strong(format!("Timestamp (UTC{offset})"));
-                });
-                header.col(|ui| {
-                    ui.strong("Name");
                 });
                 header.col(|ui| {
                     ui.strong("Message");
@@ -190,6 +190,20 @@ impl BookmarkPanel {
 
         let mut row_clicked = false;
 
+        // Annotation column
+        Self::render_name_column(
+            row,
+            store_id,
+            is_selected,
+            color,
+            bookmark,
+            editing_bookmark,
+            bookmark_name_input,
+            events,
+            &mut row_clicked,
+            dark_mode,
+        );
+
         // Line number column
         Self::render_line_column(
             row,
@@ -208,20 +222,6 @@ impl BookmarkPanel {
             is_selected,
             color,
             &line,
-            &mut row_clicked,
-            dark_mode,
-        );
-
-        // Name column
-        Self::render_name_column(
-            row,
-            store_id,
-            is_selected,
-            color,
-            bookmark,
-            editing_bookmark,
-            bookmark_name_input,
-            events,
             &mut row_clicked,
             dark_mode,
         );
