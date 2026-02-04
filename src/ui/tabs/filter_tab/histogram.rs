@@ -51,7 +51,7 @@ fn timedelta_from_secs_f32(secs: f32) -> TimeDelta {
 }
 
 /// Minimum fraction of view width required for drag-to-zoom selection
-const MIN_DRAG_ZOOM_FRACTION: f32 = 0.02;
+const MIN_DRAG_ZOOM_FRACTION: f32 = 0.005;
 
 /// Zoom state for the histogram timeline
 #[derive(Clone, Default)]
