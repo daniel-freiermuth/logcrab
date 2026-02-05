@@ -802,19 +802,13 @@ impl LogTable {
                 dark_mode,
             );
 
-            // Layout the text and check if it would be clipped
+            // Layout the text to check if it would be clipped
             let available_width = ui.available_width();
-            let galley = ui.painter().layout_job(job);
+            let galley = ui.painter().layout_job(job.clone());
             let text_width = galley.size().x;
             let is_clipped = text_width > available_width;
 
-            ui.label(galley);
-
-            let response = ui.interact(
-                ui.max_rect(),
-                ui.id().with(line_idx).with("msg"),
-                egui::Sense::click(),
-            );
+            let response = ui.add(egui::Label::new(job).selectable(true).truncate());
 
             // Only show hover tooltip if text was clipped
             let response = if is_clipped {
