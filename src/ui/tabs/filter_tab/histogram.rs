@@ -209,7 +209,8 @@ impl Histogram {
         let store_version = store.version();
         // Use the search parameters that the current filtered_indices were computed for,
         // not the current search_text (which may have changed while filter is pending)
-        let (indices_text, indices_exclude, indices_case) = filter_state.search.indices_computed_for();
+        let (indices_text, indices_exclude, indices_case) =
+            filter_state.search.indices_computed_for();
         let search_str = indices_text.to_string();
         let exclude_str = indices_exclude.to_string();
 
@@ -235,13 +236,7 @@ impl Histogram {
                 ui.ctx().request_repaint(); // Keep polling
             } else {
                 // Request new computation
-                cache.request_computation(
-                    worker,
-                    store,
-                    filtered_indices,
-                    &cache_key,
-                    zoom_range,
-                );
+                cache.request_computation(worker, store, filtered_indices, &cache_key, zoom_range);
             }
         }
 

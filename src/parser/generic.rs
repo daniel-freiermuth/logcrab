@@ -16,7 +16,8 @@ static HYPHENATED_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
 
 // Common syslog: Nov 20 14:23:45 or Nov 20 14:23:45.123
 static SYSLOG_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)").expect("valid regex literal")
+    Regex::new(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)")
+        .expect("valid regex literal")
 });
 
 // Timestamp with milliseconds: [2025-11-20 14:23:45.123]
@@ -99,7 +100,9 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S%.3f") {
             timestamp = Local.from_local_datetime(&naive).single();
             remaining = remaining[caps[0].len()..].trim_start();
-        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S") {
+        } else if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S")
+        {
             timestamp = Local.from_local_datetime(&naive).single();
             remaining = remaining[caps[0].len()..].trim_start();
         }
@@ -222,9 +225,14 @@ mod tests {
     #[test]
     fn test_syslog_timestamp_with_milliseconds() {
         // Syslog format with milliseconds: Feb 03 23:26:34.864
-        let raw = "Feb 03 23:26:34.864 qcgpio[gpio_drv.c:1222]: dalcfg_query_item_name gpio_driver done".to_string();
+        let raw =
+            "Feb 03 23:26:34.864 qcgpio[gpio_drv.c:1222]: dalcfg_query_item_name gpio_driver done"
+                .to_string();
         let line = parse_generic(raw, 1).expect("Should parse syslog timestamp with milliseconds");
-        assert_eq!(line.message(), "qcgpio[gpio_drv.c:1222]: dalcfg_query_item_name gpio_driver done");
+        assert_eq!(
+            line.message(),
+            "qcgpio[gpio_drv.c:1222]: dalcfg_query_item_name gpio_driver done"
+        );
         // Year is assumed to be current year
         let current_year = Local::now().year();
         assert_eq!(

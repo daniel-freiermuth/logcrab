@@ -409,7 +409,7 @@ impl FilterBar {
         // Check both include and exclude patterns
         let include_result = filter.search.get_regex();
         let exclude_result = filter.search.get_exclude_regex();
-        
+
         match (&include_result, &exclude_result) {
             (Ok(_), Ok(_)) => {
                 ui.colored_label(Color32::GREEN, "✓");
