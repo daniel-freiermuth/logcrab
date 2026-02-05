@@ -96,6 +96,7 @@ impl FilterBar {
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, global_config, &mut events);
             self.render_search_input(ui, filter, should_focus_search, log_view_state);
+            self.render_exclude_input(ui, filter, log_view_state);
             Self::render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
@@ -274,6 +275,23 @@ impl FilterBar {
         }
     }
 
+    fn render_exclude_input(
+        &mut self,
+        ui: &mut Ui,
+        filter: &mut FilterState,
+        session_state: &mut SessionState,
+    ) {
+        let exclude_response = ui.add(
+            egui::TextEdit::singleline(&mut filter.search.exclude_text)
+                .hint_text("Exclude pattern (optional)")
+                .desired_width(200.0),
+        );
+
+        if exclude_response.changed() {
+            session_state.modified = true;
+        }
+    }
+
     fn handle_history_navigation(
         &mut self,
         ui: &Ui,
@@ -388,10 +406,21 @@ impl FilterBar {
     }
 
     fn render_validation_status(ui: &mut Ui, filter: &FilterState) {
-        match &filter.search.get_regex() {
-            Ok(_) => ui.colored_label(Color32::GREEN, "✓"),
-            Err(err) => ui.colored_label(Color32::RED, format!("❌ {err}")),
-        };
+        // Check both include and exclude patterns
+        let include_result = filter.search.get_regex();
+        let exclude_result = filter.search.get_exclude_regex();
+        
+        match (&include_result, &exclude_result) {
+            (Ok(_), Ok(_)) => {
+                ui.colored_label(Color32::GREEN, "✓");
+            }
+            (Err(err), _) => {
+                ui.colored_label(Color32::RED, format!("❌ Include: {err}"));
+            }
+            (_, Err(err)) => {
+                ui.colored_label(Color32::RED, format!("❌ Exclude: {err}"));
+            }
+        }
     }
 
     fn render_convert_to_highlight_button(ui: &mut Ui, events: &mut Vec<FilterInternalEvent>) {

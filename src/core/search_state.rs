@@ -40,6 +40,8 @@ pub struct SearchState {
     id: usize,
     /// The search pattern text
     pub search_text: String,
+    /// Pattern to exclude from results (removes false positives)
+    pub exclude_text: String,
     /// Whether the search is case-sensitive
     pub case_sensitive: bool,
     /// Cached indices of matching lines
@@ -48,11 +50,13 @@ pub struct SearchState {
     /// `LogStore` version this cache was computed for
     cached_for_version: u64,
     cached_for_text: String,
+    cached_for_exclude: String,
     cached_for_case: bool,
 
     /// What the current `filtered_indices` was actually computed for
     /// (only updated when results are received)
     indices_computed_for_text: String,
+    indices_computed_for_exclude: String,
     indices_computed_for_case: bool,
 
     /// Channel for receiving background filter results
@@ -70,10 +74,13 @@ impl SearchState {
         Self {
             id,
             search_text: String::new(),
+            exclude_text: String::new(),
             cached_for_text: String::new(),
+            cached_for_exclude: String::new(),
             case_sensitive: false,
             cached_for_case: false,
             indices_computed_for_text: String::new(),
+            indices_computed_for_exclude: String::new(),
             indices_computed_for_case: false,
             filtered_indices: Vec::new(),
             cached_for_version: 0,
@@ -101,6 +108,18 @@ impl SearchState {
         Regex::new(pattern).map_err(Box::new)
     }
 
+    pub fn get_exclude_regex(&self) -> Result<Option<Regex>, Box<Error>> {
+        if self.exclude_text.is_empty() {
+            return Ok(None);
+        }
+        let pattern = if self.case_sensitive {
+            &self.exclude_text
+        } else {
+            &format!("(?i){}", self.exclude_text)
+        };
+        Regex::new(pattern).map(Some).map_err(Box::new)
+    }
+
     /// Request a background filter update for the given store.
     fn request_filter_update(&self, store: Arc<LogStore>, worker: &FilterWorkerHandle) {
         if !self.search_text.is_empty() {
@@ -112,12 +131,15 @@ impl SearchState {
         }
 
         if let Ok(regex) = self.get_regex() {
+            let exclude_regex = self.get_exclude_regex().ok().flatten();
             let request = FilterRequest {
                 filter_id: self.id,
                 regex,
+                exclude_regex,
                 store,
                 result_tx: self.filter_result_tx.clone(),
                 search_text: self.search_text.clone(),
+                exclude_text: self.exclude_text.clone(),
                 case_sensitive: self.case_sensitive,
             };
 
@@ -132,6 +154,7 @@ impl SearchState {
             self.filtered_indices = result.filtered_indices;
             // Track what these indices were computed for (from the result, not cached_for)
             self.indices_computed_for_text = result.search_text;
+            self.indices_computed_for_exclude = result.exclude_text;
             self.indices_computed_for_case = result.case_sensitive;
             log::trace!(
                 "Search {}: completed filtering ({} matches)",
@@ -144,9 +167,10 @@ impl SearchState {
     }
 
     /// Get the search text that the current filtered indices were computed for.
-    pub fn indices_computed_for(&self) -> (&str, bool) {
+    pub fn indices_computed_for(&self) -> (&str, &str, bool) {
         (
             &self.indices_computed_for_text,
+            &self.indices_computed_for_exclude,
             self.indices_computed_for_case,
         )
     }
@@ -155,11 +179,13 @@ impl SearchState {
     pub fn ensure_cache_valid(&mut self, store: &Arc<LogStore>, worker: &FilterWorkerHandle) {
         if self.cached_for_version != store.version()
             || self.cached_for_text != self.search_text
+            || self.cached_for_exclude != self.exclude_text
             || self.cached_for_case != self.case_sensitive
         {
             self.request_filter_update(Arc::clone(store), worker);
             self.cached_for_version = store.version();
             self.cached_for_text = self.search_text.clone();
+            self.cached_for_exclude = self.exclude_text.clone();
             self.cached_for_case = self.case_sensitive;
         }
     }
@@ -181,5 +207,45 @@ impl SearchState {
         }
         profiling::scope!("find_min_distance");
         Some(indices.partition_point(|other| other.cmp(&target, store) == std::cmp::Ordering::Less))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_exclude_regex_empty() {
+        let state = SearchState::new();
+        assert!(state.get_exclude_regex().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_exclude_regex_with_pattern() {
+        let mut state = SearchState::new();
+        state.exclude_text = "ERROR".to_string();
+        let regex = state.get_exclude_regex().unwrap();
+        assert!(regex.is_some());
+        // Case insensitive by default
+        assert!(regex.unwrap().is_match("error").unwrap());
+    }
+
+    #[test]
+    fn test_get_exclude_regex_case_sensitive() {
+        let mut state = SearchState::new();
+        state.exclude_text = "ERROR".to_string();
+        state.case_sensitive = true;
+        let regex = state.get_exclude_regex().unwrap();
+        assert!(regex.is_some());
+        let regex = regex.unwrap();
+        assert!(regex.is_match("ERROR").unwrap());
+        assert!(!regex.is_match("error").unwrap());
+    }
+
+    #[test]
+    fn test_get_exclude_regex_invalid() {
+        let mut state = SearchState::new();
+        state.exclude_text = "[invalid".to_string();
+        assert!(state.get_exclude_regex().is_err());
     }
 }

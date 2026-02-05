@@ -209,8 +209,9 @@ impl Histogram {
         let store_version = store.version();
         // Use the search parameters that the current filtered_indices were computed for,
         // not the current search_text (which may have changed while filter is pending)
-        let (indices_text, indices_case) = filter_state.search.indices_computed_for();
+        let (indices_text, indices_exclude, indices_case) = filter_state.search.indices_computed_for();
         let search_str = indices_text.to_string();
+        let exclude_str = indices_exclude.to_string();
 
         let cache = &mut filter_state.histogram_cache;
 
@@ -221,6 +222,7 @@ impl Histogram {
         let cache_key = HistogramCacheKey {
             store_version,
             search_str,
+            exclude_str,
             case_sensitive: indices_case,
             zoom_range_ms,
         };

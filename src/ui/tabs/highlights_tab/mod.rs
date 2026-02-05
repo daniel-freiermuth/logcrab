@@ -140,6 +140,16 @@ impl HighlightsView {
                 actions.push(HighlightRowAction::Modified);
             }
 
+            // Exclude pattern input
+            let exclude_response = ui.add(
+                egui::TextEdit::singleline(&mut highlight.search.exclude_text)
+                    .desired_width(200.0)
+                    .hint_text("Exclude pattern (optional)"),
+            );
+            if exclude_response.changed() {
+                actions.push(HighlightRowAction::Modified);
+            }
+
             // Case sensitivity toggle
             let case_label = if highlight.search.case_sensitive {
                 RichText::new("Aa").strong()

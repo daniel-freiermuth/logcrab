@@ -66,6 +66,7 @@ pub struct HistogramRequest {
 pub struct HistogramCacheKey {
     pub store_version: u64,
     pub search_str: String,
+    pub exclude_str: String,
     pub case_sensitive: bool,
     /// Zoom range in milliseconds (for cache invalidation)
     /// None means full range

@@ -37,10 +37,13 @@ use std::sync::Arc;
 pub struct FilterRequest {
     pub filter_id: usize, // Unique identifier for each filter/highlight instance
     pub regex: Regex,
+    pub exclude_regex: Option<Regex>,
     pub store: Arc<LogStore>, // Shared read-only access to log store
     pub result_tx: Sender<FilterResult>, // Each filter has its own result channel
     /// The search text this request was made for (for result tracking)
     pub search_text: String,
+    /// The exclude text this request was made for (for result tracking)
+    pub exclude_text: String,
     /// Whether case sensitivity was enabled (for result tracking)
     pub case_sensitive: bool,
 }
@@ -50,6 +53,8 @@ pub struct FilterResult {
     pub filtered_indices: Vec<StoreID>,
     /// The search text these indices were computed for
     pub search_text: String,
+    /// The exclude text these indices were computed for
+    pub exclude_text: String,
     /// Whether case sensitivity was enabled
     pub case_sensitive: bool,
 }
@@ -153,8 +158,22 @@ impl FilterWorker {
 
                     // Parallel filtering with rayon
                     request.store.get_matching_ids(|line| {
-                        request.regex.is_match(&line.message()).unwrap_or(false)
-                            || request.regex.is_match(&line.raw()).unwrap_or(false)
+                        let matches_include = request.regex.is_match(&line.message()).unwrap_or(false)
+                            || request.regex.is_match(&line.raw()).unwrap_or(false);
+                        
+                        if !matches_include {
+                            return false;
+                        }
+                        
+                        // If there's an exclude pattern, check if the line matches it
+                        if let Some(ref exclude_regex) = request.exclude_regex {
+                            let matches_exclude = exclude_regex.is_match(&line.message()).unwrap_or(false)
+                                || exclude_regex.is_match(&line.raw()).unwrap_or(false);
+                            // Return true only if it doesn't match the exclusion pattern
+                            !matches_exclude
+                        } else {
+                            true
+                        }
                     })
                 };
 
@@ -167,6 +186,7 @@ impl FilterWorker {
                 let result = FilterResult {
                     filtered_indices,
                     search_text: request.search_text.clone(),
+                    exclude_text: request.exclude_text.clone(),
                     case_sensitive: request.case_sensitive,
                 };
 

@@ -78,6 +78,7 @@ impl From<&SavedSearch> for SearchRule {
     fn from(saved: &SavedSearch) -> Self {
         let mut rule = Self::new(saved.name.clone(), saved.color);
         rule.search.search_text.clone_from(&saved.search_text);
+        rule.search.exclude_text.clone_from(&saved.exclude_text);
         rule.search.case_sensitive = saved.case_sensitive;
         rule.enabled = saved.enabled;
         rule.show_in_histogram = saved.show_in_histogram;
@@ -90,6 +91,7 @@ impl From<&SearchRule> for SavedSearch {
         Self {
             name: rule.name.clone(),
             search_text: rule.search.search_text.clone(),
+            exclude_text: rule.search.exclude_text.clone(),
             case_sensitive: rule.search.case_sensitive,
             color: rule.color,
             enabled: rule.enabled,

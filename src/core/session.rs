@@ -99,6 +99,8 @@ const fn default_version() -> u32 {
 pub struct SavedSearch {
     pub search_text: String,
     #[serde(default)]
+    pub exclude_text: String,
+    #[serde(default)]
     pub case_sensitive: bool,
     #[serde(default)]
     pub name: String,
