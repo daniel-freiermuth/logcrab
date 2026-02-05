@@ -55,16 +55,17 @@ pub struct LogCrabApp {
 impl LogCrabApp {
     /// Update the window title based on open files
     fn update_window_title(&self, ctx: &egui::Context) {
-        let title = if let Some(ref session) = self.session {
-            let filenames = session.state.store.get_source_filenames();
-            if filenames.is_empty() {
-                "LogCrab".to_string()
-            } else {
-                format!("{} - LogCrab", filenames.join(", "))
-            }
-        } else {
-            "LogCrab".to_string()
-        };
+        let title = self.session.as_ref().map_or_else(
+            || "LogCrab".to_string(),
+            |session| {
+                let filenames = session.state.store.get_source_filenames();
+                if filenames.is_empty() {
+                    "LogCrab".to_string()
+                } else {
+                    format!("{} - LogCrab", filenames.join(", "))
+                }
+            },
+        );
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
     }
 
