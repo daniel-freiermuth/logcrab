@@ -53,6 +53,21 @@ pub struct LogCrabApp {
 }
 
 impl LogCrabApp {
+    /// Update the window title based on open files
+    fn update_window_title(&self, ctx: &egui::Context) {
+        let title = if let Some(ref session) = self.session {
+            let filenames = session.state.store.get_source_filenames();
+            if filenames.is_empty() {
+                "LogCrab".to_string()
+            } else {
+                format!("{} - LogCrab", filenames.join(", "))
+            }
+        } else {
+            "LogCrab".to_string()
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
         // Load global configuration
         let global_config = GlobalConfig::load();
@@ -567,6 +582,9 @@ impl eframe::App for LogCrabApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         profiling::function_scope!();
+
+        // Update window title based on open files
+        self.update_window_title(ctx);
 
         // Process pending dropped files
         if !self.pending_drop_files.is_empty() {

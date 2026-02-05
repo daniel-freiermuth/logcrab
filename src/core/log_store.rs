@@ -554,6 +554,21 @@ impl LogStore {
         })
     }
 
+    /// Get all source filenames
+    pub fn get_source_filenames(&self) -> Vec<String> {
+        profiling::scope!("LogStore::sources::read");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        sources
+            .iter()
+            .filter_map(|source| {
+                source.file_path.as_ref().and_then(|p| {
+                    p.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+            })
+            .collect()
+    }
+
     // ========================================================================
     // Bookmark Management (delegates to appropriate SourceData)
     // ========================================================================
