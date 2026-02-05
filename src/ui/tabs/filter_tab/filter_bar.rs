@@ -96,7 +96,7 @@ impl FilterBar {
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, global_config, &mut events);
             self.render_search_input(ui, filter, should_focus_search, log_view_state);
-            self.render_exclude_input(ui, filter, log_view_state);
+            Self::render_exclude_input(ui, filter, log_view_state);
             Self::render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
@@ -276,7 +276,6 @@ impl FilterBar {
     }
 
     fn render_exclude_input(
-        &mut self,
         ui: &mut Ui,
         filter: &mut FilterState,
         session_state: &mut SessionState,

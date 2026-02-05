@@ -167,15 +167,13 @@ impl FilterWorker {
                         }
 
                         // If there's an exclude pattern, check if the line matches it
-                        if let Some(ref exclude_regex) = request.exclude_regex {
+                        request.exclude_regex.as_ref().is_none_or(|exclude_regex| {
                             let matches_exclude =
                                 exclude_regex.is_match(&line.message()).unwrap_or(false)
                                     || exclude_regex.is_match(&line.raw()).unwrap_or(false);
                             // Return true only if it doesn't match the exclusion pattern
                             !matches_exclude
-                        } else {
-                            true
-                        }
+                        })
                     })
                 };
 
