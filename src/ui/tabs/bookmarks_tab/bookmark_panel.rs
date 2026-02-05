@@ -229,7 +229,6 @@ impl BookmarkPanel {
         // Message column
         Self::render_message_column(
             row,
-            store_id,
             is_selected,
             color,
             &line,
@@ -393,7 +392,6 @@ impl BookmarkPanel {
 
     fn render_message_column(
         row: &mut egui_extras::TableRow<'_, '_>,
-        store_id: &StoreID,
         is_selected: bool,
         color: Color32,
         line: &LogLine,
@@ -411,13 +409,9 @@ impl BookmarkPanel {
                 all_filter_highlights,
                 dark_mode,
             );
-            ui.label(job);
 
-            let response = ui.interact(
-                ui.max_rect(),
-                ui.id().with(store_id).with("bm_msg"),
-                egui::Sense::click(),
-            );
+            let response = ui.add(egui::Label::new(job).selectable(true).truncate());
+
             if response.clicked() {
                 *row_clicked = true;
             }
