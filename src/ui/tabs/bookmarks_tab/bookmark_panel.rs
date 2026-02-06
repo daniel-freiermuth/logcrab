@@ -410,7 +410,7 @@ impl BookmarkPanel {
                 dark_mode,
             );
 
-            let response = ui.add(egui::Label::new(job).selectable(true).truncate());
+            let response = ui.add(egui::Label::new(job).selectable(true).extend());
 
             if response.clicked() {
                 *row_clicked = true;

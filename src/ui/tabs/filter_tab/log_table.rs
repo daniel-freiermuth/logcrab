@@ -808,7 +808,7 @@ impl LogTable {
             let text_width = galley.size().x;
             let is_clipped = text_width > available_width;
 
-            let response = ui.add(egui::Label::new(job).selectable(true).truncate());
+            let response = ui.add(egui::Label::new(job).selectable(true).extend());
 
             // Only show hover tooltip if text was clipped
             let response = if is_clipped {
