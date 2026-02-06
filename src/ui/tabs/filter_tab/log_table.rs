@@ -309,6 +309,7 @@ impl LogTable {
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .vscroll(true)
+            .drag_to_scroll(false)
             .min_scrolled_height(body_height)
             .max_scroll_height(body_height)
             .column(Column::initial(120.0).resizable(true).clip(true)) // Source
