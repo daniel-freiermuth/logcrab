@@ -27,7 +27,7 @@ use crate::core::log_store::StoreID;
 use crate::core::LogStore;
 use crate::parser::line::LogLineCore;
 use chrono::{DateTime, Local};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
@@ -151,12 +151,12 @@ impl HistogramWorker {
 
         log::debug!("Histogram worker thread started");
 
-        // Persistent HashMap of pending requests per filter
+        // Persistent map of pending requests per filter
         // This allows us to accumulate and update requests while processing others
-        let mut pending_requests: HashMap<usize, HistogramRequest> = HashMap::new();
+        let mut pending_requests: BTreeMap<usize, HistogramRequest> = BTreeMap::new();
 
-        // Helper to drain all available requests into the HashMap
-        let drain_pending = |map: &mut HashMap<usize, HistogramRequest>| {
+        // Helper to drain all available requests into the map
+        let drain_pending = |map: &mut BTreeMap<usize, HistogramRequest>| {
             while let Ok(request) = request_rx.try_recv() {
                 let filter_id = request.filter_id;
                 if map.contains_key(&filter_id) {
@@ -174,11 +174,7 @@ impl HistogramWorker {
             // Collect any additional pending requests
             drain_pending(&mut pending_requests);
 
-            while let Some(&first_key) = pending_requests.keys().next() {
-                let request = pending_requests
-                    .remove(&first_key)
-                    .expect("key exists from keys().next()");
-                let filter_id = request.filter_id;
+            while let Some((filter_id, request)) = pending_requests.pop_first() {
 
                 profiling::scope!("process_single_histogram");
                 log::trace!("Processing histogram request for filter {filter_id}");
