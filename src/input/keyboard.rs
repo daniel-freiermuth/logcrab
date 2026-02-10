@@ -380,22 +380,23 @@ pub struct KeyboardBindings {
 impl KeyboardBindings {
     /// Load shortcuts from global config
     pub fn load(config: &GlobalConfig) -> Self {
-        let bindings = if config.shortcuts.is_empty() {
-            log::info!("No custom keyboard shortcuts found, using defaults");
+        let mut bindings = HashMap::new();
 
-            // Use defaults for all actions
-            let mut bindings = HashMap::new();
-            for action in ShortcutAction::all() {
-                bindings.insert(*action, action.default_binding().to_string());
-            }
-            bindings
-        } else {
-            log::info!(
-                "Loading {} keyboard shortcuts from config",
-                config.shortcuts.len()
-            );
-            config.shortcuts.clone()
-        };
+        // Always iterate over all actions to ensure every action has a binding (either custom or default)
+        for action in ShortcutAction::all() {
+            let binding = config
+                .shortcuts
+                .get(action)
+                .cloned()
+                .unwrap_or_else(|| action.default_binding().to_string());
+            bindings.insert(*action, binding);
+        }
+
+        log::info!(
+            "Loaded keyboard shortcuts ({} custom, {} defaults)",
+            config.shortcuts.len(),
+            bindings.len() - config.shortcuts.len()
+        );
 
         let dispatcher = Self::rebuild_dispatcher(&bindings);
         Self {
@@ -505,5 +506,77 @@ impl Default for KeyboardBindings {
             dispatcher,
             bindings,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::GlobalConfig;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_partial_config_load() {
+        let mut config = GlobalConfig::default();
+        // Simulate a config with only one shortcut customized by the user
+        config.shortcuts = HashMap::new();
+        config
+            .shortcuts
+            .insert(ShortcutAction::MoveUp, "u".to_string());
+
+        let bindings = KeyboardBindings::load(&config);
+
+        // The customized shortcut is present
+        assert_eq!(bindings.get_shortcut(ShortcutAction::MoveUp), "u");
+
+        // The default shortcut for MoveDown ("j") should still be present
+        let move_down_shortcut = bindings.get_shortcut(ShortcutAction::MoveDown);
+        assert!(
+            !move_down_shortcut.is_empty(),
+            "MoveDown shortcut should not be empty, even if not in config"
+        );
+        assert_eq!(
+            move_down_shortcut,
+            ShortcutAction::MoveDown.default_binding()
+        );
+    }
+
+    #[test]
+    fn test_empty_config_uses_all_defaults() {
+        let config = GlobalConfig::default();
+        let bindings = KeyboardBindings::load(&config);
+
+        // All actions should have bindings
+        for action in ShortcutAction::all() {
+            let shortcut = bindings.get_shortcut(*action);
+            assert!(!shortcut.is_empty(), "{:?} should have a binding", action);
+            assert_eq!(shortcut, action.default_binding());
+        }
+    }
+
+    #[test]
+    fn test_all_custom_shortcuts_override_defaults() {
+        let mut config = GlobalConfig::default();
+        config
+            .shortcuts
+            .insert(ShortcutAction::MoveUp, "CustomUp".to_string());
+        config
+            .shortcuts
+            .insert(ShortcutAction::MoveDown, "CustomDown".to_string());
+
+        let bindings = KeyboardBindings::load(&config);
+
+        // Customized shortcuts should be used
+        assert_eq!(bindings.get_shortcut(ShortcutAction::MoveUp), "CustomUp");
+        assert_eq!(
+            bindings.get_shortcut(ShortcutAction::MoveDown),
+            "CustomDown"
+        );
+
+        // Other shortcuts should still use defaults
+        assert_eq!(
+            bindings.get_shortcut(ShortcutAction::ToggleBookmark),
+            ShortcutAction::ToggleBookmark.default_binding()
+        );
     }
 }
