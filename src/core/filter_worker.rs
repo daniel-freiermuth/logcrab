@@ -57,6 +57,8 @@ pub struct FilterResult {
     pub exclude_text: String,
     /// Whether case sensitivity was enabled
     pub case_sensitive: bool,
+    /// The LogStore version these indices were computed for
+    pub store_version: u64,
 }
 
 /// Handle to send filter requests to the background worker.
@@ -144,6 +146,7 @@ impl FilterWorker {
                 profiling::scope!("process_single_filter");
                 log::trace!("Processing filter request (search: '{:?}')", request.regex);
 
+                let store_version = request.store.version();
                 // Filter lines in parallel
                 let filtered_indices = {
                     profiling::scope!("filter_lines");
@@ -180,6 +183,7 @@ impl FilterWorker {
                     search_text: request.search_text.clone(),
                     exclude_text: request.exclude_text.clone(),
                     case_sensitive: request.case_sensitive,
+                    store_version: store_version,
                 };
 
                 // Send result back to the specific filter (ignore errors if filter is gone)

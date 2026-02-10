@@ -206,10 +206,9 @@ impl Histogram {
             return None;
         }
 
-        let store_version = store.version();
         // Use the search parameters that the current filtered_indices were computed for,
         // not the current search_text (which may have changed while filter is pending)
-        let (indices_text, indices_exclude, indices_case) =
+        let (indices_text, indices_exclude, indices_case, indices_version) =
             filter_state.search.indices_computed_for();
         let search_str = indices_text.to_string();
         let exclude_str = indices_exclude.to_string();
@@ -221,7 +220,7 @@ impl Histogram {
         let zoom_range_ms = zoom_range.map(|(s, e)| (s.timestamp_millis(), e.timestamp_millis()));
 
         let cache_key = HistogramCacheKey {
-            store_version,
+            store_version: indices_version,
             search_str,
             exclude_str,
             case_sensitive: indices_case,

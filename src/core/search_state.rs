@@ -47,17 +47,18 @@ pub struct SearchState {
     /// Cached indices of matching lines
     filtered_indices: Vec<StoreID>,
 
-    /// `LogStore` version this cache was computed for
-    cached_for_version: u64,
-    cached_for_text: String,
-    cached_for_exclude: String,
-    cached_for_case: bool,
+    /// What we last requested from the worker (optimistic tracking)
+    last_requested_version: u64,
+    last_requested_text: String,
+    last_requested_exclude: String,
+    last_requested_case: bool,
 
     /// What the current `filtered_indices` was actually computed for
     /// (only updated when results are received)
     indices_computed_for_text: String,
     indices_computed_for_exclude: String,
     indices_computed_for_case: bool,
+    indices_computed_for_version: u64,
 
     /// Channel for receiving background filter results
     filter_result_rx: Receiver<FilterResult>,
@@ -75,15 +76,16 @@ impl SearchState {
             id,
             search_text: String::new(),
             exclude_text: String::new(),
-            cached_for_text: String::new(),
-            cached_for_exclude: String::new(),
+            last_requested_text: String::new(),
+            last_requested_exclude: String::new(),
             case_sensitive: false,
-            cached_for_case: false,
+            last_requested_case: false,
             indices_computed_for_text: String::new(),
             indices_computed_for_exclude: String::new(),
             indices_computed_for_case: false,
+            indices_computed_for_version: 0,
             filtered_indices: Vec::new(),
-            cached_for_version: 0,
+            last_requested_version: 0,
             filter_result_rx: result_rx,
             filter_result_tx: result_tx,
         }
@@ -156,6 +158,7 @@ impl SearchState {
             self.indices_computed_for_text = result.search_text;
             self.indices_computed_for_exclude = result.exclude_text;
             self.indices_computed_for_case = result.case_sensitive;
+            self.indices_computed_for_version = result.store_version;
             log::trace!(
                 "Search {}: completed filtering ({} matches)",
                 self.id,
@@ -167,26 +170,27 @@ impl SearchState {
     }
 
     /// Get the search text that the current filtered indices were computed for.
-    pub fn indices_computed_for(&self) -> (&str, &str, bool) {
+    pub fn indices_computed_for(&self) -> (&str, &str, bool, u64) {
         (
             &self.indices_computed_for_text,
             &self.indices_computed_for_exclude,
             self.indices_computed_for_case,
+            self.indices_computed_for_version,
         )
     }
 
     /// Check if cache is valid for the given store version, request update if not.
     pub fn ensure_cache_valid(&mut self, store: &Arc<LogStore>, worker: &FilterWorkerHandle) {
-        if self.cached_for_version != store.version()
-            || self.cached_for_text != self.search_text
-            || self.cached_for_exclude != self.exclude_text
-            || self.cached_for_case != self.case_sensitive
+        if self.last_requested_version != store.version()
+            || self.last_requested_text != self.search_text
+            || self.last_requested_exclude != self.exclude_text
+            || self.last_requested_case != self.case_sensitive
         {
             self.request_filter_update(Arc::clone(store), worker);
-            self.cached_for_version = store.version();
-            self.cached_for_text = self.search_text.clone();
-            self.cached_for_exclude = self.exclude_text.clone();
-            self.cached_for_case = self.case_sensitive;
+            self.last_requested_version = store.version();
+            self.last_requested_text = self.search_text.clone();
+            self.last_requested_exclude = self.exclude_text.clone();
+            self.last_requested_case = self.case_sensitive;
         }
     }
 
