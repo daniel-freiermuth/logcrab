@@ -366,22 +366,29 @@ impl DltLogLine {
             PayloadContent::Verbose(args) => {
                 let formatted_args: Vec<String> = args
                     .iter()
-                    .filter_map(|arg| match &arg.value {
-                        dlt_core::dlt::Value::StringVal(s) => Some(s.clone()),
-                        dlt_core::dlt::Value::U32(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::U64(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::U8(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::U16(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::I32(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::I64(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::I8(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::I16(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::F32(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::F64(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::Bool(v) => Some(format!("{v}")),
-                        dlt_core::dlt::Value::U128(_)
-                        | dlt_core::dlt::Value::I128(_)
-                        | dlt_core::dlt::Value::Raw(_) => None,
+                    .map(|arg| {
+                        let val_str = match &arg.value {
+                            dlt_core::dlt::Value::StringVal(s) => s.clone(),
+                            dlt_core::dlt::Value::U32(v) => format!("{v}"),
+                            dlt_core::dlt::Value::U64(v) => format!("{v}"),
+                            dlt_core::dlt::Value::U8(v) => format!("{v}"),
+                            dlt_core::dlt::Value::U16(v) => format!("{v}"),
+                            dlt_core::dlt::Value::I32(v) => format!("{v}"),
+                            dlt_core::dlt::Value::I64(v) => format!("{v}"),
+                            dlt_core::dlt::Value::I8(v) => format!("{v}"),
+                            dlt_core::dlt::Value::I16(v) => format!("{v}"),
+                            dlt_core::dlt::Value::F32(v) => format!("{v}"),
+                            dlt_core::dlt::Value::F64(v) => format!("{v}"),
+                            dlt_core::dlt::Value::Bool(v) => format!("{v}"),
+                            dlt_core::dlt::Value::U128(v) => format!("{v}"),
+                            dlt_core::dlt::Value::I128(v) => format!("{v}"),
+                            dlt_core::dlt::Value::Raw(bytes) => format!("{bytes:02x?}"),
+                        };
+
+                        arg.name
+                            .as_ref()
+                            .map(|name| format!("{name}: {val_str}"))
+                            .unwrap_or(val_str)
                     })
                     .collect();
                 formatted_args.join(" || ")
