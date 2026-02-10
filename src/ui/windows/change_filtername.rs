@@ -1,11 +1,13 @@
 pub struct ChangeFilternameWindow {
     new_name: String,
+    focus_requested: bool,
 }
 
 impl ChangeFilternameWindow {
     pub const fn new(initial_name: String) -> Self {
         Self {
             new_name: initial_name,
+            focus_requested: false,
         }
     }
 
@@ -23,9 +25,10 @@ impl ChangeFilternameWindow {
                 ui.label("Enter filter name:");
                 let response = ui.text_edit_singleline(&mut self.new_name);
 
-                // Request focus on first frame
-                if !response.has_focus() {
+                // Request focus on first frame only
+                if !self.focus_requested {
                     response.request_focus();
+                    self.focus_requested = true;
                 }
 
                 // Check if Enter was pressed (even if field still has focus)

@@ -2,12 +2,14 @@ use chrono::{DateTime, Local, TimeZone};
 
 pub struct SyncDltTimeWindow {
     target_time_str: String,
+    focus_requested: bool,
 }
 
 impl SyncDltTimeWindow {
     pub fn new(storage_time: DateTime<Local>) -> Self {
         Self {
             target_time_str: storage_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            focus_requested: false,
         }
     }
 
@@ -29,9 +31,10 @@ impl SyncDltTimeWindow {
 
                 let response = ui.text_edit_singleline(&mut self.target_time_str);
 
-                // Request focus on first frame
-                if !response.has_focus() {
+                // Request focus on first frame only
+                if !self.focus_requested {
                     response.request_focus();
+                    self.focus_requested = true;
                 }
 
                 // Parse the time string and show validation
