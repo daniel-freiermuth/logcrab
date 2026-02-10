@@ -204,7 +204,13 @@ impl SourceData {
         profiling::scope!("SourceData::append_lines");
         let new_start_idx = {
             profiling::scope!("SourceData::lines::read");
-            self.lines.read().expect("lines lock poisoned").len()
+            let current_len = self.lines.read().expect("lines lock poisoned").len();
+            log::debug!(
+                "Appending {} lines to existing {} lines (merge overhead)",
+                lines.len(),
+                current_len
+            );
+            current_len
         };
         {
             profiling::scope!("SourceData::lines::write");

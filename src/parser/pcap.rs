@@ -32,8 +32,11 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Chunk size for incremental loading (send update every N packets)
-const PCAP_CHUNK_SIZE: usize = 10_000;
+/// Initial chunk size for incremental loading
+/// Start small for fast initial feedback, then grow to handle merge overhead
+const PCAP_INITIAL_CHUNK_SIZE: usize = 1 << 14; // 16,384 packets
+const PCAP_MAX_CHUNK_SIZE: usize = 1 << 20; // 1,048,576 packets
+const PCAP_CHUNKS_BEFORE_GROWTH: usize = 3; // Double chunk size every 3 chunks
 
 /// Represents a parsed network packet for display
 #[derive(Debug, Clone)]
@@ -360,6 +363,8 @@ fn parse_legacy_pcap<P: AsRef<Path>>(
     let mut bytes_processed = 0u64;
     let mut last_log_time = std::time::Instant::now();
     let mut packets_since_log = 0;
+    let mut chunk_count = 0;
+    let mut current_chunk_size = PCAP_INITIAL_CHUNK_SIZE;
 
     loop {
         match pcap_reader.next() {
@@ -376,8 +381,16 @@ fn parse_legacy_pcap<P: AsRef<Path>>(
                         line_number += 1;
                         packets_since_log += 1;
 
-                        if chunk_lines.len() >= PCAP_CHUNK_SIZE {
+                        if chunk_lines.len() >= current_chunk_size {
                             source.append_lines(std::mem::take(&mut chunk_lines));
+                            chunk_count += 1;
+                            
+                            // Grow chunk size exponentially (double every N chunks)
+                            if chunk_count % PCAP_CHUNKS_BEFORE_GROWTH == 0 && current_chunk_size < PCAP_MAX_CHUNK_SIZE {
+                                current_chunk_size = (current_chunk_size * 2).min(PCAP_MAX_CHUNK_SIZE);
+                                log::debug!("Increased chunk size to {} packets", current_chunk_size);
+                            }
+                            
                             let progress = if file_size > 0 {
                                 bytes_processed as f32 / file_size as f32
                             } else {
@@ -461,6 +474,8 @@ fn parse_pcapng<P: AsRef<Path>>(
     let mut if_tsresol: u64 = 1_000_000;
     let mut last_log_time = std::time::Instant::now();
     let mut packets_since_log = 0;
+    let mut chunk_count = 0;
+    let mut current_chunk_size = PCAP_INITIAL_CHUNK_SIZE;
 
     loop {
         match pcap_reader.next() {
@@ -501,8 +516,16 @@ fn parse_pcapng<P: AsRef<Path>>(
                             line_number += 1;
                             packets_since_log += 1;
 
-                            if chunk_lines.len() >= PCAP_CHUNK_SIZE {
+                            if chunk_lines.len() >= current_chunk_size {
                                 source.append_lines(std::mem::take(&mut chunk_lines));
+                                chunk_count += 1;
+                                
+                                // Grow chunk size exponentially (double every N chunks)
+                                if chunk_count % PCAP_CHUNKS_BEFORE_GROWTH == 0 && current_chunk_size < PCAP_MAX_CHUNK_SIZE {
+                                    current_chunk_size = (current_chunk_size * 2).min(PCAP_MAX_CHUNK_SIZE);
+                                    log::debug!("Increased chunk size to {} packets", current_chunk_size);
+                                }
+                                
                                 let progress = if file_size > 0 {
                                     bytes_processed as f32 / file_size as f32
                                 } else {

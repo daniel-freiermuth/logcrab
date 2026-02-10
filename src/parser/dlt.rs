@@ -71,8 +71,11 @@ impl<R: Read> Read for ProgressReader<R> {
     }
 }
 
-/// Chunk size for incremental loading (send update every N lines)
-const DLT_CHUNK_SIZE: usize = 10_000;
+/// Initial chunk size for incremental loading
+/// Start small for fast initial feedback, then grow to handle merge overhead
+const DLT_INITIAL_CHUNK_SIZE: usize = 1 << 14; // 16,384 messages
+const DLT_MAX_CHUNK_SIZE: usize = 1 << 19; // 524,288 messages (smaller than PCAP since DLT messages are heavier)
+const DLT_CHUNKS_BEFORE_GROWTH: usize = 3; // Double chunk size every 3 chunks
 
 /// Parse a DLT binary file with incremental loading
 ///
@@ -116,6 +119,8 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
     let mut chunk_lines = Vec::new();
     let mut line_number = 1;
     let mut last_progress_update = 0u64;
+    let mut chunk_count = 0;
+    let mut current_chunk_size = DLT_INITIAL_CHUNK_SIZE;
 
     loop {
         match read_message(&mut reader, None) {
@@ -159,8 +164,15 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                     line_number += 1;
 
                     // Send chunk when we have enough lines
-                    if chunk_lines.len() >= DLT_CHUNK_SIZE {
+                    if chunk_lines.len() >= current_chunk_size {
                         source.append_lines(std::mem::take(&mut chunk_lines));
+                        chunk_count += 1;
+                        
+                        // Grow chunk size exponentially (double every N chunks)
+                        if chunk_count % DLT_CHUNKS_BEFORE_GROWTH == 0 && current_chunk_size < DLT_MAX_CHUNK_SIZE {
+                            current_chunk_size = (current_chunk_size * 2).min(DLT_MAX_CHUNK_SIZE);
+                            log::debug!("Increased DLT chunk size to {} messages", current_chunk_size);
+                        }
 
                         let bytes_read = bytes_read_counter.get();
                         let progress = bytes_read as f32 / file_size as f32;
