@@ -33,7 +33,7 @@ use tokio::sync::watch::{self, Ref};
 /// - Deduplicates requests via the task worker
 pub struct AsyncCache<D, K, V> {
     dedup_key: D,
-    pending_key: Option<K>,
+    last_submitted_key: Option<K>,
     rx: watch::Receiver<Option<(K, V)>>,
     tx: watch::Sender<Option<(K, V)>>,
 }
@@ -52,7 +52,7 @@ where
         let (tx, rx) = watch::channel(None);
         Self {
             dedup_key,
-            pending_key: None,
+            last_submitted_key: None,
             rx,
             tx,
         }
@@ -83,12 +83,12 @@ where
         V: Send + Sync + 'static,
         F: FnOnce() -> V + Send + 'static,
     {
-        // Already pending?
-        if self.pending_key.as_ref() == Some(&key) {
+        // Already submitted for this key?
+        if self.last_submitted_key.as_ref() == Some(&key) {
             return;
         }
 
-        self.pending_key = Some(key.clone());
+        self.last_submitted_key = Some(key.clone());
         let tx = self.tx.clone();
         let dedup = self.dedup_key.clone();
 
