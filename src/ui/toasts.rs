@@ -335,11 +335,12 @@ impl ToastManager {
                     ui.colored_label(Color32::from_rgb(255, 100, 100), error);
                 } else {
                     // Truncate long messages for display
-                    let display_message = if state.message.len() > 50 {
-                        format!(
-                            "...{}",
-                            &state.message[state.message.len().saturating_sub(47)..]
-                        )
+                    let display_message = if state.message.chars().count() > 50 {
+                        // Take the last 47 characters
+                        let char_count = state.message.chars().count();
+                        let skip_chars = char_count.saturating_sub(47);
+                        let truncated: String = state.message.chars().skip(skip_chars).collect();
+                        format!("...{}", truncated)
                     } else {
                         state.message.clone()
                     };
