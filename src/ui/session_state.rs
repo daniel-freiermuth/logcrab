@@ -1,7 +1,7 @@
 // LogCrab - GPL-3.0-or-later
 // This file is part of LogCrab.
 //
-// Copyright (C) 2025 Daniel Freiermuth
+// Copyright (C) 2026 Daniel Freiermuth
 //
 // LogCrab is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
