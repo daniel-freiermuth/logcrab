@@ -3,6 +3,7 @@ pub mod generic;
 pub mod line;
 pub mod logcat;
 pub mod logline_types;
+pub mod pcap;
 
 use chrono::Datelike;
 use fancy_regex::Regex;

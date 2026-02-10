@@ -341,7 +341,7 @@ impl SourceData {
                     .ok_or_else(|| "DLT message missing header timestamp".to_string())?;
                 crate::parser::dlt::dlt_header_time_to_timedelta(header_ts)
             }
-            LogLineVariant::Generic(_) | LogLineVariant::Logcat(_) => {
+            LogLineVariant::Generic(_) | LogLineVariant::Logcat(_) | LogLineVariant::Pcap(_) => {
                 return Err("Reference line is not a DLT entry".to_string())
             }
         };

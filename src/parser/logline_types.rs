@@ -48,6 +48,7 @@ pub enum LogLineVariant {
     Generic(GenericLogLine),
     Logcat(LogcatLogLine),
     Dlt(DltLogLine),
+    Pcap(PcapLogLine),
 }
 
 impl LogLineCore for LogLineVariant {
@@ -56,6 +57,7 @@ impl LogLineCore for LogLineVariant {
             Self::Generic(l) => l.timestamp(),
             Self::Logcat(l) => l.timestamp(),
             Self::Dlt(l) => l.timestamp(),
+            Self::Pcap(l) => l.timestamp(),
         }
     }
 
@@ -64,6 +66,7 @@ impl LogLineCore for LogLineVariant {
             Self::Generic(l) => l.message(),
             Self::Logcat(l) => l.message(),
             Self::Dlt(l) => l.message(),
+            Self::Pcap(l) => l.message(),
         }
     }
 
@@ -72,6 +75,7 @@ impl LogLineCore for LogLineVariant {
             Self::Generic(l) => l.raw(),
             Self::Logcat(l) => l.raw(),
             Self::Dlt(l) => l.raw(),
+            Self::Pcap(l) => l.raw(),
         }
     }
 
@@ -80,6 +84,7 @@ impl LogLineCore for LogLineVariant {
             Self::Generic(l) => l.template_key(),
             Self::Logcat(l) => l.template_key(),
             Self::Dlt(l) => l.template_key(),
+            Self::Pcap(l) => l.template_key(),
         }
     }
 
@@ -88,6 +93,7 @@ impl LogLineCore for LogLineVariant {
             Self::Generic(l) => l.line_number(),
             Self::Logcat(l) => l.line_number(),
             Self::Dlt(l) => l.line_number(),
+            Self::Pcap(l) => l.line_number(),
         }
     }
 
@@ -96,6 +102,7 @@ impl LogLineCore for LogLineVariant {
             Self::Generic(l) => l.anomaly_score(),
             Self::Logcat(l) => l.anomaly_score(),
             Self::Dlt(l) => l.anomaly_score(),
+            Self::Pcap(l) => l.anomaly_score(),
         }
     }
 
@@ -104,6 +111,7 @@ impl LogLineCore for LogLineVariant {
             Self::Generic(l) => l.set_anomaly_score(score),
             Self::Logcat(l) => l.set_anomaly_score(score),
             Self::Dlt(l) => l.set_anomaly_score(score),
+            Self::Pcap(l) => l.set_anomaly_score(score),
         }
     }
 }
@@ -428,6 +436,62 @@ impl LogLineCore for DltLogLine {
     fn template_key(&self) -> String {
         let msg = self.format_message();
         crate::parser::normalize_message(&msg)
+    }
+
+    fn line_number(&self) -> usize {
+        self.line_number
+    }
+
+    fn anomaly_score(&self) -> f64 {
+        self.anomaly_score
+    }
+
+    fn set_anomaly_score(&mut self, score: f64) {
+        self.anomaly_score = score;
+    }
+}
+
+// ============================================================================
+// PCAP Log Line
+// ============================================================================
+
+/// PCAP (Packet Capture) format log line representing a network packet
+#[derive(Debug, Clone)]
+pub struct PcapLogLine {
+    /// Parsed packet information
+    pub packet_info: crate::parser::pcap::PacketInfo,
+    /// Original packet number in source file
+    pub line_number: usize,
+    /// Anomaly score (mutable)
+    pub anomaly_score: f64,
+}
+
+impl PcapLogLine {
+    pub const fn new(packet_info: crate::parser::pcap::PacketInfo, line_number: usize) -> Self {
+        Self {
+            packet_info,
+            line_number,
+            anomaly_score: 0.0,
+        }
+    }
+}
+
+impl LogLineCore for PcapLogLine {
+    fn timestamp(&self) -> DateTime<Local> {
+        self.packet_info.timestamp
+    }
+
+    fn message(&self) -> String {
+        self.packet_info.format_message()
+    }
+
+    fn raw(&self) -> String {
+        self.packet_info.format_raw()
+    }
+
+    fn template_key(&self) -> String {
+        // For pcap, normalize the protocol + port combination
+        crate::parser::normalize_message(&self.packet_info.format_message())
     }
 
     fn line_number(&self) -> usize {

@@ -19,7 +19,7 @@
 use crate::anomaly::{create_default_scorer, normalize_scores};
 use crate::config::DltTimestampSource;
 use crate::core::log_store::SourceData;
-use crate::parser::{detect_format, dlt, generic, logcat, LogFormat};
+use crate::parser::{detect_format, dlt, generic, logcat, pcap, LogFormat};
 use crate::ui::ProgressToastHandle;
 use std::fs::File;
 use std::io::Read;
@@ -89,6 +89,33 @@ impl LogFileLoader {
         }
     }
 
+    fn read_pcap_file(
+        path: &Path,
+        data_source: &Arc<SourceData>,
+        toast: &ProgressToastHandle,
+    ) -> bool {
+        log::info!("Detected PCAP file, using pcap parser");
+        toast.update(0.0, format!("Parsing PCAP file {}...", path.display()));
+
+        // Create progress callback that updates the toast
+        let toast_clone = toast.clone();
+        let progress_callback: ProgressCallback = Box::new(move |progress, message| {
+            toast_clone.update(progress, message);
+        });
+
+        match pcap::parse_pcap_file_with_progress(path, data_source, &progress_callback) {
+            Ok(total_packets) => {
+                log::info!("Successfully parsed {total_packets} packets");
+                true
+            }
+            Err(e) => {
+                log::error!("Failed to parse PCAP file: {e}");
+                toast.set_error(format!("Failed to parse PCAP file: {e}"));
+                false
+            }
+        }
+    }
+
     #[allow(clippy::needless_pass_by_value)] // Values are moved into thread::spawn closure
     fn process_file_background(
         path: PathBuf,
@@ -119,9 +146,19 @@ impl LogFileLoader {
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"));
 
+        // Check if this is a PCAP file by extension
+        let is_pcap_file = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("pcap") || ext.eq_ignore_ascii_case("pcapng")
+            });
+
         // Load file based on detected format
         let source_added = if is_dlt_file {
             Self::read_dlt_file(&path, &data_source, &toast, dlt_timestamp_source)
+        } else if is_pcap_file {
+            Self::read_pcap_file(&path, &data_source, &toast)
         } else {
             // Read file content first to detect format
             let Some(content) = Self::read_file_content(&path, &toast) else {
