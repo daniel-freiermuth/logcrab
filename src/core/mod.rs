@@ -3,6 +3,7 @@ pub mod filter_worker;
 pub mod histogram_worker;
 pub mod log_file;
 pub mod log_store;
+mod queue_map;
 pub mod search_rule;
 pub mod search_state;
 pub mod session;

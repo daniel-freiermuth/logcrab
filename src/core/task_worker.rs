@@ -21,7 +21,7 @@
 //! Provides a background thread that executes tasks, keeping only the latest
 //! task per dedup key. Older pending tasks for the same key are discarded.
 
-use std::collections::BTreeMap;
+use crate::core::queue_map::QueueMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
@@ -64,7 +64,7 @@ pub struct TaskWorker<D> {
 
 impl<D> TaskWorker<D>
 where
-    D: Ord + Clone + Send + 'static,
+    D: std::hash::Hash + Eq + Copy + Send + 'static,
 {
     /// Create a new task worker with a background thread.
     #[must_use]
@@ -87,10 +87,11 @@ where
     }
 
     fn worker_loop(request_rx: Receiver<(D, Task)>) {
-        let mut pending: BTreeMap<D, Task> = BTreeMap::new();
+        // Queue-map for fair FIFO processing with coalescing
+        let mut pending = QueueMap::new();
 
         // Drain all available requests, keeping only latest per key
-        let drain = |pending: &mut BTreeMap<D, Task>, rx: &Receiver<(D, Task)>| {
+        let drain = |pending: &mut QueueMap<D, Task>, rx: &Receiver<(D, Task)>| {
             while let Ok((key, work)) = rx.try_recv() {
                 pending.insert(key, work);
             }
@@ -101,7 +102,8 @@ where
             pending.insert(key, work);
             drain(&mut pending, &request_rx);
 
-            while let Some((_key, task)) = pending.pop_first() {
+            // Process tasks in FIFO order (not by key ordering)
+            while let Some((_key, task)) = pending.pop_front() {
                 task();
                 drain(&mut pending, &request_rx);
             }
@@ -109,7 +111,7 @@ where
     }
 }
 
-impl<D: Ord + Clone + Send + 'static> Default for TaskWorker<D> {
+impl<D: std::hash::Hash + Eq + Copy + Send + 'static> Default for TaskWorker<D> {
     fn default() -> Self {
         Self::new()
     }

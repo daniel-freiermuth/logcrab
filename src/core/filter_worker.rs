@@ -24,10 +24,10 @@
 //! The worker is owned by the application and shuts down gracefully when dropped.
 
 use crate::core::log_store::StoreID;
+use crate::core::queue_map::QueueMap;
 use crate::core::LogStore;
 use crate::parser::line::LogLineCore;
 use fancy_regex::Regex;
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -118,18 +118,16 @@ impl FilterWorker {
 
         log::debug!("Filter worker thread started");
 
-        // Persistent map of pending requests per filter
-        // This allows us to accumulate and update requests while processing others
-        let mut pending_requests: BTreeMap<usize, FilterRequest> = BTreeMap::new();
+        // Queue-map for fair FIFO processing with coalescing
+        let mut pending_requests = QueueMap::new();
 
-        // Helper to drain all available requests into the map
-        let drain_pending = |pending: &mut BTreeMap<usize, FilterRequest>| {
+        // Helper to drain all available requests from the channel
+        let drain_pending = |pending: &mut QueueMap<usize, FilterRequest>| {
             while let Ok(request) = request_rx.try_recv() {
                 let filter_id = request.filter_id;
-                if pending.contains_key(&filter_id) {
-                    log::trace!("Updating pending request for filter {filter_id}",);
+                if !pending.insert(filter_id, request) {
+                    log::trace!("Coalescing request for filter {filter_id}");
                 }
-                pending.insert(filter_id, request);
             }
         };
 
@@ -142,8 +140,7 @@ impl FilterWorker {
             // Collect any additional pending requests
             drain_pending(&mut pending_requests);
 
-            while let Some((filter_id, request)) = pending_requests.pop_first() {
-
+            while let Some((filter_id, request)) = pending_requests.pop_front() {
                 profiling::scope!("process_single_filter");
                 log::trace!("Processing filter request (search: '{:?}')", request.regex);
 

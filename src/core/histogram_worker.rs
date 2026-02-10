@@ -24,10 +24,10 @@
 //! The worker is owned by the application and shuts down gracefully when dropped.
 
 use crate::core::log_store::StoreID;
+use crate::core::queue_map::QueueMap;
 use crate::core::LogStore;
 use crate::parser::line::LogLineCore;
 use chrono::{DateTime, Local};
-use std::collections::BTreeMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
@@ -151,31 +151,31 @@ impl HistogramWorker {
 
         log::debug!("Histogram worker thread started");
 
-        // Persistent map of pending requests per filter
-        // This allows us to accumulate and update requests while processing others
-        let mut pending_requests: BTreeMap<usize, HistogramRequest> = BTreeMap::new();
+        // Queue-map for fair FIFO processing with coalescing
+        let mut pending_requests = QueueMap::new();
 
-        // Helper to drain all available requests into the map
-        let drain_pending = |map: &mut BTreeMap<usize, HistogramRequest>| {
+        // Helper to drain all available requests from the channel
+        let drain_pending = |pending: &mut QueueMap<usize, HistogramRequest>| {
             while let Ok(request) = request_rx.try_recv() {
                 let filter_id = request.filter_id;
-                if map.contains_key(&filter_id) {
-                    log::trace!("Updating pending histogram request for filter {filter_id}");
+                let is_new = pending.insert(filter_id, request);
+                if !is_new {
+                    log::trace!("Coalescing histogram request for filter {filter_id}");
                 }
-                map.insert(filter_id, request);
             }
         };
 
         // Main processing loop - exits when all senders are dropped
         while let Ok(first_request) = request_rx.recv() {
             profiling::scope!("process_histogram_request");
-            pending_requests.insert(first_request.filter_id, first_request);
+            let first_filter_id = first_request.filter_id;
+            pending_requests.insert(first_filter_id, first_request);
 
             // Collect any additional pending requests
             drain_pending(&mut pending_requests);
 
-            while let Some((filter_id, request)) = pending_requests.pop_first() {
-
+            // Process histograms in FIFO order (not by filter_id)
+            while let Some((filter_id, request)) = pending_requests.pop_front() {
                 profiling::scope!("process_single_histogram");
                 log::trace!("Processing histogram request for filter {filter_id}");
 
