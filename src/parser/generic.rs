@@ -4,8 +4,9 @@ use fancy_regex::Regex;
 use std::sync::LazyLock;
 
 // ISO 8601: 2025-11-20T14:23:45.123Z or 2025-11-20 14:23:45.123
+// Supports timezone offsets with or without colon: +01:00 or +0100
 static ISO_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)")
+    Regex::new(r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:?\d{2})?)")
         .expect("valid regex literal")
 });
 
@@ -54,7 +55,23 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = ISO_TIMESTAMP.captures(remaining) {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(&caps[1]) {
+        let ts_str = &caps[1];
+        
+        // Normalize timezone offset: convert +0100 to +01:00 for RFC3339 compatibility
+        let normalized_ts = if let Some(tz_pos) = ts_str.rfind(|c| c == '+' || c == '-') {
+            let (datetime_part, tz_part) = ts_str.split_at(tz_pos);
+            // Check if timezone is in format +0100 (5 chars: sign + 4 digits, no colon)
+            if tz_part.len() == 5 && !tz_part.contains(':') {
+                // Insert colon: +0100 -> +01:00
+                format!("{}{}:{}", datetime_part.replace(' ', "T"), &tz_part[..3], &tz_part[3..])
+            } else {
+                ts_str.replace(' ', "T")
+            }
+        } else {
+            ts_str.replace(' ', "T")
+        };
+        
+        if let Ok(dt) = DateTime::parse_from_rfc3339(&normalized_ts) {
             timestamp = Some(dt.with_timezone(&Local));
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
@@ -247,5 +264,35 @@ mod tests {
         let raw = "2025-11-20T14:23:45+05:30 INFO Server running".to_string();
         let line = parse_generic(raw, 1).expect("Should parse ISO timestamp with timezone offset");
         assert_eq!(line.message(), "INFO Server running");
+    }
+
+    #[test]
+    fn test_iso_timestamp_with_ms_and_timezone_offset() {
+        // ISO 8601 with milliseconds and timezone offset with colon
+        let raw = "2026-02-05T09:20:23.638+01:00 INFO Server started".to_string();
+        let line = parse_generic(raw, 1)
+            .expect("Should parse ISO timestamp with milliseconds and timezone offset");
+        assert_eq!(line.message(), "INFO Server started");
+        assert_eq!(line.timestamp().format("%Y-%m-%d").to_string(), "2026-02-05");
+    }
+
+    #[test]
+    fn test_iso_timestamp_with_timezone_offset_no_colon() {
+        // ISO 8601 with timezone offset without colon (e.g., +0100 instead of +01:00)
+        let raw = "2026-02-05T09:20:23+0100 INFO Application started".to_string();
+        let line = parse_generic(raw, 1)
+            .expect("Should parse ISO timestamp with timezone offset without colon");
+        assert_eq!(line.message(), "INFO Application started");
+        // Verify the timestamp is correctly parsed
+        assert_eq!(line.timestamp().format("%Y-%m-%d").to_string(), "2026-02-05");
+    }
+
+    #[test]
+    fn test_iso_timestamp_with_negative_timezone_no_colon() {
+        // ISO 8601 with negative timezone offset without colon
+        let raw = "2026-02-10T15:30:00-0500 WARN Connection timeout".to_string();
+        let line = parse_generic(raw, 1)
+            .expect("Should parse ISO timestamp with negative timezone offset without colon");
+        assert_eq!(line.message(), "WARN Connection timeout");
     }
 }
