@@ -96,7 +96,7 @@ impl SearchState {
         self.id
     }
 
-    pub const fn get_filtered_indices_cached(&self) -> &Vec<StoreID> {
+    pub fn get_filtered_indices_cached(&self) -> &Vec<StoreID> {
         profiling::scope!("SearchState::get_filtered_indices");
         &self.filtered_indices
     }
