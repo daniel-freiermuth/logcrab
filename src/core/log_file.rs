@@ -19,7 +19,7 @@
 use crate::anomaly::{create_default_scorer, normalize_scores};
 use crate::config::DltTimestampSource;
 use crate::core::log_store::SourceData;
-use crate::parser::{detect_format, dlt, generic, logcat, pcap, LogFormat};
+use crate::parser::{btsnoop, detect_format, dlt, generic, logcat, pcap, LogFormat};
 use crate::ui::ProgressToastHandle;
 use std::fs::File;
 use std::io::Read;
@@ -29,6 +29,12 @@ use std::thread;
 
 /// Progress callback type for DLT parsing
 pub type ProgressCallback = Box<dyn Fn(f32, &str) + Send>;
+
+/// Packet capture format types
+enum PacketFormat {
+    Pcap,
+    Btsnoop,
+}
 
 /// Handles asynchronous loading and processing of log files
 pub struct LogFileLoader;
@@ -51,6 +57,34 @@ impl LogFileLoader {
         });
 
         data_source
+    }
+
+    /// Detect packet capture format by reading magic bytes
+    fn detect_packet_format(path: &Path) -> Option<PacketFormat> {
+        use std::io::Read;
+
+        let mut file = File::open(path).ok()?;
+        let mut magic = [0u8; 8];
+        file.read_exact(&mut magic).ok()?;
+
+        // Check btsnoop magic: "btsnoop\0"
+        if &magic == b"btsnoop\0" {
+            return Some(PacketFormat::Btsnoop);
+        }
+
+        // Check PCAP magic bytes (various formats)
+        match &magic[0..4] {
+            // Legacy pcap (little-endian)
+            [0xd4, 0xc3, 0xb2, 0xa1]
+            // Legacy pcap (big-endian)
+            | [0xa1, 0xb2, 0xc3, 0xd4]
+            // Legacy pcap with nanosecond timestamps
+            | [0x4d, 0x3c, 0xb2, 0xa1]
+            | [0xa1, 0xb2, 0x3c, 0x4d]
+            // pcapng (Section Header Block)
+            | [0x0a, 0x0d, 0x0d, 0x0a] => Some(PacketFormat::Pcap),
+            _ => None,
+        }
     }
 
     fn read_dlt_file(
@@ -116,6 +150,33 @@ impl LogFileLoader {
         }
     }
 
+    fn read_btsnoop_file(
+        path: &Path,
+        data_source: &Arc<SourceData>,
+        toast: &ProgressToastHandle,
+    ) -> bool {
+        log::info!("Detected BTSnoop file, using btsnoop parser");
+        toast.update(0.0, format!("Parsing BTSnoop file {}...", path.display()));
+
+        // Create progress callback that updates the toast
+        let toast_clone = toast.clone();
+        let progress_callback: ProgressCallback = Box::new(move |progress, message| {
+            toast_clone.update(progress, message);
+        });
+
+        match btsnoop::parse_btsnoop_file_with_progress(path, data_source, &progress_callback) {
+            Ok(total_packets) => {
+                log::info!("Successfully parsed {total_packets} HCI packets");
+                true
+            }
+            Err(e) => {
+                log::error!("Failed to parse BTSnoop file: {e}");
+                toast.set_error(format!("Failed to parse BTSnoop file: {e}"));
+                false
+            }
+        }
+    }
+
     #[allow(clippy::needless_pass_by_value)] // Values are moved into thread::spawn closure
     fn process_file_background(
         path: PathBuf,
@@ -146,17 +207,38 @@ impl LogFileLoader {
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"));
 
-        // Check if this is a PCAP file by extension
-        let is_pcap_file = path
+        // Check if this is a PCAP or BTSnoop file by extension
+        // Note: BTSnoop files sometimes have .pcap extension, so we need magic byte detection
+        let has_pcap_ext = path
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| {
                 ext.eq_ignore_ascii_case("pcap") || ext.eq_ignore_ascii_case("pcapng")
             });
 
+        // Check if this is a BTSnoop file by extension
+        let has_btsnoop_ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("btsnoop"));
+
+        // For files with .pcap extension, check magic bytes to distinguish btsnoop from pcap
+        let (is_pcap_file, is_btsnoop_file) = if has_pcap_ext {
+            // Check magic bytes to determine if it's btsnoop or pcap
+            match Self::detect_packet_format(&path) {
+                Some(PacketFormat::Btsnoop) => (false, true),
+                Some(PacketFormat::Pcap) => (true, false),
+                None => (true, false), // Default to PCAP if detection fails
+            }
+        } else {
+            (false, has_btsnoop_ext)
+        };
+
         // Load file based on detected format
         let source_added = if is_dlt_file {
             Self::read_dlt_file(&path, &data_source, &toast, dlt_timestamp_source)
+        } else if is_btsnoop_file {
+            Self::read_btsnoop_file(&path, &data_source, &toast)
         } else if is_pcap_file {
             Self::read_pcap_file(&path, &data_source, &toast)
         } else {

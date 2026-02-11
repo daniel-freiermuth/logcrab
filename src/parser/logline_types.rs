@@ -49,6 +49,7 @@ pub enum LogLineVariant {
     Logcat(LogcatLogLine),
     Dlt(DltLogLine),
     Pcap(PcapLogLine),
+    Btsnoop(BtsnoopLogLine),
 }
 
 impl LogLineCore for LogLineVariant {
@@ -58,6 +59,7 @@ impl LogLineCore for LogLineVariant {
             Self::Logcat(l) => l.timestamp(),
             Self::Dlt(l) => l.timestamp(),
             Self::Pcap(l) => l.timestamp(),
+            Self::Btsnoop(l) => l.timestamp(),
         }
     }
 
@@ -67,6 +69,7 @@ impl LogLineCore for LogLineVariant {
             Self::Logcat(l) => l.message(),
             Self::Dlt(l) => l.message(),
             Self::Pcap(l) => l.message(),
+            Self::Btsnoop(l) => l.message(),
         }
     }
 
@@ -76,6 +79,7 @@ impl LogLineCore for LogLineVariant {
             Self::Logcat(l) => l.raw(),
             Self::Dlt(l) => l.raw(),
             Self::Pcap(l) => l.raw(),
+            Self::Btsnoop(l) => l.raw(),
         }
     }
 
@@ -85,6 +89,7 @@ impl LogLineCore for LogLineVariant {
             Self::Logcat(l) => l.template_key(),
             Self::Dlt(l) => l.template_key(),
             Self::Pcap(l) => l.template_key(),
+            Self::Btsnoop(l) => l.template_key(),
         }
     }
 
@@ -94,6 +99,7 @@ impl LogLineCore for LogLineVariant {
             Self::Logcat(l) => l.line_number(),
             Self::Dlt(l) => l.line_number(),
             Self::Pcap(l) => l.line_number(),
+            Self::Btsnoop(l) => l.line_number(),
         }
     }
 
@@ -103,6 +109,7 @@ impl LogLineCore for LogLineVariant {
             Self::Logcat(l) => l.anomaly_score(),
             Self::Dlt(l) => l.anomaly_score(),
             Self::Pcap(l) => l.anomaly_score(),
+            Self::Btsnoop(l) => l.anomaly_score(),
         }
     }
 
@@ -112,6 +119,7 @@ impl LogLineCore for LogLineVariant {
             Self::Logcat(l) => l.set_anomaly_score(score),
             Self::Dlt(l) => l.set_anomaly_score(score),
             Self::Pcap(l) => l.set_anomaly_score(score),
+            Self::Btsnoop(l) => l.set_anomaly_score(score),
         }
     }
 }
@@ -499,6 +507,62 @@ impl LogLineCore for PcapLogLine {
     fn template_key(&self) -> String {
         // For pcap, normalize the protocol + port combination
         crate::parser::normalize_message(&self.packet_info.format_message())
+    }
+
+    fn line_number(&self) -> usize {
+        self.line_number
+    }
+
+    fn anomaly_score(&self) -> f64 {
+        self.anomaly_score
+    }
+
+    fn set_anomaly_score(&mut self, score: f64) {
+        self.anomaly_score = score;
+    }
+}
+
+// ============================================================================
+// BTSnoop Log Line
+// ============================================================================
+
+/// BTSnoop (Bluetooth HCI log) format log line representing an HCI packet
+#[derive(Debug, Clone)]
+pub struct BtsnoopLogLine {
+    /// Parsed HCI packet information
+    pub hci_info: crate::parser::btsnoop::HciPacketInfo,
+    /// Original packet number in source file
+    pub line_number: usize,
+    /// Anomaly score (mutable)
+    pub anomaly_score: f64,
+}
+
+impl BtsnoopLogLine {
+    pub const fn new(hci_info: crate::parser::btsnoop::HciPacketInfo, line_number: usize) -> Self {
+        Self {
+            hci_info,
+            line_number,
+            anomaly_score: 0.0,
+        }
+    }
+}
+
+impl LogLineCore for BtsnoopLogLine {
+    fn timestamp(&self) -> DateTime<Local> {
+        self.hci_info.timestamp
+    }
+
+    fn message(&self) -> String {
+        self.hci_info.format_message()
+    }
+
+    fn raw(&self) -> String {
+        self.hci_info.format_raw()
+    }
+
+    fn template_key(&self) -> String {
+        // For btsnoop, normalize the packet type + direction combination
+        crate::parser::normalize_message(&self.hci_info.format_message())
     }
 
     fn line_number(&self) -> usize {
