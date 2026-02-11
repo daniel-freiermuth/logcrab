@@ -1,3 +1,4 @@
+pub mod btsnoop;
 pub mod dlt;
 pub mod generic;
 pub mod line;
