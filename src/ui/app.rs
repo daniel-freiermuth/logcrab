@@ -149,7 +149,7 @@ impl LogCrabApp {
     /// Show file dialog and load selected file
     fn open_file_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("Log Files", &["log", "txt", "dlt", "pcap", "pcapng", "crab"])
+            .add_filter("Log Files", &["log", "txt", "dlt", "pcap", "pcapng", "btsnoop", "snoop", "crab"])
             .add_filter("All Files", &["*"]);
 
         if let Some(ref dir) = self.global_config.last_log_directory {
@@ -174,7 +174,7 @@ impl LogCrabApp {
     /// Show file dialog and add selected file(s) to the current workspace
     fn add_file_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("Log Files", &["log", "txt", "dlt", "pcap", "pcapng", "crab"])
+            .add_filter("Log Files", &["log", "txt", "dlt", "pcap", "pcapng", "btsnoop", "snoop", "crab"])
             .add_filter("All Files", &["*"]);
 
         if let Some(ref dir) = self.global_config.last_log_directory {
