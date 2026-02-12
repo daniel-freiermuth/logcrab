@@ -220,7 +220,7 @@ impl BookmarkPanel {
             .min_scrolled_height(body_height)
             .drag_to_scroll(false)
             .max_scroll_height(body_height)
-            .column(Column::initial(60.0).resizable(true).clip(true))
+            .column(Column::initial(150.0).resizable(true).clip(true))
             .column(Column::initial(175.0).resizable(true).clip(true))
             .column(Column::initial(200.0).resizable(true).clip(true))
             .column(Column::remainder().resizable(true).clip(true))
