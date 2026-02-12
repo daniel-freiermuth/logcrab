@@ -93,8 +93,6 @@ pub struct HistogramData {
     pub buckets: Vec<usize>,
     /// Anomaly score distribution per bucket
     pub anomaly_buckets: Vec<AnomalyDistribution>,
-    /// Filtered indices used for histogram computation
-    pub filtered_indices: Vec<StoreID>,
 }
 
 /// Handle to send histogram requests to the background worker.
@@ -258,7 +256,6 @@ impl HistogramWorker {
                 full_end,
                 buckets,
                 anomaly_buckets,
-                filtered_indices,
             }),
         }
     }
