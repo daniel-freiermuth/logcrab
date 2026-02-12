@@ -519,8 +519,8 @@ impl BookmarkPanel {
             }
         }
 
-        // Save on Enter
-        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !bookmark_name_input.is_empty() {
+        // Save on Enter (allows empty string to remove annotation)
+        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             events.push(BookmarkPanelEvent::BookmarkRenamed {
                 store_id: *store_id,
                 new_name: bookmark_name_input.clone(),
