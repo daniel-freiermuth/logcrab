@@ -20,9 +20,7 @@ use crate::core::log_store::StoreID;
 use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
-use crate::ui::tabs::filter_tab::log_table::{
-    bookmarked_row_color, score_to_color, selected_row_color,
-};
+use crate::ui::tabs::filter_tab::log_table::{score_to_color, selected_row_color};
 use chrono::Local;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -438,13 +436,11 @@ impl BookmarkPanel {
     }
 
     fn paint_selection_background(ui: &Ui, is_selected: bool, dark_mode: bool) {
-        // All bookmark rows have the bookmark background
-        let bg_color = if is_selected {
-            selected_row_color(dark_mode)
-        } else {
-            bookmarked_row_color(dark_mode)
-        };
-        ui.painter()
-            .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
+        // Only paint background for selected rows
+        if is_selected {
+            let bg_color = selected_row_color(dark_mode);
+            ui.painter()
+                .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
+        }
     }
 }
