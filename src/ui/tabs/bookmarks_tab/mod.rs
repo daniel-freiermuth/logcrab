@@ -37,9 +37,46 @@ pub struct BookmarksView {
     edited_store_id: Option<StoreID>,
     bookmark_name_input: String,
     enter_pressed_this_frame: bool,
+    last_selected_line: Option<StoreID>,
+    closest_bookmark_index: Option<usize>,
 }
 
 impl BookmarksView {
+    /// Calculate scroll position and closest bookmark index
+    fn calculate_scroll_and_closest(
+        &mut self,
+        selected_line_index: Option<StoreID>,
+        bookmarks: &[BookmarkData],
+        store: &crate::core::LogStore,
+    ) -> (Option<usize>, Option<usize>) {
+        // Check if selection changed
+        if self.last_selected_line == selected_line_index {
+            return (None, self.closest_bookmark_index);
+        }
+
+        self.last_selected_line = selected_line_index;
+
+        let Some(selected) = selected_line_index else {
+            self.closest_bookmark_index = None;
+            return (None, None);
+        };
+
+        // Find closest bookmark by timestamp
+        if bookmarks.is_empty() {
+            self.closest_bookmark_index = None;
+            return (None, None);
+        }
+
+        let closest_idx = bookmarks.partition_point(|bookmark| {
+            bookmark.store_id.cmp(&selected, store) == std::cmp::Ordering::Less
+        });
+
+        let closest_idx = closest_idx.min(bookmarks.len() - 1);
+        self.closest_bookmark_index = Some(closest_idx);
+
+        (Some(closest_idx), Some(closest_idx))
+    }
+
     /// Render the bookmarks view
     ///
     /// Returns events that occurred during rendering
@@ -49,6 +86,8 @@ impl BookmarksView {
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
+        scroll_to_row: Option<usize>,
+        closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<BookmarkPanelEvent> {
         BookmarkPanel::render(
@@ -57,6 +96,8 @@ impl BookmarksView {
             bookmarks,
             editing_bookmark,
             bookmark_name_input,
+            scroll_to_row,
+            closest_bookmark_index,
             all_filter_highlights,
         )
     }
@@ -89,6 +130,13 @@ impl BookmarksView {
         let mut bookmarks: Vec<BookmarkData> = data_state.get_all_bookmarks();
         Self::sort_bookmarks_by_timestamp(&mut bookmarks, data_state);
 
+        // Calculate scroll position and closest bookmark for highlighting
+        let (scroll_to_row, closest_bookmark_index) = self.calculate_scroll_and_closest(
+            data_state.selected_line_index,
+            &bookmarks,
+            &data_state.store,
+        );
+
         // Render using BookmarksView
         let events = Self::render(
             ui,
@@ -96,6 +144,8 @@ impl BookmarksView {
             &bookmarks,
             self.edited_store_id.as_ref(),
             &mut self.bookmark_name_input,
+            scroll_to_row,
+            closest_bookmark_index,
             all_filter_highlights,
         );
 

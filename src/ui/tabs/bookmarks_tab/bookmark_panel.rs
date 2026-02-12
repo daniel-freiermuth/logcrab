@@ -20,7 +20,7 @@ use crate::core::log_store::StoreID;
 use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
-use crate::ui::tabs::filter_tab::log_table::{score_to_color, selected_row_color};
+use crate::ui::tabs::filter_tab::log_table::{score_to_color, scrolled_to_row_color, selected_row_color};
 use chrono::Local;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -55,6 +55,8 @@ impl BookmarkPanel {
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
+        scroll_to_row: Option<usize>,
+        closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<BookmarkPanelEvent> {
         let mut events = Vec::new();
@@ -76,6 +78,8 @@ impl BookmarkPanel {
                     bookmarks,
                     editing_bookmark,
                     bookmark_name_input,
+                    scroll_to_row,
+                    closest_bookmark_index,
                     all_filter_highlights,
                     &mut events,
                 );
@@ -98,6 +102,8 @@ impl BookmarkPanel {
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
+        scroll_to_row: Option<usize>,
+        closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<BookmarkPanelEvent>,
     ) {
@@ -106,7 +112,7 @@ impl BookmarkPanel {
         let body_height = available_height - header_height - 1.0;
         let dark_mode = ui.visuals().dark_mode;
 
-        TableBuilder::new(ui)
+        let mut table = TableBuilder::new(ui)
             .striped(true)
             .resizable(false)
             .sense(egui::Sense::click())
@@ -119,8 +125,13 @@ impl BookmarkPanel {
             .column(Column::initial(175.0).resizable(true).clip(true))
             .column(Column::initial(200.0).resizable(true).clip(true))
             .column(Column::remainder().resizable(true).clip(true))
-            .column(Column::initial(40.0).resizable(false).clip(true))
-            .header(header_height, |mut header| {
+            .column(Column::initial(40.0).resizable(false).clip(true));
+
+        if let Some(row_idx) = scroll_to_row {
+            table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
+        }
+
+        table.header(header_height, |mut header| {
                 header.col(|ui| {
                     ui.strong("Annotation");
                 });
@@ -147,6 +158,7 @@ impl BookmarkPanel {
                         bookmarks,
                         editing_bookmark,
                         bookmark_name_input,
+                        closest_bookmark_index,
                         all_filter_highlights,
                         events,
                         dark_mode,
@@ -161,6 +173,7 @@ impl BookmarkPanel {
         bookmarks: &[BookmarkData],
         editing_bookmark: Option<&StoreID>,
         bookmark_name_input: &mut String,
+        closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<BookmarkPanelEvent>,
         dark_mode: bool,
@@ -173,6 +186,10 @@ impl BookmarkPanel {
             .selected_line_index
             .as_ref()
             .is_some_and(|s| s == store_id);
+
+        let is_closest = !is_selected
+            && closest_bookmark_index.is_some_and(|idx| idx == row_index)
+            && log_view_state.selected_line_index.is_some();
 
         let Some(line) = log_view_state.store.get_by_id(store_id) else {
             row.col(|ui| {
@@ -194,6 +211,7 @@ impl BookmarkPanel {
             row,
             store_id,
             is_selected,
+            is_closest,
             color,
             bookmark,
             editing_bookmark,
@@ -208,6 +226,7 @@ impl BookmarkPanel {
             row,
             store_id,
             is_selected,
+            is_closest,
             color,
             &mut row_clicked,
             &line,
@@ -219,6 +238,7 @@ impl BookmarkPanel {
             row,
             store_id,
             is_selected,
+            is_closest,
             color,
             &line,
             &mut row_clicked,
@@ -229,6 +249,7 @@ impl BookmarkPanel {
         Self::render_message_column(
             row,
             is_selected,
+            is_closest,
             color,
             &line,
             all_filter_highlights,
@@ -237,7 +258,7 @@ impl BookmarkPanel {
         );
 
         // Delete button column
-        Self::render_delete_column(row, store_id, is_selected, events, dark_mode);
+        Self::render_delete_column(row, store_id, is_selected, is_closest, events, dark_mode);
 
         if row_clicked {
             events.push(BookmarkPanelEvent::BookmarkClicked {
@@ -250,13 +271,14 @@ impl BookmarkPanel {
         row: &mut egui_extras::TableRow<'_, '_>,
         store_id: &StoreID,
         is_selected: bool,
+        is_closest: bool,
         color: Color32,
         row_clicked: &mut bool,
         line: &LogLine,
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected, dark_mode);
+            Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
             let line_number = line.line_number();
             let text = if is_selected {
@@ -283,13 +305,14 @@ impl BookmarkPanel {
         row: &mut egui_extras::TableRow<'_, '_>,
         store_id: &StoreID,
         is_selected: bool,
+        is_closest: bool,
         color: Color32,
         line: &LogLine,
         row_clicked: &mut bool,
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected, dark_mode);
+            Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
             let timestamp_str = line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
@@ -309,6 +332,7 @@ impl BookmarkPanel {
         row: &mut egui_extras::TableRow<'_, '_>,
         store_id: &StoreID,
         is_selected: bool,
+        is_closest: bool,
         color: Color32,
         bookmark: &BookmarkData,
         editing_bookmark: Option<&StoreID>,
@@ -318,7 +342,7 @@ impl BookmarkPanel {
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected, dark_mode);
+            Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
             if editing_bookmark == Some(store_id) {
                 Self::render_name_editor(ui, store_id, bookmark_name_input, events);
@@ -392,6 +416,7 @@ impl BookmarkPanel {
     fn render_message_column(
         row: &mut egui_extras::TableRow<'_, '_>,
         is_selected: bool,
+        is_closest: bool,
         color: Color32,
         line: &LogLine,
         all_filter_highlights: &[FilterHighlight],
@@ -399,7 +424,7 @@ impl BookmarkPanel {
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected, dark_mode);
+            Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
             let message = line.message();
             let job = FilterHighlight::highlight_text_with_filters(
@@ -421,11 +446,12 @@ impl BookmarkPanel {
         row: &mut egui_extras::TableRow<'_, '_>,
         store_id: &StoreID,
         is_selected: bool,
+        is_closest: bool,
         events: &mut Vec<BookmarkPanelEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            Self::paint_selection_background(ui, is_selected, dark_mode);
+            Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
             if ui.small_button("🗑").on_hover_text("Delete").clicked() {
                 events.push(BookmarkPanelEvent::BookmarkDeleted {
@@ -435,10 +461,14 @@ impl BookmarkPanel {
         });
     }
 
-    fn paint_selection_background(ui: &Ui, is_selected: bool, dark_mode: bool) {
-        // Only paint background for selected rows
+    fn paint_selection_background(ui: &Ui, is_selected: bool, is_closest: bool, dark_mode: bool) {
+        // Paint background for selected or closest rows
         if is_selected {
             let bg_color = selected_row_color(dark_mode);
+            ui.painter()
+                .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
+        } else if is_closest {
+            let bg_color = scrolled_to_row_color(dark_mode);
             ui.painter()
                 .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
         }
