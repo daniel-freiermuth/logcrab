@@ -139,6 +139,15 @@ pub const fn selected_bookmarked_row_color(dark_mode: bool) -> Color32 {
     }
 }
 
+/// Get the background color for a row that is scrolled-to (closest to selected, but not exact match)
+pub const fn scrolled_to_row_color(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(50, 55, 65) // Subtle darker blue-gray
+    } else {
+        Color32::from_rgb(220, 225, 235) // Subtle lighter blue-gray
+    }
+}
+
 /// Reusable log table component
 pub struct LogTable;
 
@@ -250,6 +259,7 @@ impl LogTable {
         selected_line_index: Option<StoreID>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         scroll_to_row: Option<usize>,
+        closest_row_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
     ) -> Vec<LogTableEvent> {
         profiling::scope!("LogTable::render");
@@ -277,6 +287,7 @@ impl LogTable {
                     &filtered_indices,
                     selected_line_index,
                     bookmarked_lines,
+                    closest_row_index,
                     all_filter_highlights,
                     &mut events,
                     dark_mode,
@@ -337,6 +348,7 @@ impl LogTable {
         filtered_indices: &[StoreID],
         selected_line_index: Option<StoreID>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
+        closest_row_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
@@ -354,6 +366,7 @@ impl LogTable {
                     filtered_indices,
                     selected_line_index,
                     bookmarked_lines,
+                    closest_row_index,
                     all_filter_highlights,
                     events,
                     dark_mode,
@@ -393,6 +406,7 @@ impl LogTable {
         filtered_indices: &[StoreID],
         selected_line_index: Option<StoreID>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
+        closest_row_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
@@ -406,6 +420,7 @@ impl LogTable {
                 filtered_indices,
                 selected_line_index,
                 bookmarked_lines,
+                closest_row_index,
                 all_filter_highlights,
                 events,
                 dark_mode,
@@ -424,6 +439,7 @@ impl LogTable {
         filtered_indices: &[StoreID],
         selected_line_index: Option<StoreID>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
+        closest_row_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
@@ -436,6 +452,10 @@ impl LogTable {
 
         let is_selected = selected_line_index.as_ref() == Some(&line_idx);
         let is_bookmarked = bookmarked_lines.contains_key(&line_idx);
+        // Check if this is the scrolled-to row when the selected line is not in filtered results
+        let is_scrolled_to_closest = !is_selected
+            && closest_row_index.is_some_and(|closest_row| closest_row == row_index)
+            && selected_line_index.is_some();
         let color = score_to_color(line.anomaly_score(), dark_mode);
         let source_name = store.get_source_name(&line_idx);
 
@@ -448,6 +468,7 @@ impl LogTable {
             &line,
             line_idx,
             is_selected,
+            is_scrolled_to_closest,
             is_bookmarked,
             color,
             source_name.as_deref(),
@@ -479,6 +500,7 @@ impl LogTable {
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
+        is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
         source_name: Option<&str>,
@@ -494,6 +516,7 @@ impl LogTable {
             store,
             line_idx,
             is_selected,
+            is_scrolled_to_closest,
             is_bookmarked,
             color,
             source_name,
@@ -509,6 +532,7 @@ impl LogTable {
             line,
             line_idx,
             is_selected,
+            is_scrolled_to_closest,
             is_bookmarked,
             color,
             bookmarked_lines
@@ -526,6 +550,7 @@ impl LogTable {
             line,
             line_idx,
             is_selected,
+            is_scrolled_to_closest,
             is_bookmarked,
             color,
             row_clicked,
@@ -540,6 +565,7 @@ impl LogTable {
             line,
             line_idx,
             is_selected,
+            is_scrolled_to_closest,
             is_bookmarked,
             color,
             all_filter_highlights,
@@ -555,6 +581,7 @@ impl LogTable {
             line,
             line_idx,
             is_selected,
+            is_scrolled_to_closest,
             is_bookmarked,
             color,
             row_clicked,
@@ -570,6 +597,7 @@ impl LogTable {
         store: &LogStore,
         line_idx: StoreID,
         is_selected: bool,
+        is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
         source_name: Option<&str>,
@@ -597,6 +625,12 @@ impl LogTable {
                     ui.available_rect_before_wrap(),
                     0.0,
                     selected_row_color(dark_mode),
+                );
+            } else if is_scrolled_to_closest {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    scrolled_to_row_color(dark_mode),
                 );
             }
 
@@ -635,6 +669,7 @@ impl LogTable {
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
+        is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
         bookmark_name: Option<&str>,
@@ -661,6 +696,12 @@ impl LogTable {
                     ui.available_rect_before_wrap(),
                     0.0,
                     selected_row_color(dark_mode),
+                );
+            } else if is_scrolled_to_closest {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    scrolled_to_row_color(dark_mode),
                 );
             }
 
@@ -710,6 +751,7 @@ impl LogTable {
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
+        is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
         row_clicked: &mut bool,
@@ -735,6 +777,12 @@ impl LogTable {
                     ui.available_rect_before_wrap(),
                     0.0,
                     selected_row_color(dark_mode),
+                );
+            } else if is_scrolled_to_closest {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    scrolled_to_row_color(dark_mode),
                 );
             }
 
@@ -766,6 +814,7 @@ impl LogTable {
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
+        is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         bg_color: Color32,
         all_filter_highlights: &[FilterHighlight],
@@ -792,6 +841,12 @@ impl LogTable {
                     ui.available_rect_before_wrap(),
                     0.0,
                     selected_row_color(dark_mode),
+                );
+            } else if is_scrolled_to_closest {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    scrolled_to_row_color(dark_mode),
                 );
             }
 
@@ -837,6 +892,7 @@ impl LogTable {
         line: &LogLine,
         line_idx: StoreID,
         is_selected: bool,
+        is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
         row_clicked: &mut bool,
@@ -862,6 +918,12 @@ impl LogTable {
                     ui.available_rect_before_wrap(),
                     0.0,
                     selected_row_color(dark_mode),
+                );
+            } else if is_scrolled_to_closest {
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    scrolled_to_row_color(dark_mode),
                 );
             }
 

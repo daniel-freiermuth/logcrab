@@ -152,11 +152,13 @@ impl FilterView {
                 None
             } else {
                 self.state.last_rendered_selection = selected_line_index;
-                selected_line_index.and_then(|selected_line_index_inner| {
+                let closest = selected_line_index.and_then(|selected_line_index_inner| {
                     self.state
                         .search
                         .find_closest_row_position_in_cache(selected_line_index_inner, store)
-                })
+                });
+                self.state.closest_row_index = closest;
+                closest
             }
         };
 
@@ -187,6 +189,7 @@ impl FilterView {
         ui.separator();
 
         // Render log table
+        let closest_row_index = self.state.closest_row_index;
         let table_events = {
             profiling::scope!("render_log_table");
             LogTable::render(
@@ -196,6 +199,7 @@ impl FilterView {
                 selected_line_index,
                 bookmarked_lines,
                 scroll_to_row,
+                closest_row_index,
                 all_filter_highlights,
             )
         };

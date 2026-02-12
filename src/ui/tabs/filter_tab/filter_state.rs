@@ -33,6 +33,9 @@ pub struct FilterState {
     /// Last rendered selection for scroll tracking
     pub last_rendered_selection: Option<StoreID>,
 
+    /// Closest row index (for highlighting when selected line is filtered out)
+    pub closest_row_index: Option<usize>,
+
     /// Histogram cache for expensive bucket computations
     pub histogram_cache: HistogramCache,
 
@@ -47,6 +50,7 @@ impl FilterState {
         Self {
             rule,
             last_rendered_selection: None,
+            closest_row_index: None,
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
         }
@@ -87,6 +91,7 @@ impl From<&SavedFilter> for FilterState {
         Self {
             rule,
             last_rendered_selection: None,
+            closest_row_index: None,
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
         }
