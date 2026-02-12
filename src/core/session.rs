@@ -137,6 +137,9 @@ pub struct CrabFile {
     pub filters: Vec<SavedFilter>,
     #[serde(default)]
     pub highlights: Vec<SavedHighlight>,
+    /// Time offset in milliseconds for non-DLT sources
+    #[serde(default)]
+    pub time_offset_ms: i64,
 }
 
 impl CrabFile {

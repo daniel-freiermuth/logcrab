@@ -36,7 +36,7 @@ pub enum LogTableEvent {
     BookmarkToggled {
         line_index: StoreID,
     },
-    SyncDltTime {
+    SyncTime {
         line_index: StoreID,
         storage_time: DateTime<Local>,
         ecu_id: Option<String>,
@@ -175,36 +175,56 @@ impl LogTable {
                 ui.close();
             }
 
-            // DLT-specific: Sync time option
-            if let Some(LogLineVariant::Dlt(dlt_line)) = store.get_by_id(&line_idx) {
-                if ui.button("⏱ Calibrate Time Here").clicked() {
-                    // Extract storage timestamp from the DLT message
-                    if let Some(ref storage_header) = dlt_line.dlt_message.storage_header {
-                        if let Some(storage_time) =
-                            crate::parser::dlt::storage_time_to_datetime(&storage_header.timestamp)
-                        {
-                            // Extract ECU ID and App ID
-                            let ecu_id = dlt_line
-                                .dlt_message
-                                .header
-                                .ecu_id
-                                .as_ref()
-                                .map(std::string::ToString::to_string);
-                            let app_id = dlt_line
-                                .dlt_message
-                                .extended_header
-                                .as_ref()
-                                .map(|ext| ext.application_id.clone());
-
-                            events.push(LogTableEvent::SyncDltTime {
-                                line_index: line_idx,
-                                storage_time,
-                                ecu_id,
-                                app_id,
-                            });
-                            ui.close();
+            // Time synchronization option (DLT-specific calibration or general file offset)
+            let line_variant = store.get_by_id(&line_idx);
+            let is_dlt = matches!(line_variant, Some(LogLineVariant::Dlt(_)));
+            
+            let button_text = if is_dlt {
+                "⏱ Calibrate Time Here"
+            } else {
+                "⏱ Sync Time Here"
+            };
+            
+            if ui.button(button_text).clicked() {
+                if let Some(line) = line_variant {
+                    // For non-DLT files, use the adjusted timestamp (with current offset)
+                    // For DLT files, use the original timestamp (calibration is per-app)
+                    let storage_time = if is_dlt {
+                        line.timestamp()
+                    } else {
+                        let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
+                        if offset_ms != 0 {
+                            line.timestamp() + chrono::Duration::milliseconds(offset_ms)
+                        } else {
+                            line.timestamp()
                         }
-                    }
+                    };
+                    
+                    // For DLT, extract ECU ID and App ID
+                    let (ecu_id, app_id) = if let LogLineVariant::Dlt(dlt_line) = line {
+                        let ecu = dlt_line
+                            .dlt_message
+                            .header
+                            .ecu_id
+                            .as_ref()
+                            .map(std::string::ToString::to_string);
+                        let app = dlt_line
+                            .dlt_message
+                            .extended_header
+                            .as_ref()
+                            .map(|ext| ext.application_id.clone());
+                        (ecu, app)
+                    } else {
+                        (None, None)
+                    };
+
+                    events.push(LogTableEvent::SyncTime {
+                        line_index: line_idx,
+                        storage_time,
+                        ecu_id,
+                        app_id,
+                    });
+                    ui.close();
                 }
             }
 
@@ -786,7 +806,16 @@ impl LogTable {
                 );
             }
 
-            let timestamp_str = line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            // Apply time offset if present
+            let base_time = line.timestamp();
+            let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
+            let display_time = if offset_ms != 0 {
+                base_time + chrono::Duration::milliseconds(offset_ms)
+            } else {
+                base_time
+            };
+            
+            let timestamp_str = display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             let text = RichText::new(timestamp_str).color(color);
             ui.label(text);
 
@@ -850,7 +879,15 @@ impl LogTable {
                 );
             }
 
-            let message = line.message();
+            // Add time offset prefix if present
+            let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
+            let prefix = if offset_ms != 0 {
+                format!("[{:+}ms] ", offset_ms)
+            } else {
+                String::new()
+            };
+            
+            let message = format!("{}{}", prefix, line.message());
             let job = FilterHighlight::highlight_text_with_filters(
                 &message,
                 bg_color,

@@ -40,6 +40,8 @@ pub struct SourceData {
     by_timestamp: RwLock<Vec<usize>>,
     /// Bookmarks for this source, keyed by line index within this source
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
+    /// Time offset in milliseconds (for non-DLT file synchronization)
+    time_offset_ms: RwLock<i64>,
     version: AtomicU64,
 }
 
@@ -51,6 +53,7 @@ impl SourceData {
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
             bookmarks: RwLock::new(HashMap::new()),
+            time_offset_ms: RwLock::new(0),
             version: AtomicU64::new(1),
         };
         sd.load_bookmarks();
@@ -151,6 +154,12 @@ impl SourceData {
                 for bookmark in crab_data.bookmarks {
                     bookmarks.insert(bookmark.line_index, bookmark);
                 }
+                
+                // Load time offset
+                *self.time_offset_ms.write().expect("time_offset_ms lock poisoned") = crab_data.time_offset_ms;
+                if crab_data.time_offset_ms != 0 {
+                    log::info!("Loaded time offset: {} ms", crab_data.time_offset_ms);
+                }
             }
             Err(crate::core::SessionError::Io(ref e))
                 if e.kind() == std::io::ErrorKind::NotFound =>
@@ -176,6 +185,7 @@ impl SourceData {
             bookmarks: self.get_bookmarks(),
             filters: filters.to_vec(),
             highlights: highlights.to_vec(),
+            time_offset_ms: *self.time_offset_ms.read().expect("time_offset_ms lock poisoned"),
         };
 
         match crab_data.save(&crab_path) {
@@ -186,6 +196,49 @@ impl SourceData {
             ),
             Err(e) => log::error!("Failed to save .crab file {}: {e}", crab_path.display()),
         }
+    }
+
+    // ========================================================================
+    // Time Synchronization 
+    // ========================================================================
+
+    /// Get the current time offset in milliseconds
+    pub fn get_time_offset_ms(&self) -> i64 {
+        *self.time_offset_ms.read().expect("time_offset_ms lock poisoned")
+    }
+
+    /// Set time offset for this source to synchronize with target time for a specific line
+    /// Used for non-DLT files
+    pub fn set_time_offset_to_target(
+        &self,
+        reference_line_index: usize,
+        target_time: chrono::DateTime<chrono::Local>,
+    ) -> Result<(), String> {
+        profiling::scope!("SourceData::set_time_offset_to_target");
+
+        // Get the reference line's original timestamp  
+        let original_time = {
+            let guard = self.lines.read().expect("lines lock poisoned");
+            let line = guard
+                .get(reference_line_index)
+                .ok_or_else(|| "Reference line not found".to_string())?;
+            line.timestamp()
+        };
+
+        // Calculate offset: target_time - original_time
+        let offset_ms = target_time.timestamp_millis() - original_time.timestamp_millis();
+        
+        log::info!(
+            "Setting time offset for source: {} ms (original: {}, target: {})",
+            offset_ms,
+            original_time,
+            target_time
+        );
+
+        *self.time_offset_ms.write().expect("time_offset_ms lock poisoned") = offset_ms;
+        self.bump_version();
+
+        Ok(())
     }
 
     // ========================================================================
@@ -477,9 +530,11 @@ impl StoreID {
 
         match (self_line, other_line) {
             (Some(l1), Some(l2)) => {
-                // Both lines exist: compare by timestamp, then structurally for stability
-                l1.timestamp()
-                    .cmp(&l2.timestamp())
+                // Both lines exist: compare by adjusted timestamp (with offset), then structurally for stability
+                let self_time = store.get_adjusted_timestamp(self, &l1);
+                let other_time = store.get_adjusted_timestamp(other, &l2);
+                self_time
+                    .cmp(&other_time)
                     .then_with(|| self.source_index.cmp(&other.source_index))
                     .then_with(|| self.line_index.cmp(&other.line_index))
             }
@@ -615,6 +670,30 @@ impl LogStore {
         source.resync_dlt_time_to_target(id.line_index, target_time, ecu_id, app_id)
     }
 
+    /// Set time offset for a source file to synchronize with target time for a specific line
+    /// Used for non-DLT files
+    pub fn set_time_offset_to_target(
+        &self,
+        id: &StoreID,
+        target_time: chrono::DateTime<chrono::Local>,
+    ) -> Result<(), String> {
+        profiling::scope!("LogStore::sources::read");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        let source = sources
+            .get(id.source_index)
+            .ok_or_else(|| "Source not found".to_string())?;
+        source.set_time_offset_to_target(id.line_index, target_time)
+    }
+
+    /// Get time offset for a source
+    pub fn get_time_offset_ms(&self, id: &StoreID) -> Option<i64> {
+        profiling::scope!("LogStore::sources::read");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        sources
+            .get(id.source_index)
+            .map(|s| s.get_time_offset_ms())
+    }
+
     /// Check if a line has a bookmark
     pub fn has_bookmark(&self, id: &StoreID) -> bool {
         profiling::scope!("LogStore::sources::read");
@@ -740,7 +819,9 @@ impl LogStore {
         for (src_idx, iter) in iters.iter_mut().enumerate() {
             if let Some(id) = iter.next() {
                 if let Some(line) = self.get_by_id(&id) {
-                    heap.push(Reverse((line.timestamp(), src_idx, id)));
+                    // Apply time offset for accurate merge ordering
+                    let adjusted_time = self.get_adjusted_timestamp(&id, &line);
+                    heap.push(Reverse((adjusted_time, src_idx, id)));
                 }
             }
         }
@@ -752,12 +833,24 @@ impl LogStore {
             // Push the next element from this source onto the heap
             if let Some(next_id) = iters[src_idx].next() {
                 if let Some(line) = self.get_by_id(&next_id) {
-                    heap.push(Reverse((line.timestamp(), src_idx, next_id)));
+                    // Apply time offset for accurate merge ordering
+                    let adjusted_time = self.get_adjusted_timestamp(&next_id, &line);
+                    heap.push(Reverse((adjusted_time, src_idx, next_id)));
                 }
             }
         }
 
         result
+    }
+
+    /// Get timestamp with time offset applied
+    fn get_adjusted_timestamp(&self, id: &StoreID, line: &LogLine) -> chrono::DateTime<Local> {
+        let offset_ms = self.get_time_offset_ms(id).unwrap_or(0);
+        if offset_ms != 0 {
+            line.timestamp() + chrono::Duration::milliseconds(offset_ms)
+        } else {
+            line.timestamp()
+        }
     }
 
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {

@@ -47,7 +47,7 @@ pub enum FilterViewEvent {
     BookmarkToggled {
         store_id: StoreID,
     },
-    SyncDltTime {
+    SyncTime {
         store_id: StoreID,
         storage_time: DateTime<Local>,
         ecu_id: Option<String>,
@@ -217,13 +217,13 @@ impl FilterView {
                         store_id: line_index,
                     });
                 }
-                LogTableEvent::SyncDltTime {
+                LogTableEvent::SyncTime {
                     line_index,
                     storage_time,
                     ecu_id,
                     app_id,
                 } => {
-                    events.push(FilterViewEvent::SyncDltTime {
+                    events.push(FilterViewEvent::SyncTime {
                         store_id: line_index,
                         storage_time,
                         ecu_id,
@@ -273,16 +273,17 @@ impl FilterView {
                     data_state.toggle_bookmark(store_id);
                     data_state.modified = true;
                 }
-                FilterViewEvent::SyncDltTime {
+                FilterViewEvent::SyncTime {
                     store_id,
                     storage_time,
                     ecu_id,
                     app_id,
                 } => {
-                    // Open the sync DLT time window with the storage time pre-filled
+                    // Open the sync time window with the storage time pre-filled
+                    let is_dlt = ecu_id.is_some() || app_id.is_some();
                     self.sync_dlt_time_window = Some((
                         store_id,
-                        SyncDltTimeWindow::new(storage_time),
+                        SyncDltTimeWindow::new(storage_time, is_dlt),
                         ecu_id,
                         app_id,
                     ));
@@ -351,26 +352,38 @@ impl FilterView {
             }
         }
 
-        // Handle DLT time sync dialog
+        // Handle time sync dialog (DLT calibration or file offset)
         if let Some((store_id, ref mut window, ref ecu_id, ref app_id)) = self.sync_dlt_time_window
         {
             match window.render(ui) {
                 Ok(Some(target_time)) => {
-                    // User confirmed - perform the sync with the custom target time (per file, per ECU, per App)
-                    match data_state.store.resync_dlt_time_to_target(
-                        &store_id,
-                        target_time,
-                        ecu_id.as_ref(),
-                        app_id.as_ref(),
-                    ) {
+                    // User confirmed - perform the sync
+                    let is_dlt = ecu_id.is_some() || app_id.is_some();
+                    
+                    let result = if is_dlt {
+                        // DLT calibration (per ECU, per App)
+                        data_state.store.resync_dlt_time_to_target(
+                            &store_id,
+                            target_time,
+                            ecu_id.as_ref(),
+                            app_id.as_ref(),
+                        )
+                    } else {
+                        // Non-DLT file offset
+                        data_state.store.set_time_offset_to_target(&store_id, target_time)
+                    };
+                    
+                    match result {
                         Ok(()) => {
+                            let sync_type = if is_dlt { "DLT timestamps" } else { "file time offset" };
                             log::info!(
-                                "Successfully resynced DLT timestamps to target: {target_time}"
+                                "Successfully synced {} to target: {target_time}",
+                                sync_type
                             );
                             data_state.modified = true;
                         }
                         Err(e) => {
-                            log::error!("Failed to resync DLT time: {e}");
+                            log::error!("Failed to sync time: {e}");
                         }
                     }
                     self.sync_dlt_time_window = None;

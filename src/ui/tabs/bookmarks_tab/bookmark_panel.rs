@@ -17,6 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::core::log_store::StoreID;
+use crate::core::LogStore;
 use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -40,12 +41,110 @@ pub enum BookmarkPanelEvent {
     BookmarkRenamed { store_id: StoreID, new_name: String },
     StartRenaming { store_id: StoreID },
     CancelRenaming,
+    SyncTime {
+        line_index: StoreID,
+        storage_time: chrono::DateTime<chrono::Local>,
+        ecu_id: Option<String>,
+        app_id: Option<String>,
+    },
 }
 
 /// Reusable bookmark panel component
 pub struct BookmarkPanel;
 
 impl BookmarkPanel {
+    /// Show context menu for a log line
+    fn show_line_context_menu(
+        response: &egui::Response,
+        store: &LogStore,
+        line_idx: StoreID,
+        events: &mut Vec<BookmarkPanelEvent>,
+    ) {
+        use crate::parser::line::{LogLineCore, LogLineVariant};
+        response.context_menu(|ui| {
+            if ui.button("📑 Remove Bookmark").clicked() {
+                events.push(BookmarkPanelEvent::BookmarkDeleted {
+                    store_id: line_idx,
+                });
+                ui.close();
+            }
+
+            if ui.button("🎯 Jump to Line").clicked() {
+                events.push(BookmarkPanelEvent::BookmarkClicked {
+                    store_id: line_idx,
+                });
+                ui.close();
+            }
+
+            // Time synchronization option (DLT-specific calibration or general file offset)
+            let line_variant = store.get_by_id(&line_idx);
+            let is_dlt = matches!(line_variant, Some(LogLineVariant::Dlt(_)));
+            
+            let button_text = if is_dlt {
+                "⏱ Calibrate Time Here"
+            } else {
+                "⏱ Sync Time Here"
+            };
+            
+            if ui.button(button_text).clicked() {
+                if let Some(line) = line_variant {
+                    // For non-DLT files, use the adjusted timestamp (with current offset)
+                    // For DLT files, use the original timestamp (calibration is per-app)
+                    let storage_time = if is_dlt {
+                        line.timestamp()
+                    } else {
+                        let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
+                        if offset_ms != 0 {
+                            line.timestamp() + chrono::Duration::milliseconds(offset_ms)
+                        } else {
+                            line.timestamp()
+                        }
+                    };
+                    
+                    // For DLT, extract ECU ID and App ID
+                    let (ecu_id, app_id) = if let LogLineVariant::Dlt(dlt_line) = line {
+                        let ecu = dlt_line
+                            .dlt_message
+                            .header
+                            .ecu_id
+                            .as_ref()
+                            .map(std::string::ToString::to_string);
+                        let app = dlt_line
+                            .dlt_message
+                            .extended_header
+                            .as_ref()
+                            .map(|ext| ext.application_id.clone());
+                        (ecu, app)
+                    } else {
+                        (None, None)
+                    };
+
+                    events.push(BookmarkPanelEvent::SyncTime {
+                        line_index: line_idx,
+                        storage_time,
+                        ecu_id,
+                        app_id,
+                    });
+                    ui.close();
+                }
+            }
+
+            ui.separator();
+
+            if let Some(line) = store.get_by_id(&line_idx) {
+                if ui.button("📋 Copy Message").clicked() {
+                    ui.ctx().copy_text(line.message());
+                    ui.close();
+                }
+
+                if ui.button("📋 Copy Full Line").clicked() {
+                    ui.ctx().copy_text(line.raw());
+                    ui.close();
+                }
+            }
+        });
+    }
+
     /// Render the bookmarks view
     ///
     /// Returns events that occurred (clicks, deletes, renames)
@@ -236,24 +335,29 @@ impl BookmarkPanel {
         // Timestamp column
         Self::render_timestamp_column(
             row,
+            &log_view_state.store,
             store_id,
             is_selected,
             is_closest,
             color,
             &line,
             &mut row_clicked,
+            events,
             dark_mode,
         );
 
         // Message column
         Self::render_message_column(
             row,
+            &log_view_state.store,
+            store_id,
             is_selected,
             is_closest,
             color,
             &line,
             all_filter_highlights,
             &mut row_clicked,
+            events,
             dark_mode,
         );
 
@@ -303,18 +407,29 @@ impl BookmarkPanel {
 
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow<'_, '_>,
+        store: &LogStore,
         store_id: &StoreID,
         is_selected: bool,
         is_closest: bool,
         color: Color32,
         line: &LogLine,
         row_clicked: &mut bool,
+        events: &mut Vec<BookmarkPanelEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
-            let timestamp_str = line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            // Apply time offset if present
+            let base_time = line.timestamp();
+            let offset_ms = store.get_time_offset_ms(store_id).unwrap_or(0);
+            let display_time = if offset_ms != 0 {
+                base_time + chrono::Duration::milliseconds(offset_ms)
+            } else {
+                base_time
+            };
+            
+            let timestamp_str = display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
 
             let response = ui.interact(
@@ -325,6 +440,9 @@ impl BookmarkPanel {
             if response.clicked() {
                 *row_clicked = true;
             }
+            
+            // Show context menu on right-click
+            Self::show_line_context_menu(&response, store, *store_id, events);
         });
     }
 
@@ -415,18 +533,29 @@ impl BookmarkPanel {
 
     fn render_message_column(
         row: &mut egui_extras::TableRow<'_, '_>,
+        store: &LogStore,
+        store_id: &StoreID,
         is_selected: bool,
         is_closest: bool,
         color: Color32,
         line: &LogLine,
         all_filter_highlights: &[FilterHighlight],
         row_clicked: &mut bool,
+        events: &mut Vec<BookmarkPanelEvent>,
         dark_mode: bool,
     ) {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
-            let message = line.message();
+            // Add time offset prefix if present
+            let offset_ms = store.get_time_offset_ms(store_id).unwrap_or(0);
+            let prefix = if offset_ms != 0 {
+                format!("[{:+}ms] ", offset_ms)
+            } else {
+                String::new()
+            };
+            
+            let message = format!("{}{}", prefix, line.message());
             let job = FilterHighlight::highlight_text_with_filters(
                 &message,
                 color,
@@ -439,6 +568,9 @@ impl BookmarkPanel {
             if response.clicked() {
                 *row_clicked = true;
             }
+            
+            // Show context menu on right-click
+            Self::show_line_context_menu(&response, store, *store_id, events);
         });
     }
 

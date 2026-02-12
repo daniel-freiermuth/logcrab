@@ -27,18 +27,32 @@ use crate::{
         filter_highlight::FilterHighlight,
         session_state::SessionState,
         tabs::{filter_tab::HistogramMarker, LogCrabTab},
+        windows::SyncDltTimeWindow,
     },
 };
 use egui::Ui;
 
 /// Orchestrates the bookmarks view UI using the `BookmarkPanel` component
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BookmarksView {
     edited_store_id: Option<StoreID>,
     bookmark_name_input: String,
     enter_pressed_this_frame: bool,
     last_selected_line: Option<StoreID>,
     closest_bookmark_index: Option<usize>,
+    sync_dlt_time_window: Option<(StoreID, SyncDltTimeWindow, Option<String>, Option<String>)>,
+}
+
+impl Default for BookmarksView {
+    fn default() -> Self {
+        Self {
+            edited_store_id: None,
+            bookmark_name_input: String::new(),
+            enter_pressed_this_frame: false,
+            last_selected_line: None,
+            closest_bookmark_index: None,
+            sync_dlt_time_window: None,
+        }
+    }
 }
 
 impl BookmarksView {
@@ -167,6 +181,66 @@ impl BookmarksView {
                 }
                 BookmarkPanelEvent::CancelRenaming => {
                     self.edited_store_id = None;
+                }
+                BookmarkPanelEvent::SyncTime {
+                    line_index,
+                    storage_time,
+                    ecu_id,
+                    app_id,
+                } => {
+                    let is_dlt = ecu_id.is_some() || app_id.is_some();
+                    self.sync_dlt_time_window = Some((
+                        line_index,
+                        SyncDltTimeWindow::new(storage_time, is_dlt),
+                        ecu_id,
+                        app_id,
+                    ));
+                }
+            }
+        }
+
+        // Handle time sync dialog (DLT calibration or file offset)
+        if let Some((store_id, ref mut window, ref ecu_id, ref app_id)) = self.sync_dlt_time_window
+        {
+            match window.render(ui) {
+                Ok(Some(target_time)) => {
+                    // User confirmed - perform the sync
+                    let is_dlt = ecu_id.is_some() || app_id.is_some();
+                    
+                    let result = if is_dlt {
+                        // DLT calibration (per ECU, per App)
+                        data_state.store.resync_dlt_time_to_target(
+                            &store_id,
+                            target_time,
+                            ecu_id.as_ref(),
+                            app_id.as_ref(),
+                        )
+                    } else {
+                        // Non-DLT file offset
+                        data_state.store.set_time_offset_to_target(&store_id, target_time)
+                    };
+                    
+                    match result {
+                        Ok(()) => {
+                            let sync_type = if is_dlt { "DLT timestamps" } else { "file time offset" };
+                            log::info!(
+                                "Successfully synced {} to target: {target_time}",
+                                sync_type
+                            );
+                            data_state.modified = true;
+                        }
+                        Err(e) => {
+                            log::error!("Failed to sync time: {e}");
+                        }
+                    }
+                    self.sync_dlt_time_window = None;
+                }
+                Ok(None) => {
+                    // Still editing
+                }
+                Err(()) => {
+                    // Cancelled
+                    self.sync_dlt_time_window = None;
                 }
             }
         }

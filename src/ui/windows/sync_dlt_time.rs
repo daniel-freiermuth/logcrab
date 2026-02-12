@@ -3,17 +3,19 @@ use chrono::{DateTime, Local, TimeZone};
 pub struct SyncDltTimeWindow {
     target_time_str: String,
     focus_requested: bool,
+    is_dlt: bool,
 }
 
 impl SyncDltTimeWindow {
-    pub fn new(storage_time: DateTime<Local>) -> Self {
+    pub fn new(storage_time: DateTime<Local>, is_dlt: bool) -> Self {
         Self {
             target_time_str: storage_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             focus_requested: false,
+            is_dlt,
         }
     }
 
-    /// Render the sync DLT time window
+    /// Render the sync time window
     ///
     /// Returns `Ok(Some(target_time))` if the user confirmed the sync,
     /// Ok(None) if the window is still open,
@@ -21,7 +23,13 @@ impl SyncDltTimeWindow {
     pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<DateTime<Local>>, ()> {
         let mut result = Ok(None);
 
-        egui::Window::new("⏱ Calibrate DLT Time")
+        let title = if self.is_dlt {
+            "⏱ Calibrate DLT Time"
+        } else {
+            "⏱ Sync File Time"
+        };
+
+        egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
