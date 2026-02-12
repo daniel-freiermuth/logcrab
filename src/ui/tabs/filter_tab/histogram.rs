@@ -789,6 +789,7 @@ impl Histogram {
                 tooltip_pos,
             )
             .show(|ui| {
+                ui.set_min_width(50.0);
                 ui.colored_label(closest.marker.color, &closest.marker.name);
             });
         }
