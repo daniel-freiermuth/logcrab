@@ -151,7 +151,9 @@ impl LogCrabApp {
         let mut dialog = rfd::FileDialog::new()
             .add_filter(
                 "Log Files",
-                &["log", "txt", "dlt", "pcap", "pcapng", "crab"],
+                &[
+                    "log", "txt", "dlt", "pcap", "pcapng", "btsnoop", "snoop", "crab",
+                ],
             )
             .add_filter("All Files", &["*"]);
 
@@ -179,7 +181,9 @@ impl LogCrabApp {
         let mut dialog = rfd::FileDialog::new()
             .add_filter(
                 "Log Files",
-                &["log", "txt", "dlt", "pcap", "pcapng", "crab"],
+                &[
+                    "log", "txt", "dlt", "pcap", "pcapng", "btsnoop", "snoop", "crab",
+                ],
             )
             .add_filter("All Files", &["*"]);
 
