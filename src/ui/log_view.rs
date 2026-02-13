@@ -278,7 +278,7 @@ impl CrabSession {
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name,
                     color: highlight.color,
-                    indices: highlight.search.get_filtered_indices_cached().clone(),
+                    indices: highlight.search.get_filtered_indices_cached(),
                 });
             }
         }
@@ -290,7 +290,7 @@ impl CrabSession {
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name: bookmark.name,
                     color: egui::Color32::from_rgb(255, 215, 0), // Gold color
-                    indices: vec![bookmark.store_id],
+                    indices: std::sync::Arc::new(vec![bookmark.store_id]),
                 });
             }
         }

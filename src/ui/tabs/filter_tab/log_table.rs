@@ -288,7 +288,7 @@ impl LogTable {
         let dark_mode = ui.visuals().dark_mode;
 
         // Get filtered indices first to avoid borrow conflicts
-        let filtered_indices = filter.search.get_filtered_indices_cached().clone();
+        let filtered_indices = filter.search.get_filtered_indices_cached();
         let filter_id = filter.get_id();
 
         let available_width = ui.available_width();

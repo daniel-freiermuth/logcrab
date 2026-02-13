@@ -50,7 +50,7 @@ pub struct FilterRequest {
 
 /// Result from background filtering
 pub struct FilterResult {
-    pub filtered_indices: Vec<StoreID>,
+    pub filtered_indices: Arc<Vec<StoreID>>,
     /// The search text these indices were computed for
     pub search_text: String,
     /// The exclude text these indices were computed for
@@ -179,11 +179,11 @@ impl FilterWorker {
                 );
 
                 let result = FilterResult {
-                    filtered_indices,
+                    filtered_indices: Arc::new(filtered_indices),
                     search_text: request.search_text.clone(),
                     exclude_text: request.exclude_text.clone(),
                     case_sensitive: request.case_sensitive,
-                    store_version: store_version,
+                    store_version,
                 };
 
                 // Send result back to the specific filter (ignore errors if filter is gone)

@@ -90,7 +90,7 @@ impl HistogramZoomState {
 #[derive(Clone)]
 pub struct HistogramMarker {
     pub name: String,
-    pub indices: Vec<StoreID>,
+    pub indices: Arc<Vec<StoreID>>,
     pub color: Color32,
 }
 
@@ -701,7 +701,7 @@ impl Histogram {
         let total_time = num_visible_buckets as u32 * view_bucket_size;
 
         for marker in markers {
-            for line_idx in &marker.indices {
+            for line_idx in marker.indices.iter() {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };
@@ -751,7 +751,7 @@ impl Histogram {
         let mut closest_match: Option<MarkerMatch> = None;
 
         for marker in markers {
-            for line_idx in &marker.indices {
+            for line_idx in marker.indices.iter() {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };

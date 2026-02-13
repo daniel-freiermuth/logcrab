@@ -162,14 +162,10 @@ impl FilterView {
             }
         };
 
-        let indices = {
-            profiling::scope!("get_filtered_indices");
-            self.state.search.get_filtered_indices_cached().clone()
-        };
-
-        // Render histogram
+        // Render histogram (using Arc<Vec> for cheap cloning)
         let hist_event = {
             profiling::scope!("render_histogram");
+            let indices = self.state.search.get_filtered_indices_cached();
             Histogram::render(
                 ui,
                 store,
@@ -615,7 +611,7 @@ impl LogCrabTab for FilterView {
         if !self.state.show_in_histogram {
             return None;
         }
-        let indices = self.state.search.get_filtered_indices_cached().clone();
+        let indices = self.state.search.get_filtered_indices_cached();
         if indices.is_empty() {
             return None;
         }

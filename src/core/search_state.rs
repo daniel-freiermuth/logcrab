@@ -44,8 +44,8 @@ pub struct SearchState {
     pub exclude_text: String,
     /// Whether the search is case-sensitive
     pub case_sensitive: bool,
-    /// Cached indices of matching lines
-    filtered_indices: Vec<StoreID>,
+    /// Cached indices of matching lines (Arc allows cheap cloning)
+    filtered_indices: Arc<Vec<StoreID>>,
 
     /// What we last requested from the worker (optimistic tracking)
     last_requested_version: u64,
@@ -84,7 +84,7 @@ impl SearchState {
             indices_computed_for_exclude: String::new(),
             indices_computed_for_case: false,
             indices_computed_for_version: 0,
-            filtered_indices: Vec::new(),
+            filtered_indices: Arc::new(Vec::new()),
             last_requested_version: 0,
             filter_result_rx: result_rx,
             filter_result_tx: result_tx,
@@ -96,9 +96,13 @@ impl SearchState {
         self.id
     }
 
-    pub fn get_filtered_indices_cached(&self) -> &Vec<StoreID> {
+    /// Get a cheap clone of the filtered indices.
+    /// 
+    /// Uses Arc internally so cloning is just a reference count increment,
+    /// not a deep copy of the potentially huge vector.
+    pub fn get_filtered_indices_cached(&self) -> Arc<Vec<StoreID>> {
         profiling::scope!("SearchState::get_filtered_indices");
-        &self.filtered_indices
+        Arc::clone(&self.filtered_indices)
     }
 
     pub fn get_regex(&self) -> Result<Regex, Box<Error>> {
