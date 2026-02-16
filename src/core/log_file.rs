@@ -43,7 +43,7 @@ impl LogFileLoader {
         toast: ProgressToastHandle,
         dlt_timestamp_source: DltTimestampSource,
     ) -> Arc<SourceData> {
-        let data_source = Arc::new(SourceData::new(Some(path.clone())));
+        let data_source = Arc::new(SourceData::new(path.clone()));
         let source_clone = data_source.clone();
 
         thread::spawn(move || {

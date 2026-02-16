@@ -32,8 +32,8 @@ use std::sync::{Arc, RwLock};
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 #[derive(Debug)]
 pub struct SourceData {
-    /// Path to the source file (None for stdin or unnamed sources)
-    file_path: Option<PathBuf>,
+    /// Path to the source file
+    file_path: PathBuf,
     /// Log lines in file order (index = `line_number` - 1, eternal)
     lines: RwLock<Vec<LogLine>>,
     /// Indices into `lines`, sorted by timestamp for time-ordered iteration
@@ -47,7 +47,12 @@ pub struct SourceData {
 
 impl SourceData {
     /// Create a `SourceData` for a file source
-    pub fn new(file_path: Option<PathBuf>) -> Self {
+    pub fn new(file_path: PathBuf) -> Self {
+        assert!(
+            file_path.file_name().is_some(),
+            "file_path must have a filename component: {:?}",
+            file_path
+        );
         let sd = Self {
             file_path,
             lines: RwLock::new(Vec::new()),
@@ -61,15 +66,15 @@ impl SourceData {
     }
 
     /// Get the .crab file path for this source
-    fn crab_file_path(&self) -> Option<PathBuf> {
-        self.file_path.as_ref().map(|p| {
-            let mut crab_path = p.clone();
-            crab_path.set_file_name(format!(
-                "{}.crab",
-                p.file_name().unwrap_or_default().to_string_lossy()
-            ));
-            crab_path
-        })
+    fn crab_file_path(&self) -> PathBuf {
+        let mut crab_path = self.file_path.clone();
+        crab_path.set_file_name(format!(
+            "{}.crab",
+            self.file_path.file_name()
+                .expect("file_path must have a filename component")
+                .to_string_lossy()
+        ));
+        crab_path
     }
 
     /// Bump the version number (call after appending lines)
@@ -138,9 +143,7 @@ impl SourceData {
 
     /// Load bookmarks from this source's .crab file
     fn load_bookmarks(&self) {
-        let Some(crab_path) = self.crab_file_path() else {
-            return;
-        };
+        let crab_path = self.crab_file_path();
 
         match CrabFile::load(&crab_path) {
             Ok(crab_data) => {
@@ -175,10 +178,7 @@ impl SourceData {
     /// Save bookmarks to this source's .crab file
     /// Note: filters and highlights are passed in since they're shared across sources
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
-        let Some(crab_path) = self.crab_file_path() else {
-            log::debug!("Skipping .crab save for source without file path");
-            return;
-        };
+        let crab_path = self.crab_file_path();
 
         let crab_data = CrabFile {
             version: CRAB_FILE_VERSION,
@@ -475,19 +475,18 @@ impl SourceData {
 
     /// Load and merge filters and highlights
     pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
-        if let Some(crab_path) = self.crab_file_path() {
-            match CrabFile::load(&crab_path) {
-                Ok(crab_data) => {
-                    return (crab_data.filters, crab_data.highlights);
-                }
-                Err(crate::core::SessionError::Io(ref e))
-                    if e.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    // No .crab file yet, that's fine
-                }
-                Err(e) => {
-                    log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
-                }
+        let crab_path = self.crab_file_path();
+        match CrabFile::load(&crab_path) {
+            Ok(crab_data) => {
+                return (crab_data.filters, crab_data.highlights);
+            }
+            Err(crate::core::SessionError::Io(ref e))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                // No .crab file yet, that's fine
+            }
+            Err(e) => {
+                log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
             }
         }
         (Vec::new(), Vec::new())
@@ -568,15 +567,13 @@ impl LogStore {
         let canonical_path = path.canonicalize().ok();
         let sources = self.sources.read().expect("sources lock poisoned");
         sources.iter().any(|source| {
-            source.file_path.as_ref().is_some_and(|source_path| {
-                // Try canonical comparison first, fall back to direct comparison
-                if let Some(ref canonical) = canonical_path {
-                    if let Ok(source_canonical) = source_path.canonicalize() {
-                        return &source_canonical == canonical;
-                    }
+            // Try canonical comparison first, fall back to direct comparison
+            if let Some(ref canonical) = canonical_path {
+                if let Ok(source_canonical) = source.file_path.canonicalize() {
+                    return &source_canonical == canonical;
                 }
-                source_path == path
-            })
+            }
+            &source.file_path == path
         })
     }
 
@@ -607,11 +604,11 @@ impl LogStore {
     pub fn get_source_name(&self, id: &StoreID) -> Option<String> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(id.source_index).and_then(|source| {
-            source.file_path.as_ref().and_then(|p| {
-                p.file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
+        sources.get(id.source_index).map(|source| {
+            source.file_path.file_name()
+                .expect("file_path must have a filename component")
+                .to_string_lossy()
+                .into_owned()
         })
     }
 
@@ -621,11 +618,11 @@ impl LogStore {
         let sources = self.sources.read().expect("sources lock poisoned");
         sources
             .iter()
-            .filter_map(|source| {
-                source.file_path.as_ref().and_then(|p| {
-                    p.file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                })
+            .map(|source| {
+                source.file_path.file_name()
+                    .expect("file_path must have a filename component")
+                    .to_string_lossy()
+                    .into_owned()
             })
             .collect()
     }
