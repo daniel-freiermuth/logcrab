@@ -118,8 +118,13 @@ impl CrabSession {
 
         log::info!("Adding file to session: {}", path.display());
 
-        let source =
-            LogFileLoader::load_async(path, toast, self.global_config.dlt_timestamp_source);
+        let Some(source) =
+            LogFileLoader::load_async(path, toast.clone(), self.global_config.dlt_timestamp_source)
+        else {
+            toast.set_error("File is already open in another LogCrab instance".to_string());
+            toast.dismiss();
+            return;
+        };
         let (filters, highlights) = source.load_saved_filters_and_highlights();
         self.state.store.add_source(&source);
         for saved_filter in &filters {

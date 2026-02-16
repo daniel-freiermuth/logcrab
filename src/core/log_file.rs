@@ -38,19 +38,21 @@ impl LogFileLoader {
     ///
     /// The toast handle will be updated with progress and dismissed when complete.
     /// Returns the `SourceData` that will be populated with log lines.
+    ///
+    /// Returns None if the .crab session file is already locked by another instance.
     pub fn load_async(
         path: PathBuf,
         toast: ProgressToastHandle,
         dlt_timestamp_source: DltTimestampSource,
-    ) -> Arc<SourceData> {
-        let data_source = Arc::new(SourceData::new(path.clone()));
+    ) -> Option<Arc<SourceData>> {
+        let data_source =  Arc::new(SourceData::new(path.clone())?);
         let source_clone = data_source.clone();
 
         thread::spawn(move || {
             Self::process_file_background(path, source_clone, toast, dlt_timestamp_source);
         });
 
-        data_source
+        Some(data_source)
     }
 
     fn read_dlt_file(

@@ -143,9 +143,19 @@ pub struct CrabFile {
 }
 
 impl CrabFile {
-    /// Load a session from a .crab file
-    pub fn load(path: &Path) -> Result<Self, SessionError> {
-        let content = fs::read_to_string(path).map_err(SessionError::Io)?;
+    /// Load a session from an already-open file handle
+    /// Used when reading from a locked file handle to avoid conflicts
+    pub fn load_from_file(file: &mut std::fs::File) -> Result<Self, SessionError> {
+        use std::io::{Read, Seek, SeekFrom};
+        
+        // Seek to beginning
+        file.seek(SeekFrom::Start(0)).map_err(SessionError::Io)?;
+        
+        // Read the entire file
+        let mut content = String::new();
+        file.read_to_string(&mut content).map_err(SessionError::Io)?;
+        
+        // Parse JSON
         let crab_file: Self = serde_json::from_str(&content).map_err(SessionError::Parse)?;
 
         if crab_file.version > CRAB_FILE_VERSION {
@@ -159,10 +169,21 @@ impl CrabFile {
         Ok(crab_file)
     }
 
-    /// Save the session to a .crab file
-    pub fn save(&self, path: &Path) -> Result<(), SessionError> {
+    /// Save the session to an already-open file handle
+    /// Used when writing to a locked file handle
+    pub fn save_to_file(&self, file: &mut std::fs::File) -> Result<(), SessionError> {
+        use std::io::{Seek, SeekFrom, Write};
+        
         let json = serde_json::to_string_pretty(self).map_err(SessionError::Serialize)?;
-        fs::write(path, json).map_err(SessionError::Io)?;
+        
+        // Truncate and seek to beginning
+        file.set_len(0).map_err(SessionError::Io)?;
+        file.seek(SeekFrom::Start(0)).map_err(SessionError::Io)?;
+        
+        // Write the data
+        file.write_all(json.as_bytes()).map_err(SessionError::Io)?;
+        file.flush().map_err(SessionError::Io)?;
+        
         Ok(())
     }
 }

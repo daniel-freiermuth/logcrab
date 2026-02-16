@@ -25,9 +25,10 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 #[derive(Debug)]
@@ -42,39 +43,88 @@ pub struct SourceData {
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
     /// Time offset in milliseconds (for non-DLT file synchronization)
     time_offset_ms: RwLock<i64>,
+    /// Locked .crab file handle and path to prevent multiple instances from opening the same session.
+    /// The OS-level file lock (via fs2) is held for the lifetime of this SourceData,
+    /// providing exclusive access. The Mutex allows interior mutability for reads/writes.
+    /// Path is stored alongside to avoid recomputation and ensure single source of truth.
+    crab_lock: Mutex<(File, PathBuf)>,
     version: AtomicU64,
 }
 
 impl SourceData {
     /// Create a `SourceData` for a file source
-    pub fn new(file_path: PathBuf) -> Self {
+    /// 
+    /// Acquires an exclusive lock on the .crab session file to prevent
+    /// multiple instances from opening the same file simultaneously.
+    /// 
+    /// Returns `None` if the lock cannot be acquired (file already open in another instance).
+    pub fn new(file_path: PathBuf) -> Option<Self> {
         assert!(
             file_path.file_name().is_some(),
             "file_path must have a filename component: {:?}",
             file_path
         );
+        
+        let crab_path = Self::compute_crab_path(&file_path);
+        let crab_lock = Self::acquire_crab_lock(&crab_path)?;
+        
         let sd = Self {
             file_path,
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
             bookmarks: RwLock::new(HashMap::new()),
             time_offset_ms: RwLock::new(0),
+            crab_lock: Mutex::new((crab_lock, crab_path)),
             version: AtomicU64::new(1),
         };
         sd.load_bookmarks();
-        sd
+        Some(sd)
     }
-
-    /// Get the .crab file path for this source
-    fn crab_file_path(&self) -> PathBuf {
-        let mut crab_path = self.file_path.clone();
+    
+    /// Compute the .crab file path for a given log file path
+    fn compute_crab_path(file_path: &Path) -> PathBuf {
+        let mut crab_path = file_path.to_path_buf();
         crab_path.set_file_name(format!(
             "{}.crab",
-            self.file_path.file_name()
+            file_path.file_name()
                 .expect("file_path must have a filename component")
                 .to_string_lossy()
         ));
         crab_path
+    }
+    
+    /// Acquire an exclusive lock on the .crab file
+    /// Returns None if the lock cannot be acquired (file already open in another instance)
+    fn acquire_crab_lock(crab_path: &Path) -> Option<File> {
+        use fs2::FileExt;
+        use std::fs::OpenOptions;
+        
+        // Open or create the .crab file
+        let file = match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(crab_path)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                log::error!("Cannot open .crab file {:?}: {}", crab_path, e);
+                return None;
+            }
+        };
+        
+        // Try to acquire exclusive lock
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                log::info!("Successfully acquired exclusive lock on {:?}", crab_path);
+                Some(file)
+            }
+            Err(e) => {
+                log::error!("Cannot lock .crab file {:?} (already open in another instance?): {}", crab_path, e);
+                None
+            }
+        }
     }
 
     /// Bump the version number (call after appending lines)
@@ -143,9 +193,9 @@ impl SourceData {
 
     /// Load bookmarks from this source's .crab file
     fn load_bookmarks(&self) {
-        let crab_path = self.crab_file_path();
-
-        match CrabFile::load(&crab_path) {
+        let mut guard = self.crab_lock.lock().expect("crab_lock mutex poisoned");
+        let (file, crab_path) = &mut *guard;
+        match CrabFile::load_from_file(file) {
             Ok(crab_data) => {
                 log::info!(
                     "Loaded {} bookmarks from {}",
@@ -165,9 +215,12 @@ impl SourceData {
                 }
             }
             Err(crate::core::SessionError::Io(ref e))
-                if e.kind() == std::io::ErrorKind::NotFound =>
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
-                // No .crab file yet, that's fine
+                // Empty .crab file (just created), that's fine
+            }
+            Err(crate::core::SessionError::Parse(_)) => {
+                // Empty or invalid .crab file, that's fine for a new session
             }
             Err(e) => {
                 log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
@@ -178,8 +231,6 @@ impl SourceData {
     /// Save bookmarks to this source's .crab file
     /// Note: filters and highlights are passed in since they're shared across sources
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
-        let crab_path = self.crab_file_path();
-
         let crab_data = CrabFile {
             version: CRAB_FILE_VERSION,
             bookmarks: self.get_bookmarks(),
@@ -188,7 +239,11 @@ impl SourceData {
             time_offset_ms: *self.time_offset_ms.read().expect("time_offset_ms lock poisoned"),
         };
 
-        match crab_data.save(&crab_path) {
+        // Use the locked file handle for writing to avoid conflicts
+        // The OS-level lock (via fs2) is held for the lifetime of SourceData
+        let mut guard = self.crab_lock.lock().expect("crab_lock mutex poisoned");
+        let (file, crab_path) = &mut *guard;
+        match crab_data.save_to_file(file) {
             Ok(()) => log::debug!(
                 "Saved .crab file {} with {} bookmarks",
                 crab_path.display(),
@@ -475,15 +530,19 @@ impl SourceData {
 
     /// Load and merge filters and highlights
     pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
-        let crab_path = self.crab_file_path();
-        match CrabFile::load(&crab_path) {
+        let mut guard = self.crab_lock.lock().expect("crab_lock mutex poisoned");
+        let (file, crab_path) = &mut *guard;
+        match CrabFile::load_from_file(file) {
             Ok(crab_data) => {
                 return (crab_data.filters, crab_data.highlights);
             }
             Err(crate::core::SessionError::Io(ref e))
-                if e.kind() == std::io::ErrorKind::NotFound =>
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
-                // No .crab file yet, that's fine
+                // Empty .crab file (just created), that's fine
+            }
+            Err(crate::core::SessionError::Parse(_)) => {
+                // Empty or invalid .crab file, that's fine for a new session
             }
             Err(e) => {
                 log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
