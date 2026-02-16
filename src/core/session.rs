@@ -147,14 +147,15 @@ impl CrabFile {
     /// Used when reading from a locked file handle to avoid conflicts
     pub fn load_from_file(file: &mut std::fs::File) -> Result<Self, SessionError> {
         use std::io::{Read, Seek, SeekFrom};
-        
+
         // Seek to beginning
         file.seek(SeekFrom::Start(0)).map_err(SessionError::Io)?;
-        
+
         // Read the entire file
         let mut content = String::new();
-        file.read_to_string(&mut content).map_err(SessionError::Io)?;
-        
+        file.read_to_string(&mut content)
+            .map_err(SessionError::Io)?;
+
         // Parse JSON
         let crab_file: Self = serde_json::from_str(&content).map_err(SessionError::Parse)?;
 
@@ -173,17 +174,17 @@ impl CrabFile {
     /// Used when writing to a locked file handle
     pub fn save_to_file(&self, file: &mut std::fs::File) -> Result<(), SessionError> {
         use std::io::{Seek, SeekFrom, Write};
-        
+
         let json = serde_json::to_string_pretty(self).map_err(SessionError::Serialize)?;
-        
+
         // Truncate and seek to beginning
         file.set_len(0).map_err(SessionError::Io)?;
         file.seek(SeekFrom::Start(0)).map_err(SessionError::Io)?;
-        
+
         // Write the data
         file.write_all(json.as_bytes()).map_err(SessionError::Io)?;
         file.flush().map_err(SessionError::Io)?;
-        
+
         Ok(())
     }
 }

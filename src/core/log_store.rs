@@ -53,10 +53,10 @@ pub struct SourceData {
 
 impl SourceData {
     /// Create a `SourceData` for a file source
-    /// 
+    ///
     /// Acquires an exclusive lock on the .crab session file to prevent
     /// multiple instances from opening the same file simultaneously.
-    /// 
+    ///
     /// Returns `None` if the lock cannot be acquired (file already open in another instance).
     pub fn new(file_path: PathBuf) -> Option<Self> {
         assert!(
@@ -64,10 +64,10 @@ impl SourceData {
             "file_path must have a filename component: {:?}",
             file_path
         );
-        
+
         let crab_path = Self::compute_crab_path(&file_path);
         let crab_lock = Self::acquire_crab_lock(&crab_path)?;
-        
+
         let sd = Self {
             file_path,
             lines: RwLock::new(Vec::new()),
@@ -80,25 +80,26 @@ impl SourceData {
         sd.load_bookmarks();
         Some(sd)
     }
-    
+
     /// Compute the .crab file path for a given log file path
     fn compute_crab_path(file_path: &Path) -> PathBuf {
         let mut crab_path = file_path.to_path_buf();
         crab_path.set_file_name(format!(
             "{}.crab",
-            file_path.file_name()
+            file_path
+                .file_name()
                 .expect("file_path must have a filename component")
                 .to_string_lossy()
         ));
         crab_path
     }
-    
+
     /// Acquire an exclusive lock on the .crab file
     /// Returns None if the lock cannot be acquired (file already open in another instance)
     fn acquire_crab_lock(crab_path: &Path) -> Option<File> {
         use fs2::FileExt;
         use std::fs::OpenOptions;
-        
+
         // Open or create the .crab file
         let file = match OpenOptions::new()
             .read(true)
@@ -113,7 +114,7 @@ impl SourceData {
                 return None;
             }
         };
-        
+
         // Try to acquire exclusive lock
         match file.try_lock_exclusive() {
             Ok(()) => {
@@ -121,7 +122,11 @@ impl SourceData {
                 Some(file)
             }
             Err(e) => {
-                log::error!("Cannot lock .crab file {:?} (already open in another instance?): {}", crab_path, e);
+                log::error!(
+                    "Cannot lock .crab file {:?} (already open in another instance?): {}",
+                    crab_path,
+                    e
+                );
                 None
             }
         }
@@ -207,9 +212,12 @@ impl SourceData {
                 for bookmark in crab_data.bookmarks {
                     bookmarks.insert(bookmark.line_index, bookmark);
                 }
-                
+
                 // Load time offset
-                *self.time_offset_ms.write().expect("time_offset_ms lock poisoned") = crab_data.time_offset_ms;
+                *self
+                    .time_offset_ms
+                    .write()
+                    .expect("time_offset_ms lock poisoned") = crab_data.time_offset_ms;
                 if crab_data.time_offset_ms != 0 {
                     log::info!("Loaded time offset: {} ms", crab_data.time_offset_ms);
                 }
@@ -236,7 +244,10 @@ impl SourceData {
             bookmarks: self.get_bookmarks(),
             filters: filters.to_vec(),
             highlights: highlights.to_vec(),
-            time_offset_ms: *self.time_offset_ms.read().expect("time_offset_ms lock poisoned"),
+            time_offset_ms: *self
+                .time_offset_ms
+                .read()
+                .expect("time_offset_ms lock poisoned"),
         };
 
         // Use the locked file handle for writing to avoid conflicts
@@ -254,12 +265,15 @@ impl SourceData {
     }
 
     // ========================================================================
-    // Time Synchronization 
+    // Time Synchronization
     // ========================================================================
 
     /// Get the current time offset in milliseconds
     pub fn get_time_offset_ms(&self) -> i64 {
-        *self.time_offset_ms.read().expect("time_offset_ms lock poisoned")
+        *self
+            .time_offset_ms
+            .read()
+            .expect("time_offset_ms lock poisoned")
     }
 
     /// Set time offset for this source to synchronize with target time for a specific line
@@ -271,7 +285,7 @@ impl SourceData {
     ) -> Result<(), String> {
         profiling::scope!("SourceData::set_time_offset_to_target");
 
-        // Get the reference line's original timestamp  
+        // Get the reference line's original timestamp
         let original_time = {
             let guard = self.lines.read().expect("lines lock poisoned");
             let line = guard
@@ -282,7 +296,7 @@ impl SourceData {
 
         // Calculate offset: target_time - original_time
         let offset_ms = target_time.timestamp_millis() - original_time.timestamp_millis();
-        
+
         log::info!(
             "Setting time offset for source: {} ms (original: {}, target: {})",
             offset_ms,
@@ -290,7 +304,10 @@ impl SourceData {
             target_time
         );
 
-        *self.time_offset_ms.write().expect("time_offset_ms lock poisoned") = offset_ms;
+        *self
+            .time_offset_ms
+            .write()
+            .expect("time_offset_ms lock poisoned") = offset_ms;
         self.bump_version();
 
         Ok(())
@@ -664,7 +681,9 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         sources.get(id.source_index).map(|source| {
-            source.file_path.file_name()
+            source
+                .file_path
+                .file_name()
                 .expect("file_path must have a filename component")
                 .to_string_lossy()
                 .into_owned()
@@ -678,7 +697,9 @@ impl LogStore {
         sources
             .iter()
             .map(|source| {
-                source.file_path.file_name()
+                source
+                    .file_path
+                    .file_name()
                     .expect("file_path must have a filename component")
                     .to_string_lossy()
                     .into_owned()
@@ -745,9 +766,7 @@ impl LogStore {
     pub fn get_time_offset_ms(&self, id: &StoreID) -> Option<i64> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources
-            .get(id.source_index)
-            .map(|s| s.get_time_offset_ms())
+        sources.get(id.source_index).map(|s| s.get_time_offset_ms())
     }
 
     /// Check if a line has a bookmark

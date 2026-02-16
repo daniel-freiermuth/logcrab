@@ -206,7 +206,7 @@ impl BookmarksView {
                 Ok(Some(target_time)) => {
                     // User confirmed - perform the sync
                     let is_dlt = ecu_id.is_some() || app_id.is_some();
-                    
+
                     let result = if is_dlt {
                         // DLT calibration (per ECU, per App)
                         data_state.store.resync_dlt_time_to_target(
@@ -217,12 +217,18 @@ impl BookmarksView {
                         )
                     } else {
                         // Non-DLT file offset
-                        data_state.store.set_time_offset_to_target(&store_id, target_time)
+                        data_state
+                            .store
+                            .set_time_offset_to_target(&store_id, target_time)
                     };
-                    
+
                     match result {
                         Ok(()) => {
-                            let sync_type = if is_dlt { "DLT timestamps" } else { "file time offset" };
+                            let sync_type = if is_dlt {
+                                "DLT timestamps"
+                            } else {
+                                "file time offset"
+                            };
                             log::info!(
                                 "Successfully synced {} to target: {target_time}",
                                 sync_type

@@ -167,11 +167,16 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                     if chunk_lines.len() >= current_chunk_size {
                         source.append_lines(std::mem::take(&mut chunk_lines));
                         chunk_count += 1;
-                        
+
                         // Grow chunk size exponentially (double every N chunks)
-                        if chunk_count % DLT_CHUNKS_BEFORE_GROWTH == 0 && current_chunk_size < DLT_MAX_CHUNK_SIZE {
+                        if chunk_count % DLT_CHUNKS_BEFORE_GROWTH == 0
+                            && current_chunk_size < DLT_MAX_CHUNK_SIZE
+                        {
                             current_chunk_size = (current_chunk_size * 2).min(DLT_MAX_CHUNK_SIZE);
-                            log::debug!("Increased DLT chunk size to {} messages", current_chunk_size);
+                            log::debug!(
+                                "Increased DLT chunk size to {} messages",
+                                current_chunk_size
+                            );
                         }
 
                         let bytes_read = bytes_read_counter.get();

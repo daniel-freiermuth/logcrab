@@ -21,7 +21,9 @@ use crate::core::LogStore;
 use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
-use crate::ui::tabs::filter_tab::log_table::{score_to_color, scrolled_to_row_color, selected_row_color};
+use crate::ui::tabs::filter_tab::log_table::{
+    score_to_color, scrolled_to_row_color, selected_row_color,
+};
 use chrono::Local;
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -36,10 +38,19 @@ pub struct BookmarkData {
 /// Events emitted by the bookmark panel
 #[derive(Debug, Clone)]
 pub enum BookmarkPanelEvent {
-    BookmarkClicked { store_id: StoreID },
-    BookmarkDeleted { store_id: StoreID },
-    BookmarkRenamed { store_id: StoreID, new_name: String },
-    StartRenaming { store_id: StoreID },
+    BookmarkClicked {
+        store_id: StoreID,
+    },
+    BookmarkDeleted {
+        store_id: StoreID,
+    },
+    BookmarkRenamed {
+        store_id: StoreID,
+        new_name: String,
+    },
+    StartRenaming {
+        store_id: StoreID,
+    },
     CancelRenaming,
     SyncTime {
         line_index: StoreID,
@@ -63,29 +74,25 @@ impl BookmarkPanel {
         use crate::parser::line::{LogLineCore, LogLineVariant};
         response.context_menu(|ui| {
             if ui.button("📑 Remove Bookmark").clicked() {
-                events.push(BookmarkPanelEvent::BookmarkDeleted {
-                    store_id: line_idx,
-                });
+                events.push(BookmarkPanelEvent::BookmarkDeleted { store_id: line_idx });
                 ui.close();
             }
 
             if ui.button("🎯 Jump to Line").clicked() {
-                events.push(BookmarkPanelEvent::BookmarkClicked {
-                    store_id: line_idx,
-                });
+                events.push(BookmarkPanelEvent::BookmarkClicked { store_id: line_idx });
                 ui.close();
             }
 
             // Time synchronization option (DLT-specific calibration or general file offset)
             let line_variant = store.get_by_id(&line_idx);
             let is_dlt = matches!(line_variant, Some(LogLineVariant::Dlt(_)));
-            
+
             let button_text = if is_dlt {
                 "⏱ Calibrate Time Here"
             } else {
                 "⏱ Sync Time Here"
             };
-            
+
             if ui.button(button_text).clicked() {
                 if let Some(line) = line_variant {
                     // For non-DLT files, use the adjusted timestamp (with current offset)
@@ -100,7 +107,7 @@ impl BookmarkPanel {
                             line.timestamp()
                         }
                     };
-                    
+
                     // For DLT, extract ECU ID and App ID
                     let (ecu_id, app_id) = if let LogLineVariant::Dlt(dlt_line) = line {
                         let ecu = dlt_line
@@ -230,7 +237,8 @@ impl BookmarkPanel {
             table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
         }
 
-        table.header(header_height, |mut header| {
+        table
+            .header(header_height, |mut header| {
                 header.col(|ui| {
                     ui.strong("Annotation");
                 });
@@ -428,7 +436,7 @@ impl BookmarkPanel {
             } else {
                 base_time
             };
-            
+
             let timestamp_str = display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
 
@@ -440,7 +448,7 @@ impl BookmarkPanel {
             if response.clicked() {
                 *row_clicked = true;
             }
-            
+
             // Show context menu on right-click
             Self::show_line_context_menu(&response, store, *store_id, events);
         });
@@ -554,7 +562,7 @@ impl BookmarkPanel {
             } else {
                 String::new()
             };
-            
+
             let message = format!("{}{}", prefix, line.message());
             let job = FilterHighlight::highlight_text_with_filters(
                 &message,
@@ -568,7 +576,7 @@ impl BookmarkPanel {
             if response.clicked() {
                 *row_clicked = true;
             }
-            
+
             // Show context menu on right-click
             Self::show_line_context_menu(&response, store, *store_id, events);
         });

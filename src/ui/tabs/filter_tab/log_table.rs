@@ -178,13 +178,13 @@ impl LogTable {
             // Time synchronization option (DLT-specific calibration or general file offset)
             let line_variant = store.get_by_id(&line_idx);
             let is_dlt = matches!(line_variant, Some(LogLineVariant::Dlt(_)));
-            
+
             let button_text = if is_dlt {
                 "⏱ Calibrate Time Here"
             } else {
                 "⏱ Sync Time Here"
             };
-            
+
             if ui.button(button_text).clicked() {
                 if let Some(line) = line_variant {
                     // For non-DLT files, use the adjusted timestamp (with current offset)
@@ -199,7 +199,7 @@ impl LogTable {
                             line.timestamp()
                         }
                     };
-                    
+
                     // For DLT, extract ECU ID and App ID
                     let (ecu_id, app_id) = if let LogLineVariant::Dlt(dlt_line) = line {
                         let ecu = dlt_line
@@ -814,7 +814,7 @@ impl LogTable {
             } else {
                 base_time
             };
-            
+
             let timestamp_str = display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             let text = RichText::new(timestamp_str).color(color);
             ui.label(text);
@@ -886,7 +886,7 @@ impl LogTable {
             } else {
                 String::new()
             };
-            
+
             let message = format!("{}{}", prefix, line.message());
             let job = FilterHighlight::highlight_text_with_filters(
                 &message,

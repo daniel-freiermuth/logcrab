@@ -97,7 +97,7 @@ impl SearchState {
     }
 
     /// Get a cheap clone of the filtered indices.
-    /// 
+    ///
     /// Uses Arc internally so cloning is just a reference count increment,
     /// not a deep copy of the potentially huge vector.
     pub fn get_filtered_indices_cached(&self) -> Arc<Vec<StoreID>> {
