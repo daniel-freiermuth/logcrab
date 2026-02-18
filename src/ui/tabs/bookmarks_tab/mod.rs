@@ -43,7 +43,6 @@ pub struct BookmarksView {
     sync_dlt_time_window: Option<(StoreID, SyncDltTimeWindow, Option<String>, Option<String>)>,
 }
 
-
 impl BookmarksView {
     /// Calculate scroll position and closest bookmark index
     fn calculate_scroll_and_closest(
@@ -218,9 +217,7 @@ impl BookmarksView {
                             } else {
                                 "file time offset"
                             };
-                            log::info!(
-                                "Successfully synced {sync_type} to target: {target_time}"
-                            );
+                            log::info!("Successfully synced {sync_type} to target: {target_time}");
                             data_state.modified = true;
                         }
                         Err(e) => {

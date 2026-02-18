@@ -378,9 +378,7 @@ impl FilterView {
                             } else {
                                 "file time offset"
                             };
-                            log::info!(
-                                "Successfully synced {sync_type} to target: {target_time}"
-                            );
+                            log::info!("Successfully synced {sync_type} to target: {target_time}");
                             data_state.modified = true;
                         }
                         Err(e) => {

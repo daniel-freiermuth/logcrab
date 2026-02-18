@@ -630,9 +630,7 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
                 DateTime::from_timestamp(0, 0).map(|epoch| (epoch + delta).with_timezone(&Local))
             })
         else {
-            log::warn!(
-                "Failed to convert packet timestamp at line {line_number}, skipping packet"
-            );
+            log::warn!("Failed to convert packet timestamp at line {line_number}, skipping packet");
             line_number += 1;
             continue;
         };
@@ -665,8 +663,8 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
                 let now = std::time::Instant::now();
                 if now.duration_since(last_log_time).as_secs() >= 5 {
                     let elapsed = now.duration_since(start_time).as_secs_f64();
-                    let rate =
-                        f64::from(packets_since_log) / now.duration_since(last_log_time).as_secs_f64();
+                    let rate = f64::from(packets_since_log)
+                        / now.duration_since(last_log_time).as_secs_f64();
                     log::info!(
                         "Parsed {} packets in {:.2}s ({:.0} pkt/s)",
                         source.len(),

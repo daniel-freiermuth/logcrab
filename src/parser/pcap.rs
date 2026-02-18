@@ -788,9 +788,7 @@ fn parse_legacy_pcap<P: AsRef<Path>>(
                             {
                                 current_chunk_size =
                                     (current_chunk_size * 2).min(PCAP_MAX_CHUNK_SIZE);
-                                log::debug!(
-                                    "Increased chunk size to {current_chunk_size} packets"
-                                );
+                                log::debug!("Increased chunk size to {current_chunk_size} packets");
                             }
 
                             let progress = if file_size > 0 {
