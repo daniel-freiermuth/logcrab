@@ -130,21 +130,52 @@ pub const fn bookmarked_row_color(dark_mode: bool) -> Color32 {
     }
 }
 
-/// Get the background color for a row that is both selected and bookmarked
-pub const fn selected_bookmarked_row_color(dark_mode: bool) -> Color32 {
-    if dark_mode {
-        Color32::from_rgb(140, 100, 60) // Brighter golden/orange
-    } else {
-        Color32::from_rgb(255, 220, 150) // Bright golden
-    }
-}
-
 /// Get the background color for a row that is scrolled-to (closest to selected, but not exact match)
 pub const fn scrolled_to_row_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(50, 55, 65) // Subtle darker blue-gray
     } else {
         Color32::from_rgb(220, 225, 235) // Subtle lighter blue-gray
+    }
+}
+
+/// Blend two colors together using weighted average
+fn blend_colors(base: Color32, overlay: Color32, overlay_weight: f32) -> Color32 {
+    let base_weight = 1.0 - overlay_weight;
+    let r = (f32::from(base.r()) * base_weight + f32::from(overlay.r()) * overlay_weight) as u8;
+    let g = (f32::from(base.g()) * base_weight + f32::from(overlay.g()) * overlay_weight) as u8;
+    let b = (f32::from(base.b()) * base_weight + f32::from(overlay.b()) * overlay_weight) as u8;
+    Color32::from_rgb(r, g, b)
+}
+
+/// Compute the background color for a row based on selection state and bookmark status
+fn compute_row_background_color(
+    is_selected: bool,
+    is_scrolled_to_closest: bool,
+    is_bookmarked: bool,
+    dark_mode: bool,
+) -> Option<Color32> {
+    // First determine base color from selection state
+    let base_color = if is_selected {
+        Some(selected_row_color(dark_mode))
+    } else if is_scrolled_to_closest {
+        Some(scrolled_to_row_color(dark_mode))
+    } else {
+        None
+    };
+
+    // Blend with bookmark color if bookmarked
+    if is_bookmarked {
+        let bookmark_color = bookmarked_row_color(dark_mode);
+        Some(if let Some(base) = base_color {
+            // Blend selection state with bookmark (60% bookmark, 40% selection state)
+            blend_colors(base, bookmark_color, 0.6)
+        } else {
+            // No selection state, just bookmark color
+            bookmark_color
+        })
+    } else {
+        base_color
     }
 }
 
@@ -628,29 +659,16 @@ impl LogTable {
     ) {
         row.col(|ui| {
             // Background highlight for selected/bookmarked rows
-            if is_selected && is_bookmarked {
+            if let Some(bg_color) = compute_row_background_color(
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                dark_mode,
+            ) {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
-                    selected_bookmarked_row_color(dark_mode),
-                );
-            } else if is_bookmarked {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bookmarked_row_color(dark_mode),
-                );
-            } else if is_selected {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    selected_row_color(dark_mode),
-                );
-            } else if is_scrolled_to_closest {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    scrolled_to_row_color(dark_mode),
+                    bg_color,
                 );
             }
 
@@ -699,29 +717,16 @@ impl LogTable {
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            if is_selected && is_bookmarked {
+            if let Some(bg_color) = compute_row_background_color(
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                dark_mode,
+            ) {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
-                    selected_bookmarked_row_color(dark_mode),
-                );
-            } else if is_bookmarked {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bookmarked_row_color(dark_mode),
-                );
-            } else if is_selected {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    selected_row_color(dark_mode),
-                );
-            } else if is_scrolled_to_closest {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    scrolled_to_row_color(dark_mode),
+                    bg_color,
                 );
             }
 
@@ -780,29 +785,16 @@ impl LogTable {
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            if is_selected && is_bookmarked {
+            if let Some(bg_color) = compute_row_background_color(
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                dark_mode,
+            ) {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
-                    selected_bookmarked_row_color(dark_mode),
-                );
-            } else if is_bookmarked {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bookmarked_row_color(dark_mode),
-                );
-            } else if is_selected {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    selected_row_color(dark_mode),
-                );
-            } else if is_scrolled_to_closest {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    scrolled_to_row_color(dark_mode),
+                    bg_color,
                 );
             }
 
@@ -853,29 +845,16 @@ impl LogTable {
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            if is_selected && is_bookmarked {
+            if let Some(bg_color) = compute_row_background_color(
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                dark_mode,
+            ) {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
-                    selected_bookmarked_row_color(dark_mode),
-                );
-            } else if is_bookmarked {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bookmarked_row_color(dark_mode),
-                );
-            } else if is_selected {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    selected_row_color(dark_mode),
-                );
-            } else if is_scrolled_to_closest {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    scrolled_to_row_color(dark_mode),
+                    bg_color,
                 );
             }
 
@@ -938,29 +917,16 @@ impl LogTable {
         dark_mode: bool,
     ) {
         row.col(|ui| {
-            if is_selected && is_bookmarked {
+            if let Some(bg_color) = compute_row_background_color(
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                dark_mode,
+            ) {
                 ui.painter().rect_filled(
                     ui.available_rect_before_wrap(),
                     0.0,
-                    selected_bookmarked_row_color(dark_mode),
-                );
-            } else if is_bookmarked {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bookmarked_row_color(dark_mode),
-                );
-            } else if is_selected {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    selected_row_color(dark_mode),
-                );
-            } else if is_scrolled_to_closest {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    scrolled_to_row_color(dark_mode),
+                    bg_color,
                 );
             }
 
