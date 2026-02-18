@@ -36,6 +36,9 @@ pub struct LogCrabApp {
     /// Whether to show the keyboard shortcuts window
     show_shortcuts_window: bool,
 
+    /// Whether to show the about window
+    show_about_window: bool,
+
     /// Global configuration (shortcuts, favorites, etc.)
     global_config: GlobalConfig,
 
@@ -92,6 +95,7 @@ impl LogCrabApp {
             histogram_worker: HistogramWorker::new(),
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
+            show_about_window: false,
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
@@ -465,6 +469,11 @@ impl LogCrabApp {
                 self.show_shortcuts_window = true;
                 ui.close();
             }
+            ui.separator();
+            if ui.button("About LogCrab").clicked() {
+                self.show_about_window = true;
+                ui.close();
+            }
         });
     }
 
@@ -683,6 +692,10 @@ impl eframe::App for LogCrabApp {
                 &mut self.pending_rebind,
                 &mut self.global_config,
             );
+        }
+
+        if self.show_about_window {
+            windows::render_about_window(ctx, &mut self.show_about_window);
         }
 
         // Show toast notifications
