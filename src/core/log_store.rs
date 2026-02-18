@@ -717,6 +717,22 @@ impl LogStore {
             .collect()
     }
 
+    /// Remove a source by index
+    ///
+    /// Note: This invalidates any cached StoreIDs - callers should refresh their caches.
+    pub fn remove_source(&self, index: usize) -> Option<PathBuf> {
+        profiling::scope!("LogStore::sources::write");
+        let mut sources = self.sources.write().expect("sources lock poisoned");
+        if index < sources.len() {
+            let removed = sources.remove(index);
+            let path = removed.file_path().to_path_buf();
+            log::info!("Removed source: {}", path.display());
+            Some(path)
+        } else {
+            None
+        }
+    }
+
     /// Remove all DLT sources from the store
     ///
     /// Returns the paths of the removed sources so they can be re-added.

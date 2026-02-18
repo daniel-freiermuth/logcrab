@@ -869,11 +869,11 @@ impl Histogram {
         }
 
         // Binary search to find insertion point
+        // If any line lookup fails (stale indices), just return None
         let idx = filtered_indices.partition_point(|line_idx| {
             store
                 .get_by_id(line_idx)
-                .map(|line| line.timestamp() < target_time)
-                .expect("Logline not found during histogram search.")
+                .map_or(false, |line| line.timestamp() < target_time)
         });
 
         // Compare neighbors around the insertion point to find the closest
@@ -881,14 +881,8 @@ impl Histogram {
             0 => Some(filtered_indices[0]),
             i if i >= filtered_indices.len() => Some(filtered_indices[filtered_indices.len() - 1]),
             i => {
-                let before_ts = store
-                    .get_by_id(&filtered_indices[i - 1])
-                    .expect("Logline not found during histogram search.")
-                    .timestamp();
-                let after_ts = store
-                    .get_by_id(&filtered_indices[i])
-                    .expect("Logline not found during histogram search.")
-                    .timestamp();
+                let before_ts = store.get_by_id(&filtered_indices[i - 1])?.timestamp();
+                let after_ts = store.get_by_id(&filtered_indices[i])?.timestamp();
 
                 let dist_before = (target_time - before_ts).abs();
                 let dist_after = (after_ts - target_time).abs();

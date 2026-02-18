@@ -51,6 +51,9 @@ pub struct LogCrabApp {
     /// Pending DLT file reload (set when DLT timestamp source changes)
     pending_dlt_reload: bool,
 
+    /// Pending source removal (index of source to remove)
+    pending_source_removal: Option<usize>,
+
     /// Toast notification manager
     toast_manager: ToastManager,
 }
@@ -94,6 +97,7 @@ impl LogCrabApp {
             pending_rebind: None,
             pending_drop_files: Vec::new(),
             pending_dlt_reload: false,
+            pending_source_removal: None,
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
         };
 
@@ -281,6 +285,21 @@ impl LogCrabApp {
             if self.session.is_some() && ui.button("Add File to session...").clicked() {
                 self.add_file_dialog();
                 ui.close();
+            }
+
+            // Show submenu to remove individual files
+            if let Some(ref session) = self.session {
+                let filenames = session.state.store.get_source_filenames();
+                if !filenames.is_empty() {
+                    ui.menu_button("Remove File from session", |ui| {
+                        for (index, filename) in filenames.iter().enumerate() {
+                            if ui.button(filename).clicked() {
+                                self.pending_source_removal = Some(index);
+                                ui.close();
+                            }
+                        }
+                    });
+                }
             }
 
             ui.separator();
@@ -616,6 +635,15 @@ impl eframe::App for LogCrabApp {
             if let Some(ref mut session) = self.session {
                 session
                     .reload_dlt_files(self.global_config.dlt_timestamp_source, &self.toast_manager);
+            }
+        }
+
+        // Process pending source removal
+        if let Some(index) = self.pending_source_removal.take() {
+            if let Some(ref mut session) = self.session {
+                // Save .crab file before removal to persist any unsaved data
+                session.save_crab_file();
+                session.state.store.remove_source(index);
             }
         }
 
