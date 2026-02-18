@@ -79,8 +79,8 @@ impl CrabSession {
             egui_dock::NodeIndex::root(),
             0.7,
             vec![
-                Box::new(HighlightsView::new()),
                 Box::new(BookmarksView::default()),
+                Box::new(HighlightsView::new()),
             ],
         );
 
