@@ -24,7 +24,7 @@ use crate::core::log_file::ProgressCallback;
 use crate::core::log_store::SourceData;
 
 use super::line::{BtsnoopLogLine, LogLine};
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Local, TimeDelta};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -626,16 +626,22 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
     let mut current_chunk_size = BTSNOOP_INITIAL_CHUNK_SIZE;
 
     for packet in &btsnoop_file.packets {
-        // Convert timestamp from microseconds since epoch
-        let timestamp_micros = packet.header.timestamp_microseconds;
-        let timestamp_secs = i64::try_from(timestamp_micros / 1_000_000)
-            .unwrap_or_else(|_| Local::now().timestamp());
-        let timestamp_nanos = ((timestamp_micros % 1_000_000) * 1_000) as u32;
+        // Use btsnoop crate's timestamp() method which handles epoch conversion
+        let duration_since_unix = packet.header.timestamp();
 
-        let timestamp = Local
-            .timestamp_opt(timestamp_secs, timestamp_nanos)
-            .single()
-            .unwrap_or_else(Local::now);
+        let Some(timestamp) = TimeDelta::from_std(duration_since_unix)
+            .ok()
+            .and_then(|delta| {
+                DateTime::from_timestamp(0, 0).map(|epoch| (epoch + delta).with_timezone(&Local))
+            })
+        else {
+            log::warn!(
+                "Failed to convert packet timestamp at line {}, skipping packet",
+                line_number
+            );
+            line_number += 1;
+            continue;
+        };
 
         if let Some(hci_info) = parse_hci_packet(packet, timestamp) {
             let log_line = LogLine::Btsnoop(BtsnoopLogLine::new(hci_info, line_number));
