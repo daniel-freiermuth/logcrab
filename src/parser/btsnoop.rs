@@ -80,10 +80,7 @@ impl HciPacketInfo {
 }
 
 /// Parse HCI packet data and extract packet info
-fn parse_hci_packet(
-    packet: &btsnoop::Packet,
-    timestamp: DateTime<Local>,
-) -> Option<HciPacketInfo> {
+fn parse_hci_packet(packet: &btsnoop::Packet, timestamp: DateTime<Local>) -> Option<HciPacketInfo> {
     profiling::scope!("parse_hci_packet");
 
     let data = &packet.packet_data;
@@ -139,22 +136,23 @@ fn parse_hci_type_and_info(data: &[u8], _flags: &btsnoop::PacketFlags) -> (Strin
                 let pb_flag = (data[2] >> 4) & 0x03;
                 let bc_flag = (data[2] >> 6) & 0x03;
                 let acl_len = u16::from_le_bytes([data[3], data[4]]);
-                
+
                 // Parse L2CAP header if present (need at least 4 more bytes)
                 if data.len() >= 9 && pb_flag != 0x01 {
                     // pb_flag 0x01 = continuation fragment, no L2CAP header
                     let l2cap_len = u16::from_le_bytes([data[5], data[6]]);
                     let l2cap_cid = u16::from_le_bytes([data[7], data[8]]);
                     let channel_name = get_l2cap_channel_name(l2cap_cid);
-                    
+
                     // Parse L2CAP signaling commands if applicable
-                    let l2cap_info = if (l2cap_cid == 0x0001 || l2cap_cid == 0x0005) && data.len() >= 10 {
-                        let sig_code = data[9];
-                        format!("{channel_name} {}", get_l2cap_signaling_code(sig_code))
-                    } else {
-                        channel_name.to_string()
-                    };
-                    
+                    let l2cap_info =
+                        if (l2cap_cid == 0x0001 || l2cap_cid == 0x0005) && data.len() >= 10 {
+                            let sig_code = data[9];
+                            format!("{channel_name} {}", get_l2cap_signaling_code(sig_code))
+                        } else {
+                            channel_name.to_string()
+                        };
+
                     (
                         "ACL_DATA".to_string(),
                         format!("Handle=0x{handle:04x} L2CAP(Len={l2cap_len} CID=0x{l2cap_cid:04x} {l2cap_info})"),
@@ -212,7 +210,7 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
     match opcode {
         // Special
         0x0000 => "NOP",
-        
+
         // Link Control Commands (OGF 0x01)
         0x0401 => "Inquiry",
         0x0402 => "Inquiry_Cancel",
@@ -237,7 +235,7 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
         0x041F => "Read_Remote_Extended_Features",
         0x0428 => "Setup_Synchronous_Connection",
         0x0429 => "Accept_Synchronous_Connection",
-        
+
         // Link Policy Commands (OGF 0x02)
         0x0801 => "Hold_Mode",
         0x0802 => "Sniff_Mode",
@@ -254,7 +252,7 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
         0x080F => "Write_Default_Link_Policy_Settings",
         0x0810 => "Flow_Specification",
         0x0811 => "Sniff_Subrating",
-        
+
         // Controller & Baseband Commands (OGF 0x03)
         0x0C01 => "Set_Event_Mask",
         0x0C03 => "Reset",
@@ -335,7 +333,7 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
         0x0C6B => "Short_Range_Mode",
         0x0C6C => "Read_LE_Host_Support",
         0x0C6D => "Write_LE_Host_Support",
-        
+
         // Informational Parameters (OGF 0x04)
         0x1001 => "Read_Local_Version_Information",
         0x1002 => "Read_Local_Supported_Commands",
@@ -346,7 +344,7 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
         0x1009 => "Read_BD_ADDR",
         0x100A => "Read_Data_Block_Size",
         0x100B => "Read_Local_Supported_Codecs",
-        
+
         // Status Parameters (OGF 0x05)
         0x1401 => "Read_Failed_Contact_Counter",
         0x1402 => "Reset_Failed_Contact_Counter",
@@ -355,7 +353,7 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
         0x1406 => "Read_AFH_Channel_Map",
         0x1407 => "Read_Clock",
         0x1408 => "Read_Encryption_Key_Size",
-        
+
         // LE Controller Commands (OGF 0x08)
         0x2001 => "LE_Set_Event_Mask",
         0x2002 => "LE_Read_Buffer_Size",
@@ -435,10 +433,10 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
         0x204D => "LE_Read_RF_Path_Compensation",
         0x204E => "LE_Write_RF_Path_Compensation",
         0x204F => "LE_Set_Privacy_Mode",
-        
+
         // Vendor Specific Commands (OGF 0x3F, opcodes 0xFC00-0xFFFF)
         0xFC00..=0xFFFF => "Vendor_Specific",
-        
+
         _ => "Unknown_Command",
     }
 }
@@ -596,10 +594,7 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
 
     // Read entire file (btsnoop crate requires byte slice)
     let mut file = File::open(path).map_err(|e| format!("Failed to open btsnoop file: {e}"))?;
-    let file_size = file
-        .metadata()
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
 
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)
@@ -671,8 +666,8 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
                 let now = std::time::Instant::now();
                 if now.duration_since(last_log_time).as_secs() >= 5 {
                     let elapsed = now.duration_since(start_time).as_secs_f64();
-                    let rate = packets_since_log as f64
-                        / now.duration_since(last_log_time).as_secs_f64();
+                    let rate =
+                        packets_since_log as f64 / now.duration_since(last_log_time).as_secs_f64();
                     log::info!(
                         "Parsed {} packets in {:.2}s ({:.0} pkt/s)",
                         source.len(),
