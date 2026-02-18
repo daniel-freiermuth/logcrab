@@ -508,11 +508,16 @@ impl BookmarkPanel {
             egui::TextEdit::singleline(bookmark_name_input).desired_width(ui.available_width());
 
         let id = ui.id().with("bm_edit").with(store_id);
+
+        // Track if we've initialized focus for this editing session
+        let init_id = id.with("initialized");
+        let already_initialized = ui.data(|d| d.get_temp::<bool>(init_id).unwrap_or(false));
+
         let response = ui.add(text_edit.id(id));
 
-        // Request focus and select all on first frame
-        let was_focused = ui.memory(|mem| mem.has_focus(id));
-        if !was_focused {
+        // Request focus and select all only on first frame (not every frame)
+        if !already_initialized {
+            ui.data_mut(|d| d.insert_temp(init_id, true));
             response.request_focus();
             if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
                 let ccursor_start = egui::text::CCursor::new(0);
@@ -525,16 +530,22 @@ impl BookmarkPanel {
                     )));
                 state.store(ui.ctx(), id);
             }
+        } else if response.lost_focus() {
+            // Close editor when clicking outside (focus lost) and clean up temp data
+            ui.data_mut(|d| d.remove::<bool>(init_id));
+            events.push(BookmarkPanelEvent::CancelRenaming);
         }
 
-        // Save on Enter (allows empty string to remove annotation)
+        // Save on Enter
         if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            ui.data_mut(|d| d.remove::<bool>(init_id));
             events.push(BookmarkPanelEvent::BookmarkRenamed {
                 store_id: *store_id,
                 new_name: bookmark_name_input.clone(),
             });
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            ui.data_mut(|d| d.remove::<bool>(init_id));
             events.push(BookmarkPanelEvent::CancelRenaming);
         }
     }
