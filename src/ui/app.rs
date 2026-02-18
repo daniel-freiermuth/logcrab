@@ -48,6 +48,9 @@ pub struct LogCrabApp {
     /// Pending dropped files to load
     pending_drop_files: Vec<PathBuf>,
 
+    /// Pending DLT file reload (set when DLT timestamp source changes)
+    pending_dlt_reload: bool,
+
     /// Toast notification manager
     toast_manager: ToastManager,
 }
@@ -90,6 +93,7 @@ impl LogCrabApp {
             global_config,
             pending_rebind: None,
             pending_drop_files: Vec::new(),
+            pending_dlt_reload: false,
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
         };
 
@@ -428,6 +432,8 @@ impl LogCrabApp {
                     "DLT timestamp source changed to: {:?}",
                     self.global_config.dlt_timestamp_source
                 );
+                // Request reload of DLT files with the new timestamp source
+                self.pending_dlt_reload = true;
             }
         });
 
@@ -602,6 +608,15 @@ impl eframe::App for LogCrabApp {
             profiling::scope!("process_dropped_files");
             let files = std::mem::take(&mut self.pending_drop_files);
             self.process_dropped_files(files);
+        }
+
+        // Process pending DLT file reload (triggered by DLT timestamp source change)
+        if self.pending_dlt_reload {
+            self.pending_dlt_reload = false;
+            if let Some(ref mut session) = self.session {
+                session
+                    .reload_dlt_files(self.global_config.dlt_timestamp_source, &self.toast_manager);
+            }
         }
 
         {

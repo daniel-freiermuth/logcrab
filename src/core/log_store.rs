@@ -140,6 +140,19 @@ impl SourceData {
         self.version.load(AtomicOrdering::SeqCst)
     }
 
+    /// Get the file path for this source
+    pub fn file_path(&self) -> &Path {
+        &self.file_path
+    }
+
+    /// Check if this source is a DLT file (based on extension)
+    pub fn is_dlt_file(&self) -> bool {
+        self.file_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"))
+    }
+
     // ========================================================================
     // Bookmark Management
     // ========================================================================
@@ -702,6 +715,26 @@ impl LogStore {
                     .into_owned()
             })
             .collect()
+    }
+
+    /// Remove all DLT sources from the store
+    ///
+    /// Returns the paths of the removed sources so they can be re-added.
+    /// Note: This invalidates any cached StoreIDs - callers should refresh their caches.
+    pub fn remove_dlt_sources(&self) -> Vec<PathBuf> {
+        profiling::scope!("LogStore::sources::write");
+        let mut sources = self.sources.write().expect("sources lock poisoned");
+
+        let removed_paths: Vec<PathBuf> = sources
+            .iter()
+            .filter(|s| s.is_dlt_file())
+            .map(|s| s.file_path().to_path_buf())
+            .collect();
+
+        sources.retain(|s| !s.is_dlt_file());
+
+        log::info!("Removed {} DLT sources from store", removed_paths.len());
+        removed_paths
     }
 
     // ========================================================================

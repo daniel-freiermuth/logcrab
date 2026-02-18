@@ -135,6 +135,55 @@ impl CrabSession {
         }
     }
 
+    /// Reload all DLT files with a new timestamp source setting
+    ///
+    /// This removes all DLT sources from the store and re-loads them
+    /// with the new timestamp source setting. The bookmarks are preserved
+    /// in the .crab files.
+    pub fn reload_dlt_files(
+        &mut self,
+        dlt_timestamp_source: crate::config::DltTimestampSource,
+        toast_manager: &crate::ui::toasts::ToastManager,
+    ) {
+        // First save .crab files to persist any unsaved bookmarks
+        self.save_crab_file();
+
+        // Remove all DLT sources and get their paths
+        let dlt_paths = self.state.store.remove_dlt_sources();
+
+        if dlt_paths.is_empty() {
+            log::info!("No DLT files to reload");
+            return;
+        }
+
+        log::info!(
+            "Reloading {} DLT files with new timestamp source",
+            dlt_paths.len()
+        );
+
+        // Re-add each DLT file (this will reload them with the new timestamp source)
+        for path in dlt_paths {
+            let toast = toast_manager.create_progress_toast(
+                format!(
+                    "Reloading {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                "Starting...",
+            );
+            // Directly load and add the file, bypassing the duplicate check
+            // since we just removed these sources
+            if let Some(source) =
+                LogFileLoader::load_async(path.clone(), toast.clone(), dlt_timestamp_source)
+            {
+                self.state.store.add_source(&source);
+            } else {
+                log::error!("Failed to reload DLT file: {}", path.display());
+                toast.set_error("Failed to reload file".to_string());
+                toast.dismiss();
+            }
+        }
+    }
+
     fn add_filter_if_not_exists(&mut self, saved_filter: &SavedFilter) {
         // Check if a filter with the same search text already exists
         let exists = self
