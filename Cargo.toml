@@ -5,6 +5,26 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Daniel Freiermuth"]
 
+[package.metadata.deb]
+maintainer = "Daniel Freiermuth <daniel@freiermuth.dev>"
+copyright = "2025-2026, Daniel Freiermuth <daniel@freiermuth.dev>"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+An intelligent log anomaly explorer built with Rust and egui. \
+LogCrab helps developers and system administrators debug by \
+automatically highlighting unusual, novel, or interesting log \
+lines in large log files."""
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/logcrab", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/logcrab/README", "644"],
+    ["logcrab-system.desktop", "usr/share/applications/logcrab.desktop", "644"],
+    ["logcrab-mime.xml", "usr/share/mime/packages/", "644"],
+    ["logo.png", "usr/share/icons/hicolor/256x256/apps/logcrab.png", "644"],
+]
+
 [features]
 default = []
 profiling = ["ram-profiling", "cpu-profiling"]
