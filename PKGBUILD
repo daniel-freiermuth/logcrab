@@ -1,6 +1,6 @@
 # Maintainer: Daniel Freiermuth <daniel@freiermuth.dev>
 pkgname=logcrab
-pkgver=0.25.0
+pkgver=0.25.1
 pkgrel=1
 pkgdesc="An intelligent log anomaly explorer built with Rust and egui"
 arch=('x86_64')
