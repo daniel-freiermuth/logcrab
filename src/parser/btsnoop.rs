@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-//! BTSnoop (Bluetooth HCI log) file parser for Bluetooth traffic analysis.
+//! `BTSnoop` (Bluetooth HCI log) file parser for Bluetooth traffic analysis.
 //!
 //! Supports Android btsnoop logs and btmon format.
 
@@ -206,7 +206,7 @@ fn parse_hci_type_and_info(data: &[u8], _flags: &btsnoop::PacketFlags) -> (Strin
 }
 
 /// Get human-readable HCI command name from opcode
-fn get_hci_command_name(opcode: u16) -> &'static str {
+const fn get_hci_command_name(opcode: u16) -> &'static str {
     match opcode {
         // Special
         0x0000 => "NOP",
@@ -442,7 +442,7 @@ fn get_hci_command_name(opcode: u16) -> &'static str {
 }
 
 /// Get human-readable HCI event name from event code
-fn get_hci_event_name(event_code: u8) -> &'static str {
+const fn get_hci_event_name(event_code: u8) -> &'static str {
     match event_code {
         0x01 => "Inquiry_Complete",
         0x02 => "Inquiry_Result",
@@ -527,7 +527,7 @@ fn get_hci_event_name(event_code: u8) -> &'static str {
 }
 
 /// Get human-readable L2CAP channel name from CID
-fn get_l2cap_channel_name(cid: u16) -> &'static str {
+const fn get_l2cap_channel_name(cid: u16) -> &'static str {
     match cid {
         0x0001 => "L2CAP_Signaling",
         0x0002 => "Connectionless",
@@ -543,7 +543,7 @@ fn get_l2cap_channel_name(cid: u16) -> &'static str {
 }
 
 /// Get human-readable L2CAP signaling command code
-fn get_l2cap_signaling_code(code: u8) -> &'static str {
+const fn get_l2cap_signaling_code(code: u8) -> &'static str {
     match code {
         0x01 => "Command_Reject",
         0x02 => "Connection_Request",
@@ -631,8 +631,7 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
             })
         else {
             log::warn!(
-                "Failed to convert packet timestamp at line {}, skipping packet",
-                line_number
+                "Failed to convert packet timestamp at line {line_number}, skipping packet"
             );
             line_number += 1;
             continue;
@@ -653,7 +652,7 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
                     && current_chunk_size < BTSNOOP_MAX_CHUNK_SIZE
                 {
                     current_chunk_size = (current_chunk_size * 2).min(BTSNOOP_MAX_CHUNK_SIZE);
-                    log::debug!("Increased chunk size to {} packets", current_chunk_size);
+                    log::debug!("Increased chunk size to {current_chunk_size} packets");
                 }
 
                 let progress = source.len() as f32 / btsnoop_file.packets.len() as f32;
@@ -667,7 +666,7 @@ pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
                 if now.duration_since(last_log_time).as_secs() >= 5 {
                     let elapsed = now.duration_since(start_time).as_secs_f64();
                     let rate =
-                        packets_since_log as f64 / now.duration_since(last_log_time).as_secs_f64();
+                        f64::from(packets_since_log) / now.duration_since(last_log_time).as_secs_f64();
                     log::info!(
                         "Parsed {} packets in {:.2}s ({:.0} pkt/s)",
                         source.len(),

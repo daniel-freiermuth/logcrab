@@ -94,7 +94,7 @@ impl PacketInfo {
 
         let vlan = self
             .vlan_id
-            .map_or(String::new(), |id| format!(" [VLAN {}]", id));
+            .map_or(String::new(), |id| format!(" [VLAN {id}]"));
         let abnormal = if self.is_abnormal { " ⚠" } else { "" };
 
         // Enhanced TCP formatting with seq/ack
@@ -152,7 +152,7 @@ impl PacketInfo {
 
         let vlan = self
             .vlan_id
-            .map_or(String::new(), |id| format!(" VLAN={}", id));
+            .map_or(String::new(), |id| format!(" VLAN={id}"));
         let abnormal = if self.is_abnormal { " [ABNORMAL]" } else { "" };
 
         // Enhanced TCP formatting for raw view
@@ -246,7 +246,7 @@ struct FlowKey {
 }
 
 impl FlowKey {
-    fn new(src_addr: String, src_port: u16, dst_addr: String, dst_port: u16) -> Self {
+    const fn new(src_addr: String, src_port: u16, dst_addr: String, dst_port: u16) -> Self {
         Self {
             src_addr,
             src_port,
@@ -309,7 +309,7 @@ impl TcpFlowState {
     }
 
     /// Check if this is an out-of-order packet
-    fn is_out_of_order(&self, seq: u32, payload_len: u32) -> bool {
+    const fn is_out_of_order(&self, seq: u32, payload_len: u32) -> bool {
         if payload_len == 0 || self.next_seq == 0 {
             return false;
         }
@@ -769,7 +769,7 @@ fn parse_legacy_pcap<P: AsRef<Path>>(
                     let timestamp = pcap_ts_to_datetime(packet.ts_sec, packet.ts_usec)
                         .unwrap_or_else(Local::now);
 
-                    if let Some(mut packet_info) = parse_packet_data(&packet.data, timestamp) {
+                    if let Some(mut packet_info) = parse_packet_data(packet.data, timestamp) {
                         // Analyze TCP packets for anomalies
                         flow_tracker.analyze_packet(&mut packet_info);
 
@@ -789,8 +789,7 @@ fn parse_legacy_pcap<P: AsRef<Path>>(
                                 current_chunk_size =
                                     (current_chunk_size * 2).min(PCAP_MAX_CHUNK_SIZE);
                                 log::debug!(
-                                    "Increased chunk size to {} packets",
-                                    current_chunk_size
+                                    "Increased chunk size to {current_chunk_size} packets"
                                 );
                             }
 
@@ -808,7 +807,7 @@ fn parse_legacy_pcap<P: AsRef<Path>>(
                             let now = std::time::Instant::now();
                             if now.duration_since(last_log_time).as_secs() >= 5 {
                                 let elapsed = now.duration_since(start_time).as_secs_f64();
-                                let rate = packets_since_log as f64
+                                let rate = f64::from(packets_since_log)
                                     / now.duration_since(last_log_time).as_secs_f64();
                                 log::info!(
                                     "Parsed {} packets in {:.2}s ({:.0} pkt/s, {:.1} MB/s)",
@@ -925,7 +924,7 @@ fn parse_pcapng<P: AsRef<Path>>(
                             .single()
                             .unwrap_or_else(Local::now);
 
-                        if let Some(mut packet_info) = parse_packet_data(&epb.data, timestamp) {
+                        if let Some(mut packet_info) = parse_packet_data(epb.data, timestamp) {
                             // Analyze TCP packets for anomalies
                             flow_tracker.analyze_packet(&mut packet_info);
 
@@ -946,8 +945,7 @@ fn parse_pcapng<P: AsRef<Path>>(
                                     current_chunk_size =
                                         (current_chunk_size * 2).min(PCAP_MAX_CHUNK_SIZE);
                                     log::debug!(
-                                        "Increased chunk size to {} packets",
-                                        current_chunk_size
+                                        "Increased chunk size to {current_chunk_size} packets"
                                     );
                                 }
 
@@ -965,7 +963,7 @@ fn parse_pcapng<P: AsRef<Path>>(
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_log_time).as_secs() >= 5 {
                                     let elapsed = now.duration_since(start_time).as_secs_f64();
-                                    let rate = packets_since_log as f64
+                                    let rate = f64::from(packets_since_log)
                                         / now.duration_since(last_log_time).as_secs_f64();
                                     log::info!(
                                         "Parsed {} packets in {:.2}s ({:.0} pkt/s, {:.1} MB/s)",
@@ -988,7 +986,7 @@ fn parse_pcapng<P: AsRef<Path>>(
                     PcapBlockOwned::NG(pcap_parser::Block::SimplePacket(spb)) => {
                         // Simple packets don't have timestamps, use current time
                         let timestamp = Local::now();
-                        if let Some(mut packet_info) = parse_packet_data(&spb.data, timestamp) {
+                        if let Some(mut packet_info) = parse_packet_data(spb.data, timestamp) {
                             // Analyze TCP packets for anomalies
                             flow_tracker.analyze_packet(&mut packet_info);
 

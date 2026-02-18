@@ -526,7 +526,7 @@ impl LogLineCore for PcapLogLine {
 // BTSnoop Log Line
 // ============================================================================
 
-/// BTSnoop (Bluetooth HCI log) format log line representing an HCI packet
+/// `BTSnoop` (Bluetooth HCI log) format log line representing an HCI packet
 #[derive(Debug, Clone)]
 pub struct BtsnoopLogLine {
     /// Parsed HCI packet information

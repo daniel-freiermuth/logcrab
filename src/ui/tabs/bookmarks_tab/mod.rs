@@ -33,6 +33,7 @@ use crate::{
 use egui::Ui;
 
 /// Orchestrates the bookmarks view UI using the `BookmarkPanel` component
+#[derive(Default)]
 pub struct BookmarksView {
     edited_store_id: Option<StoreID>,
     bookmark_name_input: String,
@@ -42,18 +43,6 @@ pub struct BookmarksView {
     sync_dlt_time_window: Option<(StoreID, SyncDltTimeWindow, Option<String>, Option<String>)>,
 }
 
-impl Default for BookmarksView {
-    fn default() -> Self {
-        Self {
-            edited_store_id: None,
-            bookmark_name_input: String::new(),
-            enter_pressed_this_frame: false,
-            last_selected_line: None,
-            closest_bookmark_index: None,
-            sync_dlt_time_window: None,
-        }
-    }
-}
 
 impl BookmarksView {
     /// Calculate scroll position and closest bookmark index
@@ -230,8 +219,7 @@ impl BookmarksView {
                                 "file time offset"
                             };
                             log::info!(
-                                "Successfully synced {} to target: {target_time}",
-                                sync_type
+                                "Successfully synced {sync_type} to target: {target_time}"
                             );
                             data_state.modified = true;
                         }

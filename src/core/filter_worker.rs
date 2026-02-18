@@ -57,7 +57,7 @@ pub struct FilterResult {
     pub exclude_text: String,
     /// Whether case sensitivity was enabled
     pub case_sensitive: bool,
-    /// The LogStore version these indices were computed for
+    /// The `LogStore` version these indices were computed for
     pub store_version: u64,
 }
 

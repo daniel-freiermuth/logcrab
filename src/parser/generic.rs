@@ -58,7 +58,7 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
         let ts_str = &caps[1];
 
         // Normalize timezone offset: convert +0100 to +01:00 for RFC3339 compatibility
-        let normalized_ts = if let Some(tz_pos) = ts_str.rfind(|c| c == '+' || c == '-') {
+        let normalized_ts = if let Some(tz_pos) = ts_str.rfind(['+', '-']) {
             let (datetime_part, tz_part) = ts_str.split_at(tz_pos);
             // Check if timezone is in format +0100 (5 chars: sign + 4 digits, no colon)
             if tz_part.len() == 5 && !tz_part.contains(':') {

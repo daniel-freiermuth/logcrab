@@ -174,8 +174,7 @@ pub fn parse_dlt_file_with_progress<P: AsRef<Path>>(
                         {
                             current_chunk_size = (current_chunk_size * 2).min(DLT_MAX_CHUNK_SIZE);
                             log::debug!(
-                                "Increased DLT chunk size to {} messages",
-                                current_chunk_size
+                                "Increased DLT chunk size to {current_chunk_size} messages"
                             );
                         }
 

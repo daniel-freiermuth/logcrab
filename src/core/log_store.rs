@@ -44,7 +44,7 @@ pub struct SourceData {
     /// Time offset in milliseconds (for non-DLT file synchronization)
     time_offset_ms: RwLock<i64>,
     /// Locked .crab file handle and path to prevent multiple instances from opening the same session.
-    /// The OS-level file lock (via fs2) is held for the lifetime of this SourceData,
+    /// The OS-level file lock (via fs2) is held for the lifetime of this `SourceData`,
     /// providing exclusive access. The Mutex allows interior mutability for reads/writes.
     /// Path is stored alongside to avoid recomputation and ensure single source of truth.
     crab_lock: Mutex<(File, PathBuf)>,
@@ -61,8 +61,7 @@ impl SourceData {
     pub fn new(file_path: PathBuf) -> Option<Self> {
         assert!(
             file_path.file_name().is_some(),
-            "file_path must have a filename component: {:?}",
-            file_path
+            "file_path must have a filename component: {file_path:?}"
         );
 
         let crab_path = Self::compute_crab_path(&file_path);
@@ -110,7 +109,7 @@ impl SourceData {
         {
             Ok(f) => f,
             Err(e) => {
-                log::error!("Cannot open .crab file {:?}: {}", crab_path, e);
+                log::error!("Cannot open .crab file {crab_path:?}: {e}");
                 return None;
             }
         };
@@ -118,14 +117,12 @@ impl SourceData {
         // Try to acquire exclusive lock
         match file.try_lock_exclusive() {
             Ok(()) => {
-                log::info!("Successfully acquired exclusive lock on {:?}", crab_path);
+                log::info!("Successfully acquired exclusive lock on {crab_path:?}");
                 Some(file)
             }
             Err(e) => {
                 log::error!(
-                    "Cannot lock .crab file {:?} (already open in another instance?): {}",
-                    crab_path,
-                    e
+                    "Cannot lock .crab file {crab_path:?} (already open in another instance?): {e}"
                 );
                 None
             }
@@ -298,10 +295,7 @@ impl SourceData {
         let offset_ms = target_time.timestamp_millis() - original_time.timestamp_millis();
 
         log::info!(
-            "Setting time offset for source: {} ms (original: {}, target: {})",
-            offset_ms,
-            original_time,
-            target_time
+            "Setting time offset for source: {offset_ms} ms (original: {original_time}, target: {target_time})"
         );
 
         *self
@@ -652,7 +646,7 @@ impl LogStore {
                     return &source_canonical == canonical;
                 }
             }
-            &source.file_path == path
+            source.file_path == path
         })
     }
 

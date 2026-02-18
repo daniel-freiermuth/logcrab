@@ -340,7 +340,7 @@ impl ToastManager {
                         let char_count = state.message.chars().count();
                         let skip_chars = char_count.saturating_sub(47);
                         let truncated: String = state.message.chars().skip(skip_chars).collect();
-                        format!("...{}", truncated)
+                        format!("...{truncated}")
                     } else {
                         state.message.clone()
                     };

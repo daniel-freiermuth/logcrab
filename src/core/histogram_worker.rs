@@ -241,7 +241,7 @@ impl HistogramWorker {
                 .copied()
                 .collect()
         } else {
-            filtered_indices.clone()
+            filtered_indices
         };
 
         let (buckets, anomaly_buckets) =

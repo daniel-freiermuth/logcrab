@@ -882,7 +882,7 @@ impl LogTable {
             // Add time offset prefix if present
             let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
             let prefix = if offset_ms != 0 {
-                format!("[{:+}ms] ", offset_ms)
+                format!("[{offset_ms:+}ms] ")
             } else {
                 String::new()
             };
