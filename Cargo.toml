@@ -14,7 +14,7 @@ maintainer = "Daniel Freiermuth <daniel@freiermuth.dev>"
 copyright = "2025-2026, Daniel Freiermuth <daniel@freiermuth.dev>"
 license-file = ["LICENSE", "4"]
 extended-description = """\
-An intelligent log anomaly explorer built with Rust and egui. \
+A polyscopic anomaly explorer built with Rust and egui. \
 LogCrab helps developers and system administrators debug by \
 automatically highlighting unusual, novel, or interesting log \
 lines in large log files."""

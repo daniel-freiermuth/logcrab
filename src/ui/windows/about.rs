@@ -20,7 +20,7 @@ pub fn render_about_window(ctx: &egui::Context, open: &mut bool) {
                 ui.heading("🦀 LogCrab");
                 ui.add_space(5.0);
 
-                ui.label("An intelligent log anomaly explorer");
+                ui.label("A polyscopic anomaly explorer");
                 ui.add_space(15.0);
 
                 egui::Grid::new("about_grid")

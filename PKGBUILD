@@ -2,7 +2,7 @@
 pkgname=logcrab
 pkgver=0.25.1
 pkgrel=1
-pkgdesc="An intelligent log anomaly explorer built with Rust and egui"
+pkgdesc="A polyscopic anomaly explorer built with Rust and egui"
 arch=('x86_64')
 url="https://github.com/daniel-freiermuth/logcrab"
 license=('GPL-3.0-or-later')

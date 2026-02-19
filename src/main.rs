@@ -1,4 +1,4 @@
-/// `LogCrab` - An intelligent log anomaly explorer
+/// `LogCrab` - A polyscopic anomaly explorer
 ///
 /// Copyright (C) 2026 Daniel Freiermuth
 ///

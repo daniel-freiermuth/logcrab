@@ -1,6 +1,6 @@
 # LogCrab 🦀
 
-An intelligent log anomaly explorer built with Rust and egui. LogCrab helps developers and system administrators debug by automatically highlighting unusual, novel, or interesting log lines in large log files.
+A polyscopic anomaly explorer built with Rust and egui. LogCrab helps developers and system administrators debug by automatically highlighting unusual, novel, or interesting log lines in large log files.
 
 <img width="1920" height="1016" alt="image" src="https://github.com/user-attachments/assets/ed0bec6e-243f-491b-8361-4c6f25d63249" />
 
