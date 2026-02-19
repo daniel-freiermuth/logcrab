@@ -18,6 +18,69 @@
 
 use chrono::{DateTime, Local};
 
+/// Format time difference with 3 significant digits and appropriate unit
+pub fn format_time_diff(diff: chrono::Duration) -> String {
+    let sign = if diff < chrono::Duration::zero() {
+        "-"
+    } else {
+        "+"
+    };
+    
+    // Use absolute value for calculations
+    let abs_diff = if diff < chrono::Duration::zero() {
+        -diff
+    } else {
+        diff
+    };
+
+    // Select appropriate unit based on magnitude
+    let (value, unit) = if abs_diff.num_days().abs() >= 1 {
+        // Days (as float for fractional days)
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 86400.0, "d")
+    } else if abs_diff.num_hours().abs() >= 1 {
+        // Hours
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 3600.0, "h")
+    } else if abs_diff.num_minutes().abs() >= 1 {
+        // Minutes
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 60.0, "m")
+    } else if abs_diff.num_seconds().abs() >= 1 {
+        // Seconds
+        let total_millis = abs_diff.num_milliseconds() as f64;
+        (total_millis / 1000.0, "s")
+    } else if let Some(micros) = abs_diff.num_microseconds() {
+        if micros.abs() >= 1000 {
+            // Milliseconds
+            (micros.abs() as f64 / 1000.0, "ms")
+        } else if micros.abs() >= 1 {
+            // Microseconds
+            (micros.abs() as f64, "µs")
+        } else if let Some(nanos) = abs_diff.num_nanoseconds() {
+            // Nanoseconds
+            (nanos.abs() as f64, "ns")
+        } else {
+            (0.0, "ns")
+        }
+    } else {
+        // Fallback for very large durations
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 86400.0, "d")
+    };
+
+    // Format with 3 significant digits
+    if value >= 100.0 {
+        format!("{sign}{value:>3.0}{unit}")
+    } else if value >= 10.0 {
+        format!("{sign}{value:>3.1}{unit}")
+    } else if value >= 1.0 {
+        format!("{sign}{value:>3.2}{unit}")
+    } else {
+        format!("{sign}{value:>4.3}{unit}")
+    }
+}
+
 /// Common interface for all log line types
 pub trait LogLineCore {
     /// Get the timestamp of this log line
@@ -291,42 +354,9 @@ impl DltLogLine {
         }
     }
 
-    /// Format time difference with 4 significant digits and appropriate unit
+    /// Format time difference with 3 significant digits and appropriate unit
     fn format_time_diff(diff: chrono::Duration) -> String {
-        let sign = if diff < chrono::Duration::zero() {
-            "-"
-        } else {
-            "+"
-        };
-        let nanos = diff.num_nanoseconds().unwrap_or(0).unsigned_abs();
-
-        let (value, unit) = if nanos >= 60_000_000_000 {
-            // Minutes
-            (nanos as f64 / 60_000_000_000.0, "m")
-        } else if nanos >= 1_000_000_000 {
-            // Seconds
-            (nanos as f64 / 1_000_000_000.0, "s")
-        } else if nanos >= 1_000_000 {
-            // Milliseconds
-            (nanos as f64 / 1_000_000.0, "ms")
-        } else if nanos >= 1_000 {
-            // Microseconds
-            (nanos as f64 / 1_000.0, "µs")
-        } else {
-            // Nanoseconds
-            (nanos as f64, "ns")
-        };
-
-        // Format with 4 significant digits
-        if value >= 1000.0 {
-            format!("{sign}{value:>4.0}{unit}")
-        } else if value >= 100.0 {
-            format!("{sign}{value:>4.1}{unit}")
-        } else if value >= 10.0 {
-            format!("{sign}{value:>4.2}{unit}")
-        } else {
-            format!("{sign}{value:>4.3}{unit}")
-        }
+        format_time_diff(diff)
     }
 
     /// Format DLT message for display (expensive, construct lazily)

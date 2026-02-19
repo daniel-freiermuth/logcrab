@@ -21,6 +21,7 @@ use std::sync::Arc;
 use crate::{
     core::{log_store::StoreID, LogStore},
     parser::line::{LogLine, LogLineCore},
+    parser::logline_types::format_time_diff,
     ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
 use chrono::{DateTime, Local};
@@ -868,7 +869,8 @@ impl LogTable {
             // Add time offset prefix if present
             let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
             let prefix = if offset_ms != 0 {
-                format!("[{offset_ms:+}ms] ")
+                let offset_duration = chrono::Duration::milliseconds(offset_ms);
+                format!("[{}] ", format_time_diff(offset_duration))
             } else {
                 String::new()
             };

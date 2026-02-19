@@ -19,6 +19,7 @@
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
 use crate::parser::line::{LogLine, LogLineCore};
+use crate::parser::logline_types::format_time_diff;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::log_table::{
@@ -569,7 +570,8 @@ impl BookmarkPanel {
             // Add time offset prefix if present
             let offset_ms = store.get_time_offset_ms(store_id).unwrap_or(0);
             let prefix = if offset_ms != 0 {
-                format!("[{offset_ms:+}ms] ")
+                let offset_duration = chrono::Duration::milliseconds(offset_ms);
+                format!("[{}] ", format_time_diff(offset_duration))
             } else {
                 String::new()
             };
