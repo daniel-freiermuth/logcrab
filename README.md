@@ -13,23 +13,49 @@ A polyscopic anomaly explorer built with Rust and egui. LogCrab helps developers
 - **Multi-Format Support**: Supports Android logcat, DLT files and generic log formats
 - **No Training Required**: Works immediately on any log file
 
-## Getting started
+## Installation
+
+<details>
+<summary><strong>Arch Linux</strong></summary>
+
+Download the PKGBUILD from the [releases page](https://github.com/daniel-freiermuth/logcrab/releases) and install:
 
 ```bash
-// Install rustup with your system package manager
-$ rustup toolchain install stable // Install cargo
-$ cd logcrab
-$ env -u WAYLAND_DISPLAY cargo run --release // as of now, it is recommended to run via Xwayland due to known limitations
+curl -LO https://github.com/daniel-freiermuth/logcrab/releases/latest/download/PKGBUILD
+makepkg -si
 ```
 
-### Desktop Integration
+</details>
+
+<details>
+<summary><strong>Ubuntu / Debian</strong></summary>
+
+Download the latest `.deb` package from the [releases page](https://github.com/daniel-freiermuth/logcrab/releases) and install:
+
+```bash
+sudo dpkg -i logcrab_*.deb
+```
+
+</details>
+
+<details>
+<summary><strong>From Source</strong></summary>
+
+```bash
+# Install rustup with your system package manager
+rustup toolchain install stable
+git clone https://github.com/daniel-freiermuth/logcrab.git
+cd logcrab
+cargo build --release
+```
+
+The binary will be at `target/release/logcrab`.
+
+#### Desktop Integration
 
 To add LogCrab to your application menu:
 
 ```bash
-# Build the release binary
-cargo build --release
-
 # Update the .desktop file with the correct path to the binary
 sed "s|<logcrab-binary>|$(pwd)/target/release/logcrab|g" logcrab.desktop > ~/.local/share/applications/logcrab.desktop
 
@@ -42,6 +68,8 @@ mkdir -p ~/.local/share/mime/packages
 cp logcrab-mime.xml ~/.local/share/mime/packages/
 update-mime-database ~/.local/share/mime
 ```
+
+</details>
 
 After installation, LogCrab will appear in your application launcher and can open log files and `.crab` files directly.
 
