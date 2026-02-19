@@ -63,24 +63,25 @@ impl SourceData {
     pub fn new(file_path: PathBuf) -> Option<Self> {
         assert!(
             file_path.file_name().is_some(),
-            "file_path must have a filename component: {file_path:?}"
+            "file_path must have a filename component: {}",
+            file_path.display()
         );
 
         let crab_path = Self::compute_crab_path(&file_path);
         let crab_lock = Self::acquire_crab_lock(&crab_path)?;
-
-        Self::new_with_lock(file_path, crab_lock, crab_path)
+        Some(Self::new_with_lock(file_path, crab_lock, crab_path))
     }
 
     /// Create a `SourceData` with an existing .crab file lock
     ///
     /// This is useful when reloading files - we can pass the lock from the old
-    /// SourceData to the new one, avoiding the race condition where the OS hasn't
+    /// `SourceData` to the new one, avoiding the race condition where the OS hasn't
     /// released the lock yet.
-    pub fn new_with_lock(file_path: PathBuf, crab_lock: File, crab_path: PathBuf) -> Option<Self> {
+    pub fn new_with_lock(file_path: PathBuf, crab_lock: File, crab_path: PathBuf) -> Self {
         assert!(
             file_path.file_name().is_some(),
-            "file_path must have a filename component: {file_path:?}"
+            "file_path must have a filename component: {}",
+            file_path.display()
         );
 
         let sd = Self {
@@ -94,7 +95,7 @@ impl SourceData {
             cancel_requested: AtomicBool::new(false),
         };
         sd.load_bookmarks();
-        Some(sd)
+        sd
     }
 
     /// Compute the .crab file path for a given log file path
@@ -126,7 +127,7 @@ impl SourceData {
         {
             Ok(f) => f,
             Err(e) => {
-                log::error!("Cannot open .crab file {crab_path:?}: {e}");
+                log::error!("Cannot open .crab file {}: {e}", crab_path.display());
                 return None;
             }
         };
@@ -134,12 +135,16 @@ impl SourceData {
         // Try to acquire exclusive lock
         match file.try_lock_exclusive() {
             Ok(()) => {
-                log::info!("Successfully acquired exclusive lock on {crab_path:?}");
+                log::info!(
+                    "Successfully acquired exclusive lock on {}",
+                    crab_path.display()
+                );
                 Some(file)
             }
             Err(e) => {
                 log::error!(
-                    "Cannot lock .crab file {crab_path:?} (already open in another instance?): {e}"
+                    "Cannot lock .crab file {} (already open in another instance?): {e}",
+                    crab_path.display()
                 );
                 None
             }
@@ -172,10 +177,10 @@ impl SourceData {
 
     /// Extract the .crab file lock from this source
     ///
-    /// This is used when reloading files to transfer the lock to the new SourceData,
+    /// This is used when reloading files to transfer the lock to the new `SourceData`,
     /// avoiding the race condition where the OS hasn't released the lock yet.
     ///
-    /// Returns (File, PathBuf) representing the locked file handle and its path.
+    /// Returns (`File`, `PathBuf`) representing the locked file handle and its path.
     pub fn take_crab_lock(self) -> (File, PathBuf) {
         self.crab_lock
             .into_inner()
@@ -247,8 +252,7 @@ impl SourceData {
 
     /// Load bookmarks from this source's .crab file
     fn load_bookmarks(&self) {
-        let mut guard = self.crab_lock.lock().expect("crab_lock mutex poisoned");
-        let (file, crab_path) = &mut *guard;
+        let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match CrabFile::load_from_file(file) {
             Ok(crab_data) => {
                 log::info!(
@@ -257,9 +261,11 @@ impl SourceData {
                     crab_path.display()
                 );
                 profiling::scope!("SourceData::bookmarks::write");
-                let mut bookmarks = self.bookmarks.write().expect("bookmarks lock poisoned");
-                for bookmark in crab_data.bookmarks {
-                    bookmarks.insert(bookmark.line_index, bookmark);
+                {
+                    let mut bookmarks = self.bookmarks.write().expect("bookmarks lock poisoned");
+                    for bookmark in crab_data.bookmarks {
+                        bookmarks.insert(bookmark.line_index, bookmark);
+                    }
                 }
 
                 // Load time offset
@@ -301,8 +307,7 @@ impl SourceData {
 
         // Use the locked file handle for writing to avoid conflicts
         // The OS-level lock (via fs2) is held for the lifetime of SourceData
-        let mut guard = self.crab_lock.lock().expect("crab_lock mutex poisoned");
-        let (file, crab_path) = &mut *guard;
+        let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match crab_data.save_to_file(file) {
             Ok(()) => log::debug!(
                 "Saved .crab file {} with {} bookmarks",
@@ -335,13 +340,13 @@ impl SourceData {
         profiling::scope!("SourceData::set_time_offset_to_target");
 
         // Get the reference line's original timestamp
-        let original_time = {
-            let guard = self.lines.read().expect("lines lock poisoned");
-            let line = guard
-                .get(reference_line_index)
-                .ok_or_else(|| "Reference line not found".to_string())?;
-            line.timestamp()
-        };
+        let original_time = self
+            .lines
+            .read()
+            .expect("lines lock poisoned")
+            .get(reference_line_index)
+            .ok_or_else(|| "Reference line not found".to_string())?
+            .timestamp();
 
         // Calculate offset: target_time - original_time
         let offset_ms = target_time.timestamp_millis() - original_time.timestamp_millis();
@@ -605,8 +610,7 @@ impl SourceData {
 
     /// Load and merge filters and highlights
     pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
-        let mut guard = self.crab_lock.lock().expect("crab_lock mutex poisoned");
-        let (file, crab_path) = &mut *guard;
+        let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match CrabFile::load_from_file(file) {
             Ok(crab_data) => {
                 return (crab_data.filters, crab_data.highlights);
@@ -767,16 +771,18 @@ impl LogStore {
 
     /// Remove a source by index
     ///
-    /// Note: This invalidates any cached StoreIDs - callers should refresh their caches.
+    /// Note: This invalidates any cached `StoreIDs` - callers should refresh their caches.
     pub fn remove_source(&self, index: usize) -> Option<PathBuf> {
         profiling::scope!("LogStore::sources::write");
         let mut sources = self.sources.write().expect("sources lock poisoned");
         if index < sources.len() {
             let removed = sources.remove(index);
             let path = removed.file_path().to_path_buf();
+            drop(sources);
             log::info!("Removed source: {}", path.display());
             Some(path)
         } else {
+            drop(sources);
             None
         }
     }
@@ -832,7 +838,7 @@ impl LogStore {
     /// Returns tuples of (path, lock) for each removed DLT source so they can be re-added
     /// with the same lock, avoiding file locking race conditions.
     ///
-    /// Note: This invalidates any cached StoreIDs - callers should refresh their caches.
+    /// Note: This invalidates any cached `StoreID`s - callers should refresh their caches.
     pub fn remove_dlt_sources(&self) -> Vec<(PathBuf, File, PathBuf)> {
         profiling::scope!("LogStore::sources::write");
         let mut sources = self.sources.write().expect("sources lock poisoned");
@@ -865,6 +871,7 @@ impl LogStore {
         }
 
         *sources = remaining;
+        drop(sources);
 
         log::info!(
             "Removed {} DLT sources from store (with locks)",
@@ -921,10 +928,13 @@ impl LogStore {
         target_time: chrono::DateTime<chrono::Local>,
     ) -> Result<(), String> {
         profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().expect("sources lock poisoned");
-        let source = sources
-            .get(id.source_index)
-            .ok_or_else(|| "Source not found".to_string())?;
+        let source = {
+            let sources = self.sources.read().expect("sources lock poisoned");
+            sources
+                .get(id.source_index)
+                .ok_or_else(|| "Source not found".to_string())?
+                .clone()
+        };
         source.set_time_offset_to_target(id.line_index, target_time)
     }
 
@@ -1042,9 +1052,10 @@ impl LogStore {
 
     /// K-way merge of pre-sorted `StoreID` vectors by timestamp
     fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>) -> Vec<StoreID> {
-        profiling::scope!("LogStore::merge_sorted_sources");
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
+
+        profiling::scope!("LogStore::merge_sorted_sources");
 
         let total_len: usize = sources.iter().map(Vec::len).sum();
         let mut result = Vec::with_capacity(total_len);

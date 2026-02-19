@@ -66,11 +66,11 @@ fn main() -> eframe::Result<()> {
     let _profiler = {
         let args_early = Args::parse();
         log::info!(
-            "RAM profiling enabled, output: {:?}",
-            args_early.profile_output
+            "RAM profiling enabled, output: {}",
+            args_early.profile_output.display()
         );
         dhat::Profiler::builder()
-            .file_name(args_early.profile_output.clone())
+            .file_name(args_early.profile_output)
             .build()
     };
 

@@ -53,17 +53,10 @@ pub struct HciPacketInfo {
 impl HciPacketInfo {
     /// Format as a display message
     pub fn format_message(&self) -> String {
-        if self.info.is_empty() {
-            format!(
-                "{} {} {} Len={}",
-                self.packet_type, self.direction, self.info, self.length
-            )
-        } else {
-            format!(
-                "{} {} {} Len={}",
-                self.packet_type, self.direction, self.info, self.length
-            )
-        }
+        format!(
+            "{} {} {} Len={}",
+            self.packet_type, self.direction, self.info, self.length
+        )
     }
 
     /// Format as raw line (more detailed)

@@ -60,7 +60,7 @@ impl LogFileLoader {
                 path.clone(),
                 lock_file,
                 lock_path,
-            )?)
+            ))
         } else {
             Arc::new(SourceData::new(path.clone())?)
         };

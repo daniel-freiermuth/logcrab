@@ -20,6 +20,7 @@ use std::fmt::Write;
 /// - File loading
 /// - Right now, scoring. Should be moved into `LogView`
 /// - Keyboard shortcut processing
+#[allow(clippy::struct_excessive_bools)]
 pub struct LogCrabApp {
     /// The main log view component
     session: Option<CrabSession>,
@@ -154,7 +155,7 @@ impl LogCrabApp {
                 .toast_manager
                 .create_progress_toast(file_name, "Starting...");
 
-            session.add_file(path, toast_handle);
+            session.add_file(path, &toast_handle);
         }
     }
 

@@ -144,13 +144,14 @@ pub const fn scrolled_to_row_color(dark_mode: bool) -> Color32 {
 /// Blend two colors together using weighted average
 fn blend_colors(base: Color32, overlay: Color32, overlay_weight: f32) -> Color32 {
     let base_weight = 1.0 - overlay_weight;
-    let r = (f32::from(base.r()) * base_weight + f32::from(overlay.r()) * overlay_weight) as u8;
-    let g = (f32::from(base.g()) * base_weight + f32::from(overlay.g()) * overlay_weight) as u8;
-    let b = (f32::from(base.b()) * base_weight + f32::from(overlay.b()) * overlay_weight) as u8;
+    let r = f32::from(base.r()).mul_add(base_weight, f32::from(overlay.r()) * overlay_weight) as u8;
+    let g = f32::from(base.g()).mul_add(base_weight, f32::from(overlay.g()) * overlay_weight) as u8;
+    let b = f32::from(base.b()).mul_add(base_weight, f32::from(overlay.b()) * overlay_weight) as u8;
     Color32::from_rgb(r, g, b)
 }
 
 /// Compute the background color for a row based on selection state and bookmark status
+#[allow(clippy::fn_params_excessive_bools)]
 fn compute_row_background_color(
     is_selected: bool,
     is_scrolled_to_closest: bool,
@@ -169,13 +170,9 @@ fn compute_row_background_color(
     // Blend with bookmark color if bookmarked
     if is_bookmarked {
         let bookmark_color = bookmarked_row_color(dark_mode);
-        Some(if let Some(base) = base_color {
-            // Blend selection state with bookmark (60% bookmark, 40% selection state)
+        Some(base_color.map_or(bookmark_color, |base| {
             blend_colors(base, bookmark_color, 0.6)
-        } else {
-            // No selection state, just bookmark color
-            bookmark_color
-        })
+        }))
     } else {
         base_color
     }
@@ -222,56 +219,53 @@ impl LogTable {
                 true
             };
 
-            if show_sync_option {
-                if ui.button("⏱ Calibrate Time Here").clicked() {
-                    // Get current timestamp (with any offset applied) and original timestamp
-                    let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
-                    let original_time = line.timestamp();
-                    let calculated_time = if offset_ms != 0 {
-                        original_time + chrono::Duration::milliseconds(offset_ms)
-                    } else {
-                        original_time
-                    };
+            if show_sync_option && ui.button("⏱ Calibrate Time Here").clicked() {
+                // Get current timestamp (with any offset applied) and original timestamp
+                let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
+                let original_time = line.timestamp();
+                let calculated_time = if offset_ms != 0 {
+                    original_time + chrono::Duration::milliseconds(offset_ms)
+                } else {
+                    original_time
+                };
 
-                    // For DLT files, extract storage time and ECU/App IDs
-                    // For non-DLT files, use original timestamp (without offset)
-                    let (storage_time, ecu_id, app_id) =
-                        if let LogLineVariant::Dlt(ref dlt_line) = line {
-                            let stor_time =
-                                dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
-                                    use chrono::TimeZone;
-                                    let secs = i64::from(sh.timestamp.seconds);
-                                    let nsecs = sh.timestamp.microseconds * 1000;
-                                    chrono::Local.timestamp_opt(secs, nsecs).single()
-                                });
-
-                            let ecu = dlt_line
-                                .dlt_message
-                                .header
-                                .ecu_id
-                                .as_ref()
-                                .map(std::string::ToString::to_string);
-                            let app = dlt_line
-                                .dlt_message
-                                .extended_header
-                                .as_ref()
-                                .map(|ext| ext.application_id.clone());
-
-                            (stor_time, ecu, app)
-                        } else {
-                            // For non-DLT files, use original timestamp (line.timestamp() without offset)
-                            (Some(original_time), None, None)
-                        };
-
-                    events.push(LogTableEvent::SyncTime {
-                        line_index: line_idx,
-                        calculated_time,
-                        storage_time,
-                        ecu_id,
-                        app_id,
+                // For DLT files, extract storage time and ECU/App IDs
+                // For non-DLT files, use original timestamp (without offset)
+                let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(ref dlt_line) = line
+                {
+                    let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
+                        use chrono::TimeZone;
+                        let secs = i64::from(sh.timestamp.seconds);
+                        let nsecs = sh.timestamp.microseconds * 1000;
+                        chrono::Local.timestamp_opt(secs, nsecs).single()
                     });
-                    ui.close();
-                }
+
+                    let ecu = dlt_line
+                        .dlt_message
+                        .header
+                        .ecu_id
+                        .as_ref()
+                        .map(std::string::ToString::to_string);
+                    let app = dlt_line
+                        .dlt_message
+                        .extended_header
+                        .as_ref()
+                        .map(|ext| ext.application_id.clone());
+
+                    (stor_time, ecu, app)
+                } else {
+                    // For non-DLT files, use original timestamp (line.timestamp() without offset)
+                    (Some(original_time), None, None)
+                };
+
+                events.push(LogTableEvent::SyncTime {
+                    line_index: line_idx,
+                    calculated_time,
+                    storage_time,
+                    ecu_id,
+                    app_id,
+                });
+                ui.close();
             }
 
             ui.separator();
@@ -593,6 +587,7 @@ impl LogTable {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_all_columns(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
@@ -669,6 +664,7 @@ impl LogTable {
             .expect("array is non-empty")
     }
 
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_source_column(
         row: &mut egui_extras::TableRow,
         is_selected: bool,
@@ -709,6 +705,7 @@ impl LogTable {
         response.expect("column always renders")
     }
 
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_line_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,
@@ -758,6 +755,7 @@ impl LogTable {
         response.expect("column always renders")
     }
 
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
@@ -797,6 +795,7 @@ impl LogTable {
         response.expect("column always renders")
     }
 
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_message_column(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
@@ -855,6 +854,7 @@ impl LogTable {
         response.expect("column always renders")
     }
 
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_score_column(
         row: &mut egui_extras::TableRow,
         line: &LogLine,

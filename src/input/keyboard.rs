@@ -517,9 +517,11 @@ mod tests {
 
     #[test]
     fn test_partial_config_load() {
-        let mut config = GlobalConfig::default();
+        let mut config = GlobalConfig {
+            shortcuts: HashMap::new(),
+            ..Default::default()
+        };
         // Simulate a config with only one shortcut customized by the user
-        config.shortcuts = HashMap::new();
         config
             .shortcuts
             .insert(ShortcutAction::MoveUp, "u".to_string());
@@ -549,7 +551,7 @@ mod tests {
         // All actions should have bindings
         for action in ShortcutAction::all() {
             let shortcut = bindings.get_shortcut(*action);
-            assert!(!shortcut.is_empty(), "{:?} should have a binding", action);
+            assert!(!shortcut.is_empty(), "{action:?} should have a binding");
             assert_eq!(shortcut, action.default_binding());
         }
     }

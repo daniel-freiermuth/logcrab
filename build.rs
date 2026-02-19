@@ -16,16 +16,14 @@ fn main() {
                 None
             }
         })
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |s| s.trim().to_string());
 
     // Check if working directory is dirty
     let is_dirty = Command::new("git")
         .args(["status", "--porcelain"])
         .output()
         .ok()
-        .map(|output| !output.stdout.is_empty())
-        .unwrap_or(false);
+        .is_some_and(|output| !output.stdout.is_empty());
 
     let git_hash = if is_dirty {
         format!("{git_hash}-dirty")

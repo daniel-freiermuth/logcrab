@@ -4,6 +4,10 @@ version = "0.25.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Daniel Freiermuth"]
+description = "A polyscopic anomaly explorer built with Rust and egui. LogCrab helps developers and system administrators debug by automatically highlighting unusual, novel, or interesting log lines in large log files."
+repository = "https://github.com/daniel-freiermuth/logcrab"
+keywords = ["log", "anomaly", "viewer", "debug", "egui"]
+categories = ["development-tools::debugging", "visualization"]
 
 [package.metadata.deb]
 maintainer = "Daniel Freiermuth <daniel@freiermuth.dev>"
@@ -96,6 +100,7 @@ cloned_instead_of_copied = "deny"
 redundant_clone = "deny"
 option_if_let_else = "deny"
 missing_const_for_fn = "deny"
+multiple_crate_versions = "allow"
 
 # Deny critical issues
 unwrap_used = "deny"             # Force proper error handling

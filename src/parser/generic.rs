@@ -58,23 +58,24 @@ pub fn parse_generic(raw: String, line_number: usize) -> Option<LogLine> {
         let ts_str = &caps[1];
 
         // Normalize timezone offset: convert +0100 to +01:00 for RFC3339 compatibility
-        let normalized_ts = if let Some(tz_pos) = ts_str.rfind(['+', '-']) {
-            let (datetime_part, tz_part) = ts_str.split_at(tz_pos);
-            // Check if timezone is in format +0100 (5 chars: sign + 4 digits, no colon)
-            if tz_part.len() == 5 && !tz_part.contains(':') {
-                // Insert colon: +0100 -> +01:00
-                format!(
-                    "{}{}:{}",
-                    datetime_part.replace(' ', "T"),
-                    &tz_part[..3],
-                    &tz_part[3..]
-                )
-            } else {
-                ts_str.replace(' ', "T")
-            }
-        } else {
-            ts_str.replace(' ', "T")
-        };
+        let normalized_ts = ts_str.rfind(['+', '-']).map_or_else(
+            || ts_str.replace(' ', "T"),
+            |tz_pos| {
+                let (datetime_part, tz_part) = ts_str.split_at(tz_pos);
+                // Check if timezone is in format +0100 (5 chars: sign + 4 digits, no colon)
+                if tz_part.len() == 5 && !tz_part.contains(':') {
+                    // Insert colon: +0100 -> +01:00
+                    format!(
+                        "{}{}:{}",
+                        datetime_part.replace(' ', "T"),
+                        &tz_part[..3],
+                        &tz_part[3..]
+                    )
+                } else {
+                    ts_str.replace(' ', "T")
+                }
+            },
+        );
 
         if let Ok(dt) = DateTime::parse_from_rfc3339(&normalized_ts) {
             timestamp = Some(dt.with_timezone(&Local));

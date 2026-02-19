@@ -873,7 +873,7 @@ impl Histogram {
         let idx = filtered_indices.partition_point(|line_idx| {
             store
                 .get_by_id(line_idx)
-                .map_or(false, |line| line.timestamp() < target_time)
+                .is_some_and(|line| line.timestamp() < target_time)
         });
 
         // Compare neighbors around the insertion point to find the closest

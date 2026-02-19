@@ -108,7 +108,7 @@ impl CrabSession {
     ///
     /// Loads the file asynchronously and adds it as an additional source to the store.
     /// Skips files that are already loaded.
-    pub fn add_file(&mut self, path: PathBuf, toast: ProgressToastHandle) {
+    pub fn add_file(&mut self, path: PathBuf, toast: &ProgressToastHandle) {
         // Check if the file is already loaded
         if self.state.store.contains_file(&path) {
             log::info!("Skipping already loaded file: {}", path.display());
@@ -144,7 +144,7 @@ impl CrabSession {
     /// with the new timestamp source setting. The bookmarks are preserved
     /// in the .crab files.
     pub fn reload_dlt_files(
-        &mut self,
+        &self,
         dlt_timestamp_source: crate::config::DltTimestampSource,
         toast_manager: &crate::ui::toasts::ToastManager,
     ) {

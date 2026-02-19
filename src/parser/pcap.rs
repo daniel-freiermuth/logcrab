@@ -83,14 +83,14 @@ pub struct TcpDetails {
 impl PacketInfo {
     /// Format as a display message
     pub fn format_message(&self) -> String {
-        let src = match self.src_port {
-            Some(port) => format!("{}:{}", self.src_addr, port),
-            None => self.src_addr.clone(),
-        };
-        let dst = match self.dst_port {
-            Some(port) => format!("{}:{}", self.dst_addr, port),
-            None => self.dst_addr.clone(),
-        };
+        let src = self.src_port.map_or_else(
+            || self.src_addr.clone(),
+            |port| format!("{}:{}", self.src_addr, port),
+        );
+        let dst = self.dst_port.map_or_else(
+            || self.dst_addr.clone(),
+            |port| format!("{}:{}", self.dst_addr, port),
+        );
 
         let vlan = self
             .vlan_id
@@ -98,57 +98,62 @@ impl PacketInfo {
         let abnormal = if self.is_abnormal { " ⚠" } else { "" };
 
         // Enhanced TCP formatting with seq/ack
-        if let Some(ref tcp) = self.tcp_details {
-            let flags_str = format_tcp_flags(tcp.flags);
-            let seq_str = format!("Seq={}", tcp.seq);
-            let ack_str = if tcp.flags & 0x10 != 0 {
-                format!(" Ack={}", tcp.ack)
-            } else {
-                String::new()
-            };
-            let win_str = format!(" Win={}", tcp.window);
-            let len_str = if tcp.payload_len > 0 {
-                format!(" Len={}", tcp.payload_len)
-            } else {
-                String::new()
-            };
+        self.tcp_details.as_ref().map_or_else(
+            || {
+                if self.info.is_empty() {
+                    format!(
+                        "{} {} → {}{} Len={}{}",
+                        self.protocol, src, dst, vlan, self.length, abnormal
+                    )
+                } else {
+                    format!(
+                        "{} {} → {}{} {} Len={}{}",
+                        self.protocol, src, dst, vlan, self.info, self.length, abnormal
+                    )
+                }
+            },
+            |tcp| {
+                let flags_str = format_tcp_flags(tcp.flags);
+                let seq_str = format!("Seq={}", tcp.seq);
+                let ack_str = if tcp.flags & 0x10 != 0 {
+                    format!(" Ack={}", tcp.ack)
+                } else {
+                    String::new()
+                };
+                let win_str = format!(" Win={}", tcp.window);
+                let len_str = if tcp.payload_len > 0 {
+                    format!(" Len={}", tcp.payload_len)
+                } else {
+                    String::new()
+                };
 
-            format!(
-                "{} {} → {}{} {} {}{}{}{}{}",
-                self.protocol,
-                src,
-                dst,
-                vlan,
-                flags_str,
-                seq_str,
-                ack_str,
-                win_str,
-                len_str,
-                abnormal
-            )
-        } else if self.info.is_empty() {
-            format!(
-                "{} {} → {}{} Len={}{}",
-                self.protocol, src, dst, vlan, self.length, abnormal
-            )
-        } else {
-            format!(
-                "{} {} → {}{} {} Len={}{}",
-                self.protocol, src, dst, vlan, self.info, self.length, abnormal
-            )
-        }
+                format!(
+                    "{} {} → {}{} {} {}{}{}{}{}",
+                    self.protocol,
+                    src,
+                    dst,
+                    vlan,
+                    flags_str,
+                    seq_str,
+                    ack_str,
+                    win_str,
+                    len_str,
+                    abnormal
+                )
+            },
+        )
     }
 
     /// Format as raw line (more detailed)
     pub fn format_raw(&self) -> String {
-        let src = match self.src_port {
-            Some(port) => format!("{}:{}", self.src_addr, port),
-            None => self.src_addr.clone(),
-        };
-        let dst = match self.dst_port {
-            Some(port) => format!("{}:{}", self.dst_addr, port),
-            None => self.dst_addr.clone(),
-        };
+        let src = self.src_port.map_or_else(
+            || self.src_addr.clone(),
+            |port| format!("{}:{}", self.src_addr, port),
+        );
+        let dst = self.dst_port.map_or_else(
+            || self.dst_addr.clone(),
+            |port| format!("{}:{}", self.dst_addr, port),
+        );
 
         let vlan = self
             .vlan_id
@@ -156,48 +161,51 @@ impl PacketInfo {
         let abnormal = if self.is_abnormal { " [ABNORMAL]" } else { "" };
 
         // Enhanced TCP formatting for raw view
-        if let Some(ref tcp) = self.tcp_details {
-            let flags_str = format_tcp_flags(tcp.flags);
-            let seq_str = format!("Seq={}", tcp.seq);
-            let ack_str = if tcp.flags & 0x10 != 0 {
-                format!(" Ack={}", tcp.ack)
-            } else {
-                String::new()
-            };
-            let win_str = format!(" Win={}", tcp.window);
-            let len_str = if tcp.payload_len > 0 {
-                format!(" Len={}", tcp.payload_len)
-            } else {
-                String::new()
-            };
+        self.tcp_details.as_ref().map_or_else(
+            || {
+                format!(
+                    "[{}] {} {} → {}{} {} Length={}{}",
+                    self.timestamp.format("%H:%M:%S%.6f"),
+                    self.protocol,
+                    src,
+                    dst,
+                    vlan,
+                    self.info,
+                    self.length,
+                    abnormal
+                )
+            },
+            |tcp| {
+                let flags_str = format_tcp_flags(tcp.flags);
+                let seq_str = format!("Seq={}", tcp.seq);
+                let ack_str = if tcp.flags & 0x10 != 0 {
+                    format!(" Ack={}", tcp.ack)
+                } else {
+                    String::new()
+                };
+                let win_str = format!(" Win={}", tcp.window);
+                let len_str = if tcp.payload_len > 0 {
+                    format!(" Len={}", tcp.payload_len)
+                } else {
+                    String::new()
+                };
 
-            format!(
-                "[{}] {} {} → {}{} {} {}{}{}{}{}",
-                self.timestamp.format("%H:%M:%S%.6f"),
-                self.protocol,
-                src,
-                dst,
-                vlan,
-                flags_str,
-                seq_str,
-                ack_str,
-                win_str,
-                len_str,
-                abnormal
-            )
-        } else {
-            format!(
-                "[{}] {} {} → {}{} {} Length={}{}",
-                self.timestamp.format("%H:%M:%S%.6f"),
-                self.protocol,
-                src,
-                dst,
-                vlan,
-                self.info,
-                self.length,
-                abnormal
-            )
-        }
+                format!(
+                    "[{}] {} {} → {}{} {} {}{}{}{}{}",
+                    self.timestamp.format("%H:%M:%S%.6f"),
+                    self.protocol,
+                    src,
+                    dst,
+                    vlan,
+                    flags_str,
+                    seq_str,
+                    ack_str,
+                    win_str,
+                    len_str,
+                    abnormal
+                )
+            },
+        )
     }
 }
 
@@ -359,14 +367,12 @@ impl TcpFlowTracker {
 
     /// Analyze a TCP packet and detect anomalies
     pub fn analyze_packet(&mut self, packet: &mut PacketInfo) {
-        let tcp = match &packet.tcp_details {
-            Some(t) => t,
-            None => return,
+        let Some(tcp) = &packet.tcp_details else {
+            return;
         };
 
-        let (src_port, dst_port) = match (packet.src_port, packet.dst_port) {
-            (Some(sp), Some(dp)) => (sp, dp),
-            _ => return,
+        let (Some(src_port), Some(dst_port)) = (packet.src_port, packet.dst_port) else {
+            return;
         };
 
         let flow_key = FlowKey::new(
@@ -556,11 +562,9 @@ fn parse_ipv4_packet(
     };
 
     // Mark abnormal packets (RST, retransmissions handled by flow tracker)
-    let is_abnormal = if let Some(ref tcp) = tcp_details {
-        tcp.flags & 0x04 != 0 // RST flag
-    } else {
-        false
-    };
+    let is_abnormal = tcp_details
+        .as_ref()
+        .is_some_and(|tcp| tcp.flags & 0x04 != 0);
 
     Some(PacketInfo {
         timestamp,
@@ -614,11 +618,9 @@ fn parse_ipv6_packet(
     };
 
     // Mark abnormal packets (RST, retransmissions handled by flow tracker)
-    let is_abnormal = if let Some(ref tcp) = tcp_details {
-        tcp.flags & 0x04 != 0 // RST flag
-    } else {
-        false
-    };
+    let is_abnormal = tcp_details
+        .as_ref()
+        .is_some_and(|tcp| tcp.flags & 0x04 != 0);
 
     Some(PacketInfo {
         timestamp,
@@ -726,10 +728,8 @@ fn parse_icmp_info(data: &[u8]) -> String {
 }
 
 /// Convert pcap timestamp to `DateTime<Local>`
-fn pcap_ts_to_datetime(ts_sec: u32, ts_usec: u32) -> Option<DateTime<Local>> {
-    Local
-        .timestamp_opt(i64::from(ts_sec), ts_usec * 1000)
-        .single()
+fn pcap_ts_to_datetime(sec: u32, usec: u32) -> Option<DateTime<Local>> {
+    Local.timestamp_opt(i64::from(sec), usec * 1000).single()
 }
 
 /// Parse a legacy pcap file with incremental loading
@@ -913,12 +913,12 @@ fn parse_pcapng<P: AsRef<Path>>(
                     PcapBlockOwned::NG(pcap_parser::Block::EnhancedPacket(epb)) => {
                         // Calculate timestamp from high/low parts
                         let ts_raw = (u64::from(epb.ts_high) << 32) | u64::from(epb.ts_low);
-                        let ts_sec = ts_raw / if_tsresol;
+                        let sec = ts_raw / if_tsresol;
                         let ts_frac = ts_raw % if_tsresol;
-                        let ts_nsec = (ts_frac * 1_000_000_000) / if_tsresol;
+                        let nsec = (ts_frac * 1_000_000_000) / if_tsresol;
 
                         let timestamp = Local
-                            .timestamp_opt(ts_sec as i64, ts_nsec as u32)
+                            .timestamp_opt(sec.cast_signed(), nsec as u32)
                             .single()
                             .unwrap_or_else(Local::now);
 

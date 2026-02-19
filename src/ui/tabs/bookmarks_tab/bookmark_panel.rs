@@ -99,56 +99,53 @@ impl BookmarkPanel {
                 true
             };
 
-            if show_sync_option {
-                if ui.button("⏱ Calibrate Time Here").clicked() {
-                    // Get current timestamp (with any offset applied) and original timestamp
-                    let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
-                    let original_time = line.timestamp();
-                    let calculated_time = if offset_ms != 0 {
-                        original_time + chrono::Duration::milliseconds(offset_ms)
-                    } else {
-                        original_time
-                    };
+            if show_sync_option && ui.button("⏱ Calibrate Time Here").clicked() {
+                // Get current timestamp (with any offset applied) and original timestamp
+                let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
+                let original_time = line.timestamp();
+                let calculated_time = if offset_ms != 0 {
+                    original_time + chrono::Duration::milliseconds(offset_ms)
+                } else {
+                    original_time
+                };
 
-                    // For DLT files, extract storage time and ECU/App IDs
-                    // For non-DLT files, use original timestamp (without offset)
-                    let (storage_time, ecu_id, app_id) =
-                        if let LogLineVariant::Dlt(ref dlt_line) = line {
-                            let stor_time =
-                                dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
-                                    use chrono::TimeZone;
-                                    let secs = i64::from(sh.timestamp.seconds);
-                                    let nsecs = sh.timestamp.microseconds * 1000;
-                                    chrono::Local.timestamp_opt(secs, nsecs).single()
-                                });
-
-                            let ecu = dlt_line
-                                .dlt_message
-                                .header
-                                .ecu_id
-                                .as_ref()
-                                .map(std::string::ToString::to_string);
-                            let app = dlt_line
-                                .dlt_message
-                                .extended_header
-                                .as_ref()
-                                .map(|ext| ext.application_id.clone());
-
-                            (stor_time, ecu, app)
-                        } else {
-                            // For non-DLT files, use original timestamp (line.timestamp() without offset)
-                            (Some(original_time), None, None)
-                        };
-
-                    events.push(BookmarkPanelEvent::SyncTime {
-                        line_index: line_idx,
-                        calculated_time,
-                        storage_time,
-                        ecu_id,
-                        app_id,
+                // For DLT files, extract storage time and ECU/App IDs
+                // For non-DLT files, use original timestamp (without offset)
+                let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(ref dlt_line) = line
+                {
+                    let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
+                        use chrono::TimeZone;
+                        let secs = i64::from(sh.timestamp.seconds);
+                        let nsecs = sh.timestamp.microseconds * 1000;
+                        chrono::Local.timestamp_opt(secs, nsecs).single()
                     });
-                    ui.close();
-                }
+
+                    let ecu = dlt_line
+                        .dlt_message
+                        .header
+                        .ecu_id
+                        .as_ref()
+                        .map(std::string::ToString::to_string);
+                    let app = dlt_line
+                        .dlt_message
+                        .extended_header
+                        .as_ref()
+                        .map(|ext| ext.application_id.clone());
+
+                    (stor_time, ecu, app)
+                } else {
+                    // For non-DLT files, use original timestamp (line.timestamp() without offset)
+                    (Some(original_time), None, None)
+                };
+
+                events.push(BookmarkPanelEvent::SyncTime {
+                    line_index: line_idx,
+                    calculated_time,
+                    storage_time,
+                    ecu_id,
+                    app_id,
+                });
+                ui.close();
             }
 
             ui.separator();

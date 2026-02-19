@@ -41,22 +41,27 @@ pub const CRAB_FILTERS_VERSION: u32 = 1;
 /// Helper to serialize/deserialize Color32
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct SerializableColor {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
+    red: u8,
+    green: u8,
+    blue: u8,
+    alpha: u8,
 }
 
 impl From<Color32> for SerializableColor {
     fn from(c: Color32) -> Self {
-        let [r, g, b, a] = c.to_array();
-        Self { r, g, b, a }
+        let [red, green, blue, alpha] = c.to_array();
+        Self {
+            red,
+            green,
+            blue,
+            alpha,
+        }
     }
 }
 
 impl From<SerializableColor> for Color32 {
     fn from(c: SerializableColor) -> Self {
-        Self::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+        Self::from_rgba_unmultiplied(c.red, c.green, c.blue, c.alpha)
     }
 }
 

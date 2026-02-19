@@ -225,17 +225,23 @@ mod tests {
     #[test]
     fn test_get_exclude_regex_empty() {
         let state = SearchState::new();
-        assert!(state.get_exclude_regex().unwrap().is_none());
+        assert!(state
+            .get_exclude_regex()
+            .expect("should not error")
+            .is_none());
     }
 
     #[test]
     fn test_get_exclude_regex_with_pattern() {
         let mut state = SearchState::new();
         state.exclude_text = "ERROR".to_string();
-        let regex = state.get_exclude_regex().unwrap();
+        let regex = state.get_exclude_regex().expect("should not error");
         assert!(regex.is_some());
         // Case insensitive by default
-        assert!(regex.unwrap().is_match("error").unwrap());
+        assert!(regex
+            .expect("should have regex")
+            .is_match("error")
+            .expect("match should not error"));
     }
 
     #[test]
@@ -243,11 +249,11 @@ mod tests {
         let mut state = SearchState::new();
         state.exclude_text = "ERROR".to_string();
         state.case_sensitive = true;
-        let regex = state.get_exclude_regex().unwrap();
+        let regex = state.get_exclude_regex().expect("should not error");
         assert!(regex.is_some());
-        let regex = regex.unwrap();
-        assert!(regex.is_match("ERROR").unwrap());
-        assert!(!regex.is_match("error").unwrap());
+        let regex = regex.expect("should have regex");
+        assert!(regex.is_match("ERROR").expect("match should not error"));
+        assert!(!regex.is_match("error").expect("match should not error"));
     }
 
     #[test]
