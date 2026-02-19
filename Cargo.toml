@@ -1,6 +1,6 @@
 [package]
 name = "logcrab"
-version = "0.25.1"
+version = "0.26.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Daniel Freiermuth"]
