@@ -183,7 +183,7 @@ impl BookmarksView {
                         SyncDltTimeWindow::new(
                             calculated_time,
                             is_dlt,
-                            if is_dlt { Some(calculated_time) } else { None },
+                            Some(calculated_time),
                             storage_time,
                         ),
                         ecu_id,

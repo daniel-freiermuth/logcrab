@@ -209,21 +209,33 @@ impl LogTable {
             }
 
             // Time synchronization option (DLT-specific calibration or general file offset)
-            let line_variant = store.get_by_id(&line_idx);
-            let is_dlt = matches!(line_variant, Some(LogLineVariant::Dlt(_)));
-
-            let button_text = if is_dlt {
-                "⏱ Calibrate Time Here"
+            let Some(line) = store.get_by_id(&line_idx) else {
+                return;
+            };
+            
+            // Determine if we should show the sync/calibrate option
+            let show_sync_option = if let LogLineVariant::Dlt(ref dlt_line) = line {
+                // For DLT: only show in CalibratedMonotonic mode (when boot_time is set)
+                dlt_line.boot_time.is_some()
             } else {
-                "⏱ Sync Time Here"
+                // For non-DLT files: show calibrate option
+                true
             };
 
-            if ui.button(button_text).clicked() {
-                if let Some(line) = line_variant {
-                    let calculated_time = line.timestamp();
+            if show_sync_option {
+                if ui.button("⏱ Calibrate Time Here").clicked() {
+                    // Get current timestamp (with any offset applied) and original timestamp
+                    let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
+                    let original_time = line.timestamp();
+                    let calculated_time = if offset_ms != 0 {
+                        original_time + chrono::Duration::milliseconds(offset_ms)
+                    } else {
+                        original_time
+                    };
                     
                     // For DLT files, extract storage time and ECU/App IDs
-                    let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(dlt_line) = line {
+                    // For non-DLT files, use original timestamp (without offset)
+                    let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(ref dlt_line) = line {
                         let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
                             use chrono::TimeZone;
                             let secs = i64::from(sh.timestamp.seconds);
@@ -245,7 +257,8 @@ impl LogTable {
                         
                         (stor_time, ecu, app)
                     } else {
-                        (None, None, None)
+                        // For non-DLT files, use original timestamp (line.timestamp() without offset)
+                        (Some(original_time), None, None)
                     };
 
                     events.push(LogTableEvent::SyncTime {
@@ -261,16 +274,14 @@ impl LogTable {
 
             ui.separator();
 
-            if let Some(line) = store.get_by_id(&line_idx) {
-                if ui.button("📋 Copy Message").clicked() {
-                    ui.ctx().copy_text(line.message());
-                    ui.close();
-                }
+            if ui.button("📋 Copy Message").clicked() {
+                ui.ctx().copy_text(line.message());
+                ui.close();
+            }
 
-                if ui.button("📋 Copy Full Line").clicked() {
-                    ui.ctx().copy_text(line.raw());
-                    ui.close();
-                }
+            if ui.button("📋 Copy Full Line").clicked() {
+                ui.ctx().copy_text(line.raw());
+                ui.close();
             }
         });
     }
