@@ -361,17 +361,23 @@ impl FilterView {
         if let Some((store_id, ref mut window, ref ecu_id, ref app_id)) = self.sync_dlt_time_window
         {
             match window.render(ui) {
-                Ok(Some(target_time)) => {
+                Ok(Some((target_time, apply_to_all_apps))) => {
                     // User confirmed - perform the sync
                     let is_dlt = ecu_id.is_some() || app_id.is_some();
 
                     let result = if is_dlt {
-                        // DLT calibration (per ECU, per App)
+                        // DLT calibration (per ECU, per App or all apps)
+                        let app_filter = if apply_to_all_apps {
+                            None
+                        } else {
+                            app_id.as_ref()
+                        };
+                        
                         data_state.store.resync_dlt_time_to_target(
                             &store_id,
                             target_time,
                             ecu_id.as_ref(),
-                            app_id.as_ref(),
+                            app_filter,
                         )
                     } else {
                         // Non-DLT file offset
@@ -383,7 +389,11 @@ impl FilterView {
                     match result {
                         Ok(()) => {
                             let sync_type = if is_dlt {
-                                "DLT timestamps"
+                                if apply_to_all_apps {
+                                    "DLT timestamps (all applications)"
+                                } else {
+                                    "DLT timestamps"
+                                }
                             } else {
                                 "file time offset"
                             };

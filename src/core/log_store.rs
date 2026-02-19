@@ -503,21 +503,28 @@ impl SourceData {
             for line in guard.iter_mut() {
                 if let LogLineVariant::Dlt(dlt_line) = line {
                     // Check if this line matches the target ECU and App
-                    let should_update = if let (Some(target_ecu), Some(target_app)) =
-                        (ecu_id, app_id)
-                    {
+                    let should_update = if let Some(target_ecu) = ecu_id {
+                        // ECU must match
                         let ecu_matches = dlt_line
                             .dlt_message
                             .header
                             .ecu_id
                             .as_ref()
                             .is_some_and(|ecu| ecu.as_str() == target_ecu);
-                        let app_matches = dlt_line
-                            .dlt_message
-                            .extended_header
-                            .as_ref()
-                            .is_some_and(|ext| ext.application_id.as_str() == target_app.as_str());
-                        ecu_matches && app_matches
+                        
+                        if !ecu_matches {
+                            false
+                        } else if let Some(target_app) = app_id {
+                            // If app is specified, it must also match
+                            dlt_line
+                                .dlt_message
+                                .extended_header
+                                .as_ref()
+                                .is_some_and(|ext| ext.application_id.as_str() == target_app.as_str())
+                        } else {
+                            // No app filter, apply to all apps for this ECU
+                            true
+                        }
                     } else {
                         false
                     };

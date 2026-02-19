@@ -6,6 +6,7 @@ pub struct SyncDltTimeWindow {
     is_dlt: bool,
     calculated_time: Option<DateTime<Local>>,
     storage_time: Option<DateTime<Local>>,
+    apply_to_all_apps: bool,
 }
 
 impl SyncDltTimeWindow {
@@ -21,15 +22,16 @@ impl SyncDltTimeWindow {
             is_dlt,
             calculated_time,
             storage_time,
+            apply_to_all_apps: false,
         }
     }
 
     /// Render the sync time window
     ///
-    /// Returns `Ok(Some(target_time))` if the user confirmed the sync,
+    /// Returns `Ok(Some((target_time, apply_to_all_apps)))` if the user confirmed the sync,
     /// Ok(None) if the window is still open,
     /// Err(()) if the operation was cancelled.
-    pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<DateTime<Local>>, ()> {
+    pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<(DateTime<Local>, bool)>, ()> {
         let mut result = Ok(None);
 
         let title = if self.is_dlt {
@@ -101,6 +103,12 @@ impl SyncDltTimeWindow {
 
                 ui.add_space(10.0);
 
+                // For DLT files, show checkbox to apply to all applications
+                if self.is_dlt {
+                    ui.checkbox(&mut self.apply_to_all_apps, "Apply to all applications");
+                    ui.add_space(5.0);
+                }
+
                 // Check if Enter was pressed
                 let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let enter_submitted =
@@ -117,7 +125,7 @@ impl SyncDltTimeWindow {
 
                     if should_sync {
                         if let Ok(target_time) = parsed_time {
-                            result = Ok(Some(target_time));
+                            result = Ok(Some((target_time, self.apply_to_all_apps)));
                         }
                     }
                     if should_cancel {
