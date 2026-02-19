@@ -67,6 +67,20 @@ impl SourceData {
         let crab_path = Self::compute_crab_path(&file_path);
         let crab_lock = Self::acquire_crab_lock(&crab_path)?;
 
+        Self::new_with_lock(file_path, crab_lock, crab_path)
+    }
+
+    /// Create a `SourceData` with an existing .crab file lock
+    ///
+    /// This is useful when reloading files - we can pass the lock from the old
+    /// SourceData to the new one, avoiding the race condition where the OS hasn't
+    /// released the lock yet.
+    pub fn new_with_lock(file_path: PathBuf, crab_lock: File, crab_path: PathBuf) -> Option<Self> {
+        assert!(
+            file_path.file_name().is_some(),
+            "file_path must have a filename component: {file_path:?}"
+        );
+
         let sd = Self {
             file_path,
             lines: RwLock::new(Vec::new()),
@@ -151,6 +165,16 @@ impl SourceData {
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"))
+    }
+
+    /// Extract the .crab file lock from this source
+    ///
+    /// This is used when reloading files to transfer the lock to the new SourceData,
+    /// avoiding the race condition where the OS hasn't released the lock yet.
+    ///
+    /// Returns (File, PathBuf) representing the locked file handle and its path.
+    pub fn take_crab_lock(self) -> (File, PathBuf) {
+        self.crab_lock.into_inner().expect("crab_lock mutex poisoned")
     }
 
     // ========================================================================
@@ -742,22 +766,48 @@ impl LogStore {
 
     /// Remove all DLT sources from the store
     ///
-    /// Returns the paths of the removed sources so they can be re-added.
+    /// Returns tuples of (path, lock) for each removed DLT source so they can be re-added
+    /// with the same lock, avoiding file locking race conditions.
+    ///
     /// Note: This invalidates any cached StoreIDs - callers should refresh their caches.
-    pub fn remove_dlt_sources(&self) -> Vec<PathBuf> {
+    pub fn remove_dlt_sources(&self) -> Vec<(PathBuf, File, PathBuf)> {
         profiling::scope!("LogStore::sources::write");
         let mut sources = self.sources.write().expect("sources lock poisoned");
 
-        let removed_paths: Vec<PathBuf> = sources
-            .iter()
-            .filter(|s| s.is_dlt_file())
-            .map(|s| s.file_path().to_path_buf())
-            .collect();
+        // Extract DLT sources and their locks
+        let mut removed_with_locks = Vec::new();
+        let mut remaining = Vec::new();
 
-        sources.retain(|s| !s.is_dlt_file());
+        for source in sources.drain(..) {
+            if source.is_dlt_file() {
+                let path = source.file_path().to_path_buf();
+                // Try to unwrap the Arc - if there are other references, we can't take the lock
+                match Arc::try_unwrap(source) {
+                    Ok(source_data) => {
+                        let (lock_file, lock_path) = source_data.take_crab_lock();
+                        removed_with_locks.push((path, lock_file, lock_path));
+                    }
+                    Err(arc_source) => {
+                        log::warn!(
+                            "Cannot extract lock from {} - Arc has multiple references",
+                            arc_source.file_path().display()
+                        );
+                        // Put it back in remaining sources since we can't reload it
+                        remaining.push(arc_source);
+                    }
+                }
+            } else {
+                remaining.push(source);
+            }
+        }
 
-        log::info!("Removed {} DLT sources from store", removed_paths.len());
-        removed_paths
+        *sources = remaining;
+
+        log::info!(
+            "Removed {} DLT sources from store (with locks)",
+            removed_with_locks.len()
+        );
+        removed_with_locks
     }
 
     // ========================================================================

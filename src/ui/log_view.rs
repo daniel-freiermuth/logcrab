@@ -118,9 +118,12 @@ impl CrabSession {
 
         log::info!("Adding file to session: {}", path.display());
 
-        let Some(source) =
-            LogFileLoader::load_async(path, toast.clone(), self.global_config.dlt_timestamp_source)
-        else {
+        let Some(source) = LogFileLoader::load_async(
+            path,
+            toast.clone(),
+            self.global_config.dlt_timestamp_source,
+            None,
+        ) else {
             toast.set_error("File is already open in another LogCrab instance".to_string());
             toast.dismiss();
             return;
@@ -148,21 +151,21 @@ impl CrabSession {
         // First save .crab files to persist any unsaved bookmarks
         self.save_crab_file();
 
-        // Remove all DLT sources and get their paths
-        let dlt_paths = self.state.store.remove_dlt_sources();
+        // Remove all DLT sources and get their paths with locks
+        let dlt_sources_with_locks = self.state.store.remove_dlt_sources();
 
-        if dlt_paths.is_empty() {
+        if dlt_sources_with_locks.is_empty() {
             log::info!("No DLT files to reload");
             return;
         }
 
         log::info!(
             "Reloading {} DLT files with new timestamp source",
-            dlt_paths.len()
+            dlt_sources_with_locks.len()
         );
 
-        // Re-add each DLT file (this will reload them with the new timestamp source)
-        for path in dlt_paths {
+        // Re-add each DLT file with its existing lock to avoid race conditions
+        for (path, lock_file, lock_path) in dlt_sources_with_locks {
             let toast = toast_manager.create_progress_toast(
                 format!(
                     "Reloading {}",
@@ -170,11 +173,13 @@ impl CrabSession {
                 ),
                 "Starting...",
             );
-            // Directly load and add the file, bypassing the duplicate check
-            // since we just removed these sources
-            if let Some(source) =
-                LogFileLoader::load_async(path.clone(), toast.clone(), dlt_timestamp_source)
-            {
+            // Directly load and add the file with the existing lock
+            if let Some(source) = LogFileLoader::load_async(
+                path.clone(),
+                toast.clone(),
+                dlt_timestamp_source,
+                Some((lock_file, lock_path)),
+            ) {
                 self.state.store.add_source(&source);
             } else {
                 log::error!("Failed to reload DLT file: {}", path.display());

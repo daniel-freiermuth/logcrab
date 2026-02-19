@@ -45,13 +45,21 @@ impl LogFileLoader {
     /// The toast handle will be updated with progress and dismissed when complete.
     /// Returns the `SourceData` that will be populated with log lines.
     ///
+    /// If `crab_lock` is provided, uses it instead of acquiring a new lock.
+    /// This is useful when reloading files to avoid lock release race conditions.
+    ///
     /// Returns None if the .crab session file is already locked by another instance.
     pub fn load_async(
         path: PathBuf,
         toast: ProgressToastHandle,
         dlt_timestamp_source: DltTimestampSource,
+        crab_lock: Option<(File, PathBuf)>,
     ) -> Option<Arc<SourceData>> {
-        let data_source = Arc::new(SourceData::new(path.clone())?);
+        let data_source = if let Some((lock_file, lock_path)) = crab_lock {
+            Arc::new(SourceData::new_with_lock(path.clone(), lock_file, lock_path)?)
+        } else {
+            Arc::new(SourceData::new(path.clone())?)
+        };
         let source_clone = data_source.clone();
 
         thread::spawn(move || {
