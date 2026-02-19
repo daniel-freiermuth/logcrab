@@ -555,10 +555,7 @@ impl LogTable {
         let color = score_to_color(line.anomaly_score(), dark_mode);
         let source_name = store.get_source_name(&line_idx);
 
-        let mut row_clicked = false;
-        let mut row_middle_clicked = false;
-
-        Self::render_all_columns(
+        let column_response = Self::render_all_columns(
             row,
             store,
             &line,
@@ -570,11 +567,15 @@ impl LogTable {
             source_name.as_deref(),
             bookmarked_lines,
             all_filter_highlights,
-            &mut row_clicked,
-            &mut row_middle_clicked,
-            events,
             dark_mode,
         );
+
+        // Row-level interaction handling (union column and row responses)
+        let merged = column_response.union(row.response());
+        let row_clicked = merged.clicked();
+        let row_middle_clicked = merged.middle_clicked();
+
+        Self::show_line_context_menu(&merged, store, line_idx, events);
 
         if row_middle_clicked {
             Some(LogTableEvent::BookmarkToggled {
@@ -602,106 +603,80 @@ impl LogTable {
         source_name: Option<&str>,
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
-        row_clicked: &mut bool,
-        row_middle_clicked: &mut bool,
-        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
-    ) {
-        Self::render_source_column(
-            row,
-            store,
-            line_idx,
-            is_selected,
-            is_scrolled_to_closest,
-            is_bookmarked,
-            color,
-            source_name,
-            row_clicked,
-            row_middle_clicked,
-            events,
-            dark_mode,
-        );
+    ) -> egui::Response {
+        let responses = [
+            Self::render_source_column(
+                row,
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                color,
+                source_name,
+                dark_mode,
+            ),
+            Self::render_line_column(
+                row,
+                line,
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                color,
+                bookmarked_lines
+                    .get(&line_idx)
+                    .map(std::string::String::as_str),
+                dark_mode,
+            ),
+            Self::render_timestamp_column(
+                row,
+                store,
+                line,
+                line_idx,
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                color,
+                dark_mode,
+            ),
+            Self::render_message_column(
+                row,
+                store,
+                line,
+                line_idx,
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                color,
+                all_filter_highlights,
+                dark_mode,
+            ),
+            Self::render_score_column(
+                row,
+                line,
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                color,
+                dark_mode,
+            ),
+        ];
 
-        Self::render_line_column(
-            row,
-            store,
-            line,
-            line_idx,
-            is_selected,
-            is_scrolled_to_closest,
-            is_bookmarked,
-            color,
-            bookmarked_lines
-                .get(&line_idx)
-                .map(std::string::String::as_str),
-            row_clicked,
-            row_middle_clicked,
-            events,
-            dark_mode,
-        );
-
-        Self::render_timestamp_column(
-            row,
-            store,
-            line,
-            line_idx,
-            is_selected,
-            is_scrolled_to_closest,
-            is_bookmarked,
-            color,
-            row_clicked,
-            row_middle_clicked,
-            events,
-            dark_mode,
-        );
-
-        Self::render_message_column(
-            row,
-            store,
-            line,
-            line_idx,
-            is_selected,
-            is_scrolled_to_closest,
-            is_bookmarked,
-            color,
-            all_filter_highlights,
-            row_clicked,
-            row_middle_clicked,
-            events,
-            dark_mode,
-        );
-
-        Self::render_score_column(
-            row,
-            store,
-            line,
-            line_idx,
-            is_selected,
-            is_scrolled_to_closest,
-            is_bookmarked,
-            color,
-            row_clicked,
-            row_middle_clicked,
-            events,
-            dark_mode,
-        );
+        responses
+            .into_iter()
+            .reduce(|a, b| a.union(b))
+            .expect("array is non-empty")
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_source_column(
         row: &mut egui_extras::TableRow,
-        store: &LogStore,
-        line_idx: StoreID,
         is_selected: bool,
         is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
         source_name: Option<&str>,
-        row_clicked: &mut bool,
-        row_middle_clicked: &mut bool,
-        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
-    ) {
+    ) -> egui::Response {
+        let mut response: Option<egui::Response> = None;
         row.col(|ui| {
             // Background highlight for selected/bookmarked rows
             if let Some(bg_color) = compute_row_background_color(
@@ -720,47 +695,29 @@ impl LogTable {
             // Display source name (truncated if needed)
             let display_name = source_name.unwrap_or("stdin");
             let text = RichText::new(display_name).color(color);
-            let label_response = ui.add(egui::Label::new(text).truncate());
+            let label_response =
+                ui.add(egui::Label::new(text).truncate().sense(egui::Sense::click()));
 
             // Tooltip with full source name
             if let Some(name) = source_name {
-                label_response.on_hover_text(name);
+                label_response.clone().on_hover_text(name);
             }
-
-            let response = ui.interact(
-                ui.max_rect(),
-                ui.id().with(line_idx).with("source"),
-                egui::Sense::click(),
-            );
-
-            if response.clicked() {
-                *row_clicked = true;
-            }
-            if response.middle_clicked() {
-                *row_middle_clicked = true;
-            }
-
-            // Show context menu on right-click
-            Self::show_line_context_menu(&response, store, line_idx, events);
+            response = Some(label_response);
         });
+        response.expect("column always renders")
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_line_column(
         row: &mut egui_extras::TableRow,
-        store: &LogStore,
         line: &LogLine,
-        line_idx: StoreID,
         is_selected: bool,
         is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
         bookmark_name: Option<&str>,
-        row_clicked: &mut bool,
-        row_middle_clicked: &mut bool,
-        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
-    ) {
+    ) -> egui::Response {
+        let mut response: Option<egui::Response> = None;
         row.col(|ui| {
             if let Some(bg_color) = compute_row_background_color(
                 is_selected,
@@ -787,34 +744,19 @@ impl LogTable {
             } else {
                 RichText::new(line_text).color(color)
             };
-            let label_response = ui.label(text);
+            let label_response = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
 
             // Show tooltip with bookmark name if bookmarked
             if is_bookmarked {
                 if let Some(name) = bookmark_name {
-                    label_response.on_hover_text(format!("📑 Bookmark: {name}"));
+                    label_response.clone().on_hover_text(format!("📑 Bookmark: {name}"));
                 }
             }
-
-            let response = ui.interact(
-                ui.max_rect(),
-                ui.id().with(line_idx).with("line"),
-                egui::Sense::click(),
-            );
-
-            if response.clicked() {
-                *row_clicked = true;
-            }
-            if response.middle_clicked() {
-                *row_middle_clicked = true;
-            }
-
-            // Show context menu on right-click
-            Self::show_line_context_menu(&response, store, line_idx, events);
+            response = Some(label_response);
         });
+        response.expect("column always renders")
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
@@ -824,11 +766,9 @@ impl LogTable {
         is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
-        row_clicked: &mut bool,
-        row_middle_clicked: &mut bool,
-        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
-    ) {
+    ) -> egui::Response {
+        let mut response: Option<egui::Response> = None;
         row.col(|ui| {
             if let Some(bg_color) = compute_row_background_color(
                 is_selected,
@@ -854,26 +794,11 @@ impl LogTable {
 
             let timestamp_str = display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             let text = RichText::new(timestamp_str).color(color);
-            ui.label(text);
-
-            let response = ui.interact(
-                ui.max_rect(),
-                ui.id().with(line_idx).with("ts"),
-                egui::Sense::click(),
-            );
-            if response.clicked() {
-                *row_clicked = true;
-            }
-            if response.middle_clicked() {
-                *row_middle_clicked = true;
-            }
-
-            // Show context menu on right-click
-            Self::show_line_context_menu(&response, store, line_idx, events);
+            response = Some(ui.add(egui::Label::new(text).sense(egui::Sense::click())));
         });
+        response.expect("column always renders")
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_message_column(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
@@ -884,11 +809,9 @@ impl LogTable {
         is_bookmarked: bool,
         bg_color: Color32,
         all_filter_highlights: &[FilterHighlight],
-        row_clicked: &mut bool,
-        row_middle_clicked: &mut bool,
-        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
-    ) {
+    ) -> egui::Response {
+        let mut response: Option<egui::Response> = None;
         row.col(|ui| {
             if let Some(bg_color) = compute_row_background_color(
                 is_selected,
@@ -926,42 +849,27 @@ impl LogTable {
             let text_width = galley.size().x;
             let is_clipped = text_width > available_width;
 
-            let response = ui.add(egui::Label::new(job).selectable(true).extend());
+            let label_response = ui.add(egui::Label::new(job).selectable(true).extend());
 
             // Only show hover tooltip if text was clipped
-            let response = if is_clipped {
-                response.on_hover_text(line.raw())
-            } else {
-                response
-            };
-
-            if response.clicked() {
-                *row_clicked = true;
+            if is_clipped {
+                label_response.clone().on_hover_text(line.raw());
             }
-            if response.middle_clicked() {
-                *row_middle_clicked = true;
-            }
-
-            // Show context menu on right-click
-            Self::show_line_context_menu(&response, store, line_idx, events);
+            response = Some(label_response);
         });
+        response.expect("column always renders")
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_score_column(
         row: &mut egui_extras::TableRow,
-        store: &LogStore,
         line: &LogLine,
-        line_idx: StoreID,
         is_selected: bool,
         is_scrolled_to_closest: bool,
         is_bookmarked: bool,
         color: Color32,
-        row_clicked: &mut bool,
-        row_middle_clicked: &mut bool,
-        events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
-    ) {
+    ) -> egui::Response {
+        let mut response: Option<egui::Response> = None;
         row.col(|ui| {
             if let Some(bg_color) = compute_row_background_color(
                 is_selected,
@@ -978,22 +886,8 @@ impl LogTable {
 
             let anomaly_str = format!("{:.1}", line.anomaly_score());
             let text = RichText::new(anomaly_str).strong().color(color);
-            ui.label(text);
-
-            let response = ui.interact(
-                ui.max_rect(),
-                ui.id().with(line_idx).with("score"),
-                egui::Sense::click(),
-            );
-            if response.clicked() {
-                *row_clicked = true;
-            }
-            if response.middle_clicked() {
-                *row_middle_clicked = true;
-            }
-
-            // Show context menu on right-click
-            Self::show_line_context_menu(&response, store, line_idx, events);
+            response = Some(ui.add(egui::Label::new(text).sense(egui::Sense::click())));
         });
+        response.expect("column always renders")
     }
 }
