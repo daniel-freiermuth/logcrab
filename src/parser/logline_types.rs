@@ -25,7 +25,7 @@ pub fn format_time_diff(diff: chrono::Duration) -> String {
     } else {
         "+"
     };
-    
+
     // Use absolute value for calculations
     let abs_diff = if diff < chrono::Duration::zero() {
         -diff

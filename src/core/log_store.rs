@@ -177,7 +177,9 @@ impl SourceData {
     ///
     /// Returns (File, PathBuf) representing the locked file handle and its path.
     pub fn take_crab_lock(self) -> (File, PathBuf) {
-        self.crab_lock.into_inner().expect("crab_lock mutex poisoned")
+        self.crab_lock
+            .into_inner()
+            .expect("crab_lock mutex poisoned")
     }
 
     /// Request cancellation of background loading/scoring operations
@@ -548,7 +550,7 @@ impl SourceData {
                             .ecu_id
                             .as_ref()
                             .is_some_and(|ecu| ecu.as_str() == target_ecu);
-                        
+
                         if !ecu_matches {
                             false
                         } else if let Some(target_app) = app_id {
@@ -557,7 +559,9 @@ impl SourceData {
                                 .dlt_message
                                 .extended_header
                                 .as_ref()
-                                .is_some_and(|ext| ext.application_id.as_str() == target_app.as_str())
+                                .is_some_and(|ext| {
+                                    ext.application_id.as_str() == target_app.as_str()
+                                })
                         } else {
                             // No app filter, apply to all apps for this ECU
                             true

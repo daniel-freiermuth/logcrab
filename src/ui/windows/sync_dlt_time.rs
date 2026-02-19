@@ -50,27 +50,29 @@ impl SyncDltTimeWindow {
                 } else {
                     ("Current time:", "Original time:")
                 };
-                
+
                 if let Some(calc_time) = self.calculated_time {
                     ui.horizontal(|ui| {
                         ui.label(current_label);
                         ui.label(calc_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
                         if ui.button("Use for calibration").clicked() {
-                            self.target_time_str = calc_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                            self.target_time_str =
+                                calc_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
                         }
                     });
                 }
-                
+
                 if let Some(stor_time) = self.storage_time {
                     ui.horizontal(|ui| {
                         ui.label(original_label);
                         ui.label(stor_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
                         if ui.button("Use for calibration").clicked() {
-                            self.target_time_str = stor_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                            self.target_time_str =
+                                stor_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
                         }
                     });
                 }
-                
+
                 if self.calculated_time.is_some() || self.storage_time.is_some() {
                     ui.add_space(10.0);
                 }

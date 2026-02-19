@@ -154,22 +154,22 @@ impl CrabSession {
         // If any DLT files are still loading, request cancellation and wait for them to stop
         if self.state.store.has_loading_dlt_sources() {
             log::info!("DLT files are still loading, requesting cancellation...");
-            
+
             // Request cancellation of all DLT loading operations
             self.state.store.cancel_dlt_loading();
-            
+
             let wait_toast = toast_manager.create_progress_toast(
                 "Stopping Background Tasks",
                 "Cancelling scoring and waiting for completion...",
             );
-            
+
             // Wait up to 5 seconds for cancellation to complete
             if !self.state.store.wait_for_dlt_loading(5) {
                 log::error!("Timeout waiting for DLT loading cancellation");
                 wait_toast.set_error("Timeout cancelling background tasks".to_string());
                 return;
             }
-            
+
             wait_toast.dismiss();
             log::info!("Background tasks cancelled, proceeding with reload");
         }

@@ -208,7 +208,7 @@ impl BookmarksView {
                         } else {
                             app_id.as_ref()
                         };
-                        
+
                         data_state.store.resync_dlt_time_to_target(
                             &store_id,
                             target_time,

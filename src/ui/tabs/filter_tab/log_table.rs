@@ -212,7 +212,7 @@ impl LogTable {
             let Some(line) = store.get_by_id(&line_idx) else {
                 return;
             };
-            
+
             // Determine if we should show the sync/calibrate option
             let show_sync_option = if let LogLineVariant::Dlt(ref dlt_line) = line {
                 // For DLT: only show in CalibratedMonotonic mode (when boot_time is set)
@@ -232,34 +232,36 @@ impl LogTable {
                     } else {
                         original_time
                     };
-                    
+
                     // For DLT files, extract storage time and ECU/App IDs
                     // For non-DLT files, use original timestamp (without offset)
-                    let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(ref dlt_line) = line {
-                        let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
-                            use chrono::TimeZone;
-                            let secs = i64::from(sh.timestamp.seconds);
-                            let nsecs = sh.timestamp.microseconds * 1000;
-                            chrono::Local.timestamp_opt(secs, nsecs).single()
-                        });
-                        
-                        let ecu = dlt_line
-                            .dlt_message
-                            .header
-                            .ecu_id
-                            .as_ref()
-                            .map(std::string::ToString::to_string);
-                        let app = dlt_line
-                            .dlt_message
-                            .extended_header
-                            .as_ref()
-                            .map(|ext| ext.application_id.clone());
-                        
-                        (stor_time, ecu, app)
-                    } else {
-                        // For non-DLT files, use original timestamp (line.timestamp() without offset)
-                        (Some(original_time), None, None)
-                    };
+                    let (storage_time, ecu_id, app_id) =
+                        if let LogLineVariant::Dlt(ref dlt_line) = line {
+                            let stor_time =
+                                dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
+                                    use chrono::TimeZone;
+                                    let secs = i64::from(sh.timestamp.seconds);
+                                    let nsecs = sh.timestamp.microseconds * 1000;
+                                    chrono::Local.timestamp_opt(secs, nsecs).single()
+                                });
+
+                            let ecu = dlt_line
+                                .dlt_message
+                                .header
+                                .ecu_id
+                                .as_ref()
+                                .map(std::string::ToString::to_string);
+                            let app = dlt_line
+                                .dlt_message
+                                .extended_header
+                                .as_ref()
+                                .map(|ext| ext.application_id.clone());
+
+                            (stor_time, ecu, app)
+                        } else {
+                            // For non-DLT files, use original timestamp (line.timestamp() without offset)
+                            (Some(original_time), None, None)
+                        };
 
                     events.push(LogTableEvent::SyncTime {
                         line_index: line_idx,
@@ -685,18 +687,18 @@ impl LogTable {
                 is_bookmarked,
                 dark_mode,
             ) {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bg_color,
-                );
+                ui.painter()
+                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
             }
 
             // Display source name (truncated if needed)
             let display_name = source_name.unwrap_or("stdin");
             let text = RichText::new(display_name).color(color);
-            let label_response =
-                ui.add(egui::Label::new(text).truncate().sense(egui::Sense::click()));
+            let label_response = ui.add(
+                egui::Label::new(text)
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            );
 
             // Tooltip with full source name
             if let Some(name) = source_name {
@@ -725,11 +727,8 @@ impl LogTable {
                 is_bookmarked,
                 dark_mode,
             ) {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bg_color,
-                );
+                ui.painter()
+                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
             }
 
             let bookmark_icon = if is_bookmarked { "★ " } else { "" };
@@ -749,7 +748,9 @@ impl LogTable {
             // Show tooltip with bookmark name if bookmarked
             if is_bookmarked {
                 if let Some(name) = bookmark_name {
-                    label_response.clone().on_hover_text(format!("📑 Bookmark: {name}"));
+                    label_response
+                        .clone()
+                        .on_hover_text(format!("📑 Bookmark: {name}"));
                 }
             }
             response = Some(label_response);
@@ -776,11 +777,8 @@ impl LogTable {
                 is_bookmarked,
                 dark_mode,
             ) {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bg_color,
-                );
+                ui.painter()
+                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
             }
 
             // Apply time offset if present
@@ -819,11 +817,8 @@ impl LogTable {
                 is_bookmarked,
                 dark_mode,
             ) {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bg_color,
-                );
+                ui.painter()
+                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
             }
 
             // Add time offset prefix if present
@@ -877,11 +872,8 @@ impl LogTable {
                 is_bookmarked,
                 dark_mode,
             ) {
-                ui.painter().rect_filled(
-                    ui.available_rect_before_wrap(),
-                    0.0,
-                    bg_color,
-                );
+                ui.painter()
+                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
             }
 
             let anomaly_str = format!("{:.1}", line.anomaly_score());

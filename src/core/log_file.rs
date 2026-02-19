@@ -56,7 +56,11 @@ impl LogFileLoader {
         crab_lock: Option<(File, PathBuf)>,
     ) -> Option<Arc<SourceData>> {
         let data_source = if let Some((lock_file, lock_path)) = crab_lock {
-            Arc::new(SourceData::new_with_lock(path.clone(), lock_file, lock_path)?)
+            Arc::new(SourceData::new_with_lock(
+                path.clone(),
+                lock_file,
+                lock_path,
+            )?)
         } else {
             Arc::new(SourceData::new(path.clone())?)
         };
@@ -538,7 +542,7 @@ impl LogFileLoader {
                     toast.dismiss();
                     return;
                 }
-                
+
                 let progress = idx as f32 / total_lines as f32;
                 toast.update(progress, format!("Scoring... ({idx}/{total_lines})"));
             }

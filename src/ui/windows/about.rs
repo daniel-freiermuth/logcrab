@@ -47,7 +47,10 @@ pub fn render_about_window(ctx: &egui::Context, open: &mut bool) {
                 ui.label("© 2025-2026 Daniel Freiermuth");
                 ui.add_space(5.0);
 
-                ui.hyperlink_to("GitHub Repository", "https://github.com/dan-freiermuth/logcrab");
+                ui.hyperlink_to(
+                    "GitHub Repository",
+                    "https://github.com/dan-freiermuth/logcrab",
+                );
 
                 ui.add_space(10.0);
             });

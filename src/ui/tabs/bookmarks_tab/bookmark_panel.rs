@@ -89,7 +89,7 @@ impl BookmarkPanel {
             let Some(line) = store.get_by_id(&line_idx) else {
                 return;
             };
-            
+
             // Determine if we should show the sync/calibrate option
             let show_sync_option = if let LogLineVariant::Dlt(ref dlt_line) = line {
                 // For DLT: only show in CalibratedMonotonic mode (when boot_time is set)
@@ -109,34 +109,36 @@ impl BookmarkPanel {
                     } else {
                         original_time
                     };
-                    
+
                     // For DLT files, extract storage time and ECU/App IDs
                     // For non-DLT files, use original timestamp (without offset)
-                    let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(ref dlt_line) = line {
-                        let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
-                            use chrono::TimeZone;
-                            let secs = i64::from(sh.timestamp.seconds);
-                            let nsecs = sh.timestamp.microseconds * 1000;
-                            chrono::Local.timestamp_opt(secs, nsecs).single()
-                        });
-                        
-                        let ecu = dlt_line
-                            .dlt_message
-                            .header
-                            .ecu_id
-                            .as_ref()
-                            .map(std::string::ToString::to_string);
-                        let app = dlt_line
-                            .dlt_message
-                            .extended_header
-                            .as_ref()
-                            .map(|ext| ext.application_id.clone());
-                        
-                        (stor_time, ecu, app)
-                    } else {
-                        // For non-DLT files, use original timestamp (line.timestamp() without offset)
-                        (Some(original_time), None, None)
-                    };
+                    let (storage_time, ecu_id, app_id) =
+                        if let LogLineVariant::Dlt(ref dlt_line) = line {
+                            let stor_time =
+                                dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
+                                    use chrono::TimeZone;
+                                    let secs = i64::from(sh.timestamp.seconds);
+                                    let nsecs = sh.timestamp.microseconds * 1000;
+                                    chrono::Local.timestamp_opt(secs, nsecs).single()
+                                });
+
+                            let ecu = dlt_line
+                                .dlt_message
+                                .header
+                                .ecu_id
+                                .as_ref()
+                                .map(std::string::ToString::to_string);
+                            let app = dlt_line
+                                .dlt_message
+                                .extended_header
+                                .as_ref()
+                                .map(|ext| ext.application_id.clone());
+
+                            (stor_time, ecu, app)
+                        } else {
+                            // For non-DLT files, use original timestamp (line.timestamp() without offset)
+                            (Some(original_time), None, None)
+                        };
 
                     events.push(BookmarkPanelEvent::SyncTime {
                         line_index: line_idx,
