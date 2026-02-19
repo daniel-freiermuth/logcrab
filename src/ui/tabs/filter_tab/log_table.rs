@@ -334,6 +334,7 @@ impl LogTable {
         let filter_id = filter.get_id();
 
         let available_width = ui.available_width();
+        let ctx = ui.ctx().clone();
         egui::ScrollArea::horizontal()
             .id_salt(format!("filtered_scroll_{filter_id}"))
             .auto_shrink([false, false])
@@ -345,6 +346,7 @@ impl LogTable {
 
                 Self::render_table_with_header(
                     table,
+                    &ctx,
                     store,
                     &filtered_indices,
                     selected_line_index,
@@ -406,6 +408,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_table_with_header(
         table: TableBuilder,
+        ctx: &egui::Context,
         store: &LogStore,
         filtered_indices: &[StoreID],
         selected_line_index: Option<StoreID>,
@@ -424,6 +427,7 @@ impl LogTable {
                 profiling::scope!("LogTable::body");
                 Self::render_table_body(
                     body,
+                    ctx,
                     store,
                     filtered_indices,
                     selected_line_index,
@@ -464,6 +468,7 @@ impl LogTable {
     #[allow(clippy::too_many_arguments)]
     fn render_table_body(
         body: egui_extras::TableBody,
+        ctx: &egui::Context,
         store: &LogStore,
         filtered_indices: &[StoreID],
         selected_line_index: Option<StoreID>,
@@ -475,7 +480,21 @@ impl LogTable {
     ) {
         let visible_lines = filtered_indices.len();
 
+        // One-frame delay hover: read which row was hovered last frame
+        let hover_storage_id = egui::Id::new("log_table_row_hover");
+        let last_frame_hovered: Option<usize> =
+            ctx.data(|d| d.get_temp(hover_storage_id)).flatten();
+
+        let mut current_hovered_row: Option<usize> = None;
+
         body.rows(18.0, visible_lines, |mut row| {
+            let row_index = row.index();
+
+            // Apply hover state from last frame (before any col() calls)
+            if last_frame_hovered == Some(row_index) {
+                row.set_hovered(true);
+            }
+
             let event = Self::render_table_row(
                 &mut row,
                 store,
@@ -488,10 +507,18 @@ impl LogTable {
                 dark_mode,
             );
 
+            // Check if pointer is over this row for next frame
+            if row.response().contains_pointer() {
+                current_hovered_row = Some(row_index);
+            }
+
             if let Some(evt) = event {
                 events.push(evt);
             }
         });
+
+        // Store for next frame
+        ctx.data_mut(|d| d.insert_temp(hover_storage_id, current_hovered_row));
     }
 
     #[allow(clippy::too_many_arguments)]
