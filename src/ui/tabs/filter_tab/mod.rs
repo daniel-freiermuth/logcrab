@@ -49,7 +49,8 @@ pub enum FilterViewEvent {
     },
     SyncTime {
         store_id: StoreID,
-        storage_time: DateTime<Local>,
+        calculated_time: DateTime<Local>,
+        storage_time: Option<DateTime<Local>>,
         ecu_id: Option<String>,
         app_id: Option<String>,
     },
@@ -215,12 +216,14 @@ impl FilterView {
                 }
                 LogTableEvent::SyncTime {
                     line_index,
+                    calculated_time,
                     storage_time,
                     ecu_id,
                     app_id,
                 } => {
                     events.push(FilterViewEvent::SyncTime {
                         store_id: line_index,
+                        calculated_time,
                         storage_time,
                         ecu_id,
                         app_id,
@@ -271,15 +274,21 @@ impl FilterView {
                 }
                 FilterViewEvent::SyncTime {
                     store_id,
+                    calculated_time,
                     storage_time,
                     ecu_id,
                     app_id,
                 } => {
-                    // Open the sync time window with the storage time pre-filled
+                    // Open the sync time window with both times
                     let is_dlt = ecu_id.is_some() || app_id.is_some();
                     self.sync_dlt_time_window = Some((
                         store_id,
-                        SyncDltTimeWindow::new(storage_time, is_dlt),
+                        SyncDltTimeWindow::new(
+                            calculated_time,
+                            is_dlt,
+                            if is_dlt { Some(calculated_time) } else { None },
+                            storage_time,
+                        ),
                         ecu_id,
                         app_id,
                     ));

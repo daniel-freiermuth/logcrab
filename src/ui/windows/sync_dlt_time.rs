@@ -4,14 +4,23 @@ pub struct SyncDltTimeWindow {
     target_time_str: String,
     focus_requested: bool,
     is_dlt: bool,
+    calculated_time: Option<DateTime<Local>>,
+    storage_time: Option<DateTime<Local>>,
 }
 
 impl SyncDltTimeWindow {
-    pub fn new(storage_time: DateTime<Local>, is_dlt: bool) -> Self {
+    pub fn new(
+        current_time: DateTime<Local>,
+        is_dlt: bool,
+        calculated_time: Option<DateTime<Local>>,
+        storage_time: Option<DateTime<Local>>,
+    ) -> Self {
         Self {
-            target_time_str: storage_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            target_time_str: current_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             focus_requested: false,
             is_dlt,
+            calculated_time,
+            storage_time,
         }
     }
 
@@ -33,6 +42,31 @@ impl SyncDltTimeWindow {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
+                // For DLT files, show both calculated and storage times with buttons
+                if self.is_dlt {
+                    if let Some(calc_time) = self.calculated_time {
+                        ui.horizontal(|ui| {
+                            ui.label("Calculated time:");
+                            ui.label(calc_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
+                            if ui.button("Use for calibration").clicked() {
+                                self.target_time_str = calc_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                            }
+                        });
+                    }
+                    
+                    if let Some(stor_time) = self.storage_time {
+                        ui.horizontal(|ui| {
+                            ui.label("Storage time:");
+                            ui.label(stor_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
+                            if ui.button("Use for calibration").clicked() {
+                                self.target_time_str = stor_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                            }
+                        });
+                    }
+                    
+                    ui.add_space(10.0);
+                }
+
                 ui.label("Set the target timestamp for this log entry:");
                 ui.label("Format: YYYY-MM-DD HH:MM:SS.mmm");
                 ui.add_space(5.0);

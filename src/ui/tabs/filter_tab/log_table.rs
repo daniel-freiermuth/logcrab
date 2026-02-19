@@ -39,7 +39,8 @@ pub enum LogTableEvent {
     },
     SyncTime {
         line_index: StoreID,
-        storage_time: DateTime<Local>,
+        calculated_time: DateTime<Local>,
+        storage_time: Option<DateTime<Local>>,
         ecu_id: Option<String>,
         app_id: Option<String>,
     },
@@ -219,21 +220,17 @@ impl LogTable {
 
             if ui.button(button_text).clicked() {
                 if let Some(line) = line_variant {
-                    // For non-DLT files, use the adjusted timestamp (with current offset)
-                    // For DLT files, use the original timestamp (calibration is per-app)
-                    let storage_time = if is_dlt {
-                        line.timestamp()
-                    } else {
-                        let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
-                        if offset_ms != 0 {
-                            line.timestamp() + chrono::Duration::milliseconds(offset_ms)
-                        } else {
-                            line.timestamp()
-                        }
-                    };
-
-                    // For DLT, extract ECU ID and App ID
-                    let (ecu_id, app_id) = if let LogLineVariant::Dlt(dlt_line) = line {
+                    let calculated_time = line.timestamp();
+                    
+                    // For DLT files, extract storage time and ECU/App IDs
+                    let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(dlt_line) = line {
+                        let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
+                            use chrono::TimeZone;
+                            let secs = i64::from(sh.timestamp.seconds);
+                            let nsecs = sh.timestamp.microseconds * 1000;
+                            chrono::Local.timestamp_opt(secs, nsecs).single()
+                        });
+                        
                         let ecu = dlt_line
                             .dlt_message
                             .header
@@ -245,13 +242,15 @@ impl LogTable {
                             .extended_header
                             .as_ref()
                             .map(|ext| ext.application_id.clone());
-                        (ecu, app)
+                        
+                        (stor_time, ecu, app)
                     } else {
-                        (None, None)
+                        (None, None, None)
                     };
 
                     events.push(LogTableEvent::SyncTime {
                         line_index: line_idx,
+                        calculated_time,
                         storage_time,
                         ecu_id,
                         app_id,

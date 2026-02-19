@@ -172,6 +172,7 @@ impl BookmarksView {
                 }
                 BookmarkPanelEvent::SyncTime {
                     line_index,
+                    calculated_time,
                     storage_time,
                     ecu_id,
                     app_id,
@@ -179,7 +180,12 @@ impl BookmarksView {
                     let is_dlt = ecu_id.is_some() || app_id.is_some();
                     self.sync_dlt_time_window = Some((
                         line_index,
-                        SyncDltTimeWindow::new(storage_time, is_dlt),
+                        SyncDltTimeWindow::new(
+                            calculated_time,
+                            is_dlt,
+                            if is_dlt { Some(calculated_time) } else { None },
+                            storage_time,
+                        ),
                         ecu_id,
                         app_id,
                     ));
