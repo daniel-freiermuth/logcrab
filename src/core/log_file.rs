@@ -530,7 +530,15 @@ impl LogFileLoader {
         let total_lines = data_source.len();
 
         for (idx, log_line) in data_source.clone_lines().into_iter().enumerate() {
+            // Check for cancellation every 1000 lines
             if idx % 1000 == 0 {
+                if data_source.is_cancelled() {
+                    log::info!("Anomaly scoring cancelled for {}", path.display());
+                    toast.set_error("Scoring cancelled".to_string());
+                    toast.dismiss();
+                    return;
+                }
+                
                 let progress = idx as f32 / total_lines as f32;
                 toast.update(progress, format!("Scoring... ({idx}/{total_lines})"));
             }

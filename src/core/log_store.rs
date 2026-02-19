@@ -27,7 +27,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
@@ -49,6 +49,8 @@ pub struct SourceData {
     /// Path is stored alongside to avoid recomputation and ensure single source of truth.
     crab_lock: Mutex<(File, PathBuf)>,
     version: AtomicU64,
+    /// Flag to request cancellation of background loading/scoring operations
+    cancel_requested: AtomicBool,
 }
 
 impl SourceData {
@@ -89,6 +91,7 @@ impl SourceData {
             time_offset_ms: RwLock::new(0),
             crab_lock: Mutex::new((crab_lock, crab_path)),
             version: AtomicU64::new(1),
+            cancel_requested: AtomicBool::new(false),
         };
         sd.load_bookmarks();
         Some(sd)
@@ -175,6 +178,16 @@ impl SourceData {
     /// Returns (File, PathBuf) representing the locked file handle and its path.
     pub fn take_crab_lock(self) -> (File, PathBuf) {
         self.crab_lock.into_inner().expect("crab_lock mutex poisoned")
+    }
+
+    /// Request cancellation of background loading/scoring operations
+    pub fn request_cancel(&self) {
+        self.cancel_requested.store(true, AtomicOrdering::SeqCst);
+    }
+
+    /// Check if cancellation has been requested
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_requested.load(AtomicOrdering::SeqCst)
     }
 
     // ========================================================================
@@ -762,6 +775,52 @@ impl LogStore {
         } else {
             None
         }
+    }
+
+    /// Check if any DLT sources are still being loaded
+    ///
+    /// Returns true if any DLT source has multiple Arc references, which indicates
+    /// a background loading thread is still holding a reference.
+    pub fn has_loading_dlt_sources(&self) -> bool {
+        profiling::scope!("LogStore::sources::read");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        sources
+            .iter()
+            .filter(|s| s.is_dlt_file())
+            .any(|source| Arc::strong_count(source) > 1)
+    }
+
+    /// Request cancellation of all DLT source loading/scoring operations
+    pub fn cancel_dlt_loading(&self) {
+        profiling::scope!("LogStore::sources::read");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        for source in sources.iter() {
+            if source.is_dlt_file() {
+                source.request_cancel();
+            }
+        }
+    }
+
+    /// Wait for all DLT sources to finish loading (background threads to complete)
+    ///
+    /// Polls the Arc strong counts until they all drop to 1, indicating background
+    /// threads have released their references. Returns true if all completed within
+    /// the timeout, false if timeout was reached.
+    pub fn wait_for_dlt_loading(&self, timeout_secs: u64) -> bool {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let timeout = Duration::from_secs(timeout_secs);
+
+        while start.elapsed() < timeout {
+            if !self.has_loading_dlt_sources() {
+                return true;
+            }
+            // Sleep briefly to avoid busy-waiting
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        false
     }
 
     /// Remove all DLT sources from the store
