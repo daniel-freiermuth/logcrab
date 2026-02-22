@@ -21,7 +21,6 @@ use crate::core::histogram_worker::{
     HistogramWorkerHandle, NUM_BUCKETS, SCORE_BUCKETS,
 };
 use crate::core::{log_store::StoreID, LogStore};
-use crate::parser::line::LogLineCore;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table;
 use chrono::{DateTime, Local, TimeDelta};
@@ -320,7 +319,8 @@ impl Histogram {
         end_time: chrono::DateTime<chrono::Local>,
     ) -> Option<f64> {
         let selected_line_index = selected_line_index?;
-        let sel_ts = store.get_by_id(&selected_line_index)?.timestamp();
+        let line = store.get_by_id(&selected_line_index)?;
+        let sel_ts = store.get_adjusted_timestamp(&selected_line_index, &line);
 
         let elapsed = (sel_ts - start_time).as_seconds_f64();
         let total = (end_time - start_time).as_seconds_f64();
@@ -705,7 +705,7 @@ impl Histogram {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };
-                let ts = line.timestamp();
+                let ts = store.get_adjusted_timestamp(line_idx, &line);
                 let elapsed = ts - view_start;
 
                 // Skip markers outside visible range
@@ -755,7 +755,7 @@ impl Histogram {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };
-                let ts = line.timestamp();
+                let ts = store.get_adjusted_timestamp(line_idx, &line);
                 let elapsed = ts - view_start;
 
                 // Skip markers outside visible range
@@ -871,9 +871,9 @@ impl Histogram {
         // Binary search to find insertion point
         // If any line lookup fails (stale indices), just return None
         let idx = filtered_indices.partition_point(|line_idx| {
-            store
-                .get_by_id(line_idx)
-                .is_some_and(|line| line.timestamp() < target_time)
+            store.get_by_id(line_idx).is_some_and(|line| {
+                store.get_adjusted_timestamp(line_idx, &line) < target_time
+            })
         });
 
         // Compare neighbors around the insertion point to find the closest
@@ -881,8 +881,10 @@ impl Histogram {
             0 => Some(filtered_indices[0]),
             i if i >= filtered_indices.len() => Some(filtered_indices[filtered_indices.len() - 1]),
             i => {
-                let before_ts = store.get_by_id(&filtered_indices[i - 1])?.timestamp();
-                let after_ts = store.get_by_id(&filtered_indices[i])?.timestamp();
+                let before_line = store.get_by_id(&filtered_indices[i - 1])?;
+                let after_line = store.get_by_id(&filtered_indices[i])?;
+                let before_ts = store.get_adjusted_timestamp(&filtered_indices[i - 1], &before_line);
+                let after_ts = store.get_adjusted_timestamp(&filtered_indices[i], &after_line);
 
                 let dist_before = (target_time - before_ts).abs();
                 let dist_after = (after_ts - target_time).abs();
@@ -944,7 +946,7 @@ impl Histogram {
 
             if let Some(selected_line_index) = selected_line_index {
                 if let Some(line) = store.get_by_id(&selected_line_index) {
-                    let sel_ts = line.timestamp();
+                    let sel_ts = store.get_adjusted_timestamp(&selected_line_index, &line);
                     ui.separator();
                     ui.colored_label(
                         selected_color,

@@ -35,7 +35,7 @@ impl TemporalScorer {
 
 impl AnomalyScorer for TemporalScorer {
     fn score(&mut self, line: &LogLine) -> f64 {
-        let current_time = line.timestamp();
+        let current_time = line.uncalibrated_timestamp();
 
         self.clean_old_entries(current_time);
 
@@ -78,7 +78,7 @@ impl AnomalyScorer for TemporalScorer {
     }
 
     fn update(&mut self, line: &LogLine) {
-        let current_time = line.timestamp();
+        let current_time = line.uncalibrated_timestamp();
 
         // Update last seen time for this template
         self.last_seen.insert(line.template_key(), current_time);

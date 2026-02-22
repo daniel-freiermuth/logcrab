@@ -83,8 +83,12 @@ pub fn format_time_diff(diff: chrono::Duration) -> String {
 
 /// Common interface for all log line types
 pub trait LogLineCore {
-    /// Get the timestamp of this log line
-    fn timestamp(&self) -> DateTime<Local>;
+    /// Get the raw timestamp of this log line (without time offsets)
+    ///
+    /// ⚠️  For timeline operations (sorting, binning, navigation) in multi-source
+    /// sessions, use `LogStore::get_adjusted_timestamp()` instead to account for
+    /// per-source time calibration offsets.
+    fn uncalibrated_timestamp(&self) -> DateTime<Local>;
 
     /// Get the formatted message (may be constructed lazily)
     fn message(&self) -> String;
@@ -116,13 +120,13 @@ pub enum LogLineVariant {
 }
 
 impl LogLineCore for LogLineVariant {
-    fn timestamp(&self) -> DateTime<Local> {
+    fn uncalibrated_timestamp(&self) -> DateTime<Local> {
         match self {
-            Self::Generic(l) => l.timestamp(),
-            Self::Logcat(l) => l.timestamp(),
-            Self::Dlt(l) => l.timestamp(),
-            Self::Pcap(l) => l.timestamp(),
-            Self::Btsnoop(l) => l.timestamp(),
+            Self::Generic(l) => l.uncalibrated_timestamp(),
+            Self::Logcat(l) => l.uncalibrated_timestamp(),
+            Self::Dlt(l) => l.uncalibrated_timestamp(),
+            Self::Pcap(l) => l.uncalibrated_timestamp(),
+            Self::Btsnoop(l) => l.uncalibrated_timestamp(),
         }
     }
 
@@ -224,7 +228,7 @@ impl GenericLogLine {
 }
 
 impl LogLineCore for GenericLogLine {
-    fn timestamp(&self) -> DateTime<Local> {
+    fn uncalibrated_timestamp(&self) -> DateTime<Local> {
         self.timestamp
     }
 
@@ -290,7 +294,7 @@ impl LogcatLogLine {
 }
 
 impl LogLineCore for LogcatLogLine {
-    fn timestamp(&self) -> DateTime<Local> {
+    fn uncalibrated_timestamp(&self) -> DateTime<Local> {
         self.timestamp
     }
 
@@ -465,7 +469,7 @@ impl DltLogLine {
 }
 
 impl LogLineCore for DltLogLine {
-    fn timestamp(&self) -> DateTime<Local> {
+    fn uncalibrated_timestamp(&self) -> DateTime<Local> {
         self.timestamp
     }
 
@@ -522,7 +526,7 @@ impl PcapLogLine {
 }
 
 impl LogLineCore for PcapLogLine {
-    fn timestamp(&self) -> DateTime<Local> {
+    fn uncalibrated_timestamp(&self) -> DateTime<Local> {
         self.packet_info.timestamp
     }
 
@@ -578,7 +582,7 @@ impl BtsnoopLogLine {
 }
 
 impl LogLineCore for BtsnoopLogLine {
-    fn timestamp(&self) -> DateTime<Local> {
+    fn uncalibrated_timestamp(&self) -> DateTime<Local> {
         self.hci_info.timestamp
     }
 

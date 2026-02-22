@@ -166,7 +166,7 @@ mod tests {
             ", [402.037] ,cnss: fatal: SMMU fault happened with IOVA 0x0"
         );
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-26 09:58:05"
         );
     }
@@ -189,7 +189,7 @@ mod tests {
             parse_generic(raw, 1).expect("Should parse ISO timestamp with space and milliseconds");
         assert_eq!(line.message(), "ERROR Connection failed");
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             "2025-11-20 14:23:45.123"
         );
     }
@@ -202,7 +202,7 @@ mod tests {
             parse_generic(raw, 1).expect("Should parse ISO timestamp with space, no milliseconds");
         assert_eq!(line.message(), "WARN Timeout occurred");
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-20 14:23:45"
         );
     }
@@ -214,7 +214,7 @@ mod tests {
             parse_generic(raw, 1).expect("Should parse bracketed timestamp with milliseconds");
         assert_eq!(line.message(), "DEBUG Processing request");
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             "2025-11-20 14:23:45.123"
         );
     }
@@ -226,7 +226,7 @@ mod tests {
             parse_generic(raw, 1).expect("Should parse bracketed timestamp without milliseconds");
         assert_eq!(line.message(), "INFO Service started");
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-20 14:23:45"
         );
     }
@@ -240,7 +240,7 @@ mod tests {
         // Year is assumed to be current year
         let current_year = Local::now().year();
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             format!("{current_year}-11-20 14:23:45.123")
         );
     }
@@ -259,7 +259,7 @@ mod tests {
         // Year is assumed to be current year
         let current_year = Local::now().year();
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             format!("{current_year}-02-03 23:26:34.864")
         );
     }
@@ -280,7 +280,7 @@ mod tests {
             .expect("Should parse ISO timestamp with milliseconds and timezone offset");
         assert_eq!(line.message(), "INFO Server started");
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d").to_string(),
             "2026-02-05"
         );
     }
@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(line.message(), "INFO Application started");
         // Verify the timestamp is correctly parsed
         assert_eq!(
-            line.timestamp().format("%Y-%m-%d").to_string(),
+            line.uncalibrated_timestamp().format("%Y-%m-%d").to_string(),
             "2026-02-05"
         );
     }

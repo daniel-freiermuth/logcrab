@@ -217,12 +217,13 @@ impl HistogramWorker {
         let start_time = start_time.max(full_start);
         let end_time = end_time.min(full_end);
 
-        if start_time >= end_time {
-            return HistogramResult {
-                cache_key: request.key.clone(),
-                data: None,
-            };
-        }
+        // Handle edge case: single line or identical timestamps
+        // Add small epsilon to end_time so we can still create buckets
+        let end_time = if start_time >= end_time {
+            start_time + chrono::Duration::milliseconds(1)
+        } else {
+            end_time
+        };
 
         let time_span = end_time - start_time;
         let bucket_size = Duration::from_secs_f64(time_span.as_seconds_f64() / NUM_BUCKETS as f64);
@@ -234,7 +235,8 @@ impl HistogramWorker {
                 .iter()
                 .filter(|idx| {
                     store.get_by_id(idx).is_some_and(|line| {
-                        let ts = line.timestamp();
+                        // Use adjusted timestamp for zoom filtering
+                        let ts = store.get_adjusted_timestamp(idx, &line);
                         ts >= start_time && ts <= end_time
                     })
                 })
@@ -265,18 +267,18 @@ impl HistogramWorker {
         filtered_indices: &[StoreID],
     ) -> Option<(DateTime<Local>, DateTime<Local>)> {
         profiling::scope!("Histogram::calculate_time_range");
-        // TODO first?
+        // Use adjusted timestamps (with per-source offsets) for accurate time range
         let first_ts = filtered_indices
             .iter()
-            .filter_map(|idx| store.get_by_id(idx))
-            .map(|line| line.timestamp())
-            .next();
+            .find_map(|idx| {
+                store.get_by_id(idx).map(|line| store.get_adjusted_timestamp(idx, &line))
+            });
         let last_ts = filtered_indices
             .iter()
             .rev()
-            .filter_map(|idx| store.get_by_id(idx))
-            .map(|line| line.timestamp())
-            .next();
+            .find_map(|idx| {
+                store.get_by_id(idx).map(|line| store.get_adjusted_timestamp(idx, &line))
+            });
 
         match (first_ts, last_ts) {
             (Some(start), Some(end)) => Some((start, end)),
@@ -297,7 +299,8 @@ impl HistogramWorker {
         // possible optimization: par_iter
         for line_idx in filtered_indices {
             if let Some(line) = store.get_by_id(line_idx) {
-                let ts = line.timestamp();
+                // Use adjusted timestamp (with per-source offsets) for accurate binning
+                let ts = store.get_adjusted_timestamp(line_idx, &line);
                 let bucket_idx = Self::timestamp_to_bucket(ts, start_time, bucket_size);
                 buckets[bucket_idx] += 1;
 

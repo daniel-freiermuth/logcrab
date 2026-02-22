@@ -109,7 +109,7 @@ mod tests {
     fn test_parse_with_detected_year() {
         let raw = "11-20 14:23:45.123 Test message".to_string();
         let line = parse_logcat_with_year(raw, 1, 2023).expect("should parse logcat line");
-        assert!(line.timestamp().year() == 2023);
+        assert!(line.uncalibrated_timestamp().year() == 2023);
     }
 
     #[test]

@@ -222,7 +222,7 @@ impl LogTable {
             if show_sync_option && ui.button("⏱ Calibrate Time Here").clicked() {
                 // Get current timestamp (with any offset applied) and original timestamp
                 let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
-                let original_time = line.timestamp();
+                let original_time = line.uncalibrated_timestamp();
                 let calculated_time = if offset_ms != 0 {
                     original_time + chrono::Duration::milliseconds(offset_ms)
                 } else {
@@ -781,7 +781,7 @@ impl LogTable {
             }
 
             // Apply time offset if present
-            let base_time = line.timestamp();
+            let base_time = line.uncalibrated_timestamp();
             let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
             let display_time = if offset_ms != 0 {
                 base_time + chrono::Duration::milliseconds(offset_ms)

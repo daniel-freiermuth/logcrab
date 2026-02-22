@@ -359,7 +359,7 @@ impl SourceData {
             .expect("lines lock poisoned")
             .get(reference_line_index)
             .ok_or_else(|| "Reference line not found".to_string())?
-            .timestamp();
+            .uncalibrated_timestamp();
 
         // Calculate offset: target_time - original_time
         let offset_ms = target_time.timestamp_millis() - original_time.timestamp_millis();
@@ -425,7 +425,7 @@ impl SourceData {
         let new_by_ts = {
             profiling::scope!("sort_new_indices");
             let mut indices: Vec<usize> = (new_start_idx..lines.len()).collect();
-            indices.par_sort_by_key(|&idx| lines[idx].timestamp());
+            indices.par_sort_by_key(|&idx| lines[idx].uncalibrated_timestamp());
             indices
         };
 
@@ -436,8 +436,8 @@ impl SourceData {
             let mut i_exist = 0;
             let mut j_new = 0;
             while i_exist < existing_by_ts.len() && j_new < new_by_ts.len() {
-                let ts_exist = lines[existing_by_ts[i_exist]].timestamp();
-                let ts_new = lines[new_by_ts[j_new]].timestamp();
+                let ts_exist = lines[existing_by_ts[i_exist]].uncalibrated_timestamp();
+                let ts_new = lines[new_by_ts[j_new]].uncalibrated_timestamp();
                 if ts_exist <= ts_new {
                     merged.push(existing_by_ts[i_exist]);
                     i_exist += 1;
@@ -609,7 +609,7 @@ impl SourceData {
         let mut indices: Vec<usize> =
             (0..self.lines.read().expect("lines lock poisoned").len()).collect();
         let lines = self.lines.read().expect("lines lock poisoned");
-        indices.par_sort_by_key(|&idx| lines[idx].timestamp());
+        indices.par_sort_by_key(|&idx| lines[idx].uncalibrated_timestamp());
         drop(lines);
         *self
             .by_timestamp
@@ -1141,12 +1141,12 @@ impl LogStore {
     }
 
     /// Get timestamp with time offset applied
-    fn get_adjusted_timestamp(&self, id: &StoreID, line: &LogLine) -> chrono::DateTime<Local> {
+    pub fn get_adjusted_timestamp(&self, id: &StoreID, line: &LogLine) -> chrono::DateTime<Local> {
         let offset_ms = self.get_time_offset_ms(id).unwrap_or(0);
         if offset_ms != 0 {
-            line.timestamp() + chrono::Duration::milliseconds(offset_ms)
+            line.uncalibrated_timestamp() + chrono::Duration::milliseconds(offset_ms)
         } else {
-            line.timestamp()
+            line.uncalibrated_timestamp()
         }
     }
 
