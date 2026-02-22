@@ -155,22 +155,26 @@ impl SearchState {
 
     /// Check for completed filter results from background thread.
     /// Returns true if new results were received.
+    /// Drains all pending results and keeps only the most recent to avoid UI lag.
     pub fn check_filter_results(&mut self) -> bool {
-        if let Ok(result) = self.filter_result_rx.try_recv() {
+        let mut got_any = false;
+        while let Ok(result) = self.filter_result_rx.try_recv() {
             self.filtered_indices = result.filtered_indices;
             // Track what these indices were computed for (from the result, not cached_for)
             self.indices_computed_for_text = result.search_text;
             self.indices_computed_for_exclude = result.exclude_text;
             self.indices_computed_for_case = result.case_sensitive;
             self.indices_computed_for_version = result.store_version;
+            got_any = true;
+        }
+        if got_any {
             log::trace!(
                 "Search {}: completed filtering ({} matches)",
                 self.id,
                 self.filtered_indices.len()
             );
-            return true;
         }
-        false
+        got_any
     }
 
     /// Get the search text that the current filtered indices were computed for.
@@ -261,5 +265,38 @@ mod tests {
         let mut state = SearchState::new();
         state.exclude_text = "[invalid".to_string();
         assert!(state.get_exclude_regex().is_err());
+    }
+
+    #[test]
+    fn test_check_filter_results_drains_channel() {
+        let mut state = SearchState::new();
+        let tx = state.filter_result_tx.clone();
+
+        // Send two results to simulate rapid updates
+        tx.send(FilterResult {
+            filtered_indices: Arc::new(vec![]),
+            search_text: "first".to_string(),
+            exclude_text: "".to_string(),
+            case_sensitive: false,
+            store_version: StoreVersion::default(),
+        })
+        .unwrap();
+
+        tx.send(FilterResult {
+            filtered_indices: Arc::new(vec![]),
+            search_text: "second".to_string(),
+            exclude_text: "".to_string(),
+            case_sensitive: false,
+            store_version: StoreVersion::default(),
+        })
+        .unwrap();
+
+        // Should drain channel and return true only once
+        assert!(state.check_filter_results());
+        // Should have the latest (second) result, not intermediate
+        assert_eq!(state.indices_computed_for_text, "second");
+
+        // Second call should return false (channel drained)
+        assert!(!state.check_filter_results());
     }
 }
