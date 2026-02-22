@@ -391,74 +391,62 @@ impl SourceData {
         }
 
         profiling::scope!("SourceData::append_lines");
+        
+        // Append lines and capture the range of new indices atomically
         let new_start_idx = {
-            profiling::scope!("SourceData::lines::read");
-            let current_len = self.lines.read().expect("lines lock poisoned").len();
+            profiling::scope!("SourceData::lines::write");
+            let mut lines_guard = self.lines.write().expect("lines lock poisoned");
+            let start_idx = lines_guard.len();
             log::debug!(
                 "Appending {} lines to existing {} lines (merge overhead)",
                 lines.len(),
-                current_len
+                start_idx
             );
-            current_len
+            lines_guard.extend(lines);
+            start_idx
         };
-        {
-            profiling::scope!("SourceData::lines::write");
-            self.lines
-                .write()
-                .expect("lines lock poisoned")
-                .extend(lines);
-        }
 
-        let lines = {
+        // Read lines and build sorted indices for the newly appended range
+        let (lines_guard, new_by_ts) = {
             profiling::scope!("SourceData::lines::read");
-            self.lines.read().expect("lines lock poisoned")
-        };
-        let existing_by_ts = {
-            profiling::scope!("SourceData::by_timestamp::read");
-            self.by_timestamp
-                .read()
-                .expect("by_timestamp lock poisoned")
-                .clone()
-        };
-
-        // Build timestamp index for new lines, sorted by timestamp
-        let new_by_ts = {
+            let lines_read = self.lines.read().expect("lines lock poisoned");
             profiling::scope!("sort_new_indices");
-            let mut indices: Vec<usize> = (new_start_idx..lines.len()).collect();
-            indices.par_sort_by_key(|&idx| lines[idx].uncalibrated_timestamp());
-            indices
+            let mut indices: Vec<usize> = (new_start_idx..lines_read.len()).collect();
+            indices.par_sort_by_key(|&idx| lines_read[idx].uncalibrated_timestamp());
+            (lines_read, indices)
         };
 
-        // Merge existing and new timestamp indices (both are sorted by timestamp)
-        let merged_by_ts = {
+        // Merge into by_timestamp atomically - hold write lock during merge
+        {
+            profiling::scope!("SourceData::by_timestamp::write");
+            let mut by_ts_guard = self.by_timestamp.write().expect("by_timestamp lock poisoned");
+            
             profiling::scope!("merge_timestamp_indices");
-            let mut merged = Vec::with_capacity(existing_by_ts.len() + new_by_ts.len());
+            let existing_len = by_ts_guard.len();
+            let mut merged = Vec::with_capacity(existing_len + new_by_ts.len());
             let mut i_exist = 0;
             let mut j_new = 0;
-            while i_exist < existing_by_ts.len() && j_new < new_by_ts.len() {
-                let ts_exist = lines[existing_by_ts[i_exist]].uncalibrated_timestamp();
-                let ts_new = lines[new_by_ts[j_new]].uncalibrated_timestamp();
+            
+            while i_exist < existing_len && j_new < new_by_ts.len() {
+                let ts_exist = lines_guard[by_ts_guard[i_exist]].uncalibrated_timestamp();
+                let ts_new = lines_guard[new_by_ts[j_new]].uncalibrated_timestamp();
                 if ts_exist <= ts_new {
-                    merged.push(existing_by_ts[i_exist]);
+                    merged.push(by_ts_guard[i_exist]);
                     i_exist += 1;
                 } else {
                     merged.push(new_by_ts[j_new]);
                     j_new += 1;
                 }
             }
-            drop(lines);
-            merged.extend_from_slice(&existing_by_ts[i_exist..]);
+            
+            // Append remaining elements
+            merged.extend_from_slice(&by_ts_guard[i_exist..]);
             merged.extend_from_slice(&new_by_ts[j_new..]);
-            merged
-        };
-
-        {
-            profiling::scope!("SourceData::by_timestamp::write");
-            *self
-                .by_timestamp
-                .write()
-                .expect("by_timestamp lock poisoned") = merged_by_ts;
+            
+            *by_ts_guard = merged;
         }
+        
+        drop(lines_guard);
         self.bump_version();
     }
 
@@ -605,16 +593,18 @@ impl SourceData {
             }
         }
 
-        // Rebuild timestamp-sorted index
-        let mut indices: Vec<usize> =
-            (0..self.lines.read().expect("lines lock poisoned").len()).collect();
-        let lines = self.lines.read().expect("lines lock poisoned");
-        indices.par_sort_by_key(|&idx| lines[idx].uncalibrated_timestamp());
-        drop(lines);
-        *self
-            .by_timestamp
-            .write()
-            .expect("by_timestamp lock poisoned") = indices;
+        // Rebuild timestamp-sorted index atomically with current lines state
+        {
+            let lines = self.lines.read().expect("lines lock poisoned");
+            let mut indices: Vec<usize> = (0..lines.len()).collect();
+            indices.par_sort_by_key(|&idx| lines[idx].uncalibrated_timestamp());
+            drop(lines);
+            
+            *self
+                .by_timestamp
+                .write()
+                .expect("by_timestamp lock poisoned") = indices;
+        }
 
         self.bump_version();
 
@@ -1061,6 +1051,12 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
 
+        // Collect time offsets to avoid recursive locking in merge
+        let time_offsets: HashMap<u64, i64> = sources
+            .iter()
+            .map(|(&source_id, source)| (source_id, source.get_time_offset_ms()))
+            .collect();
+
         // Parallel filter each source, collect results
         let per_source: Vec<Vec<StoreID>> = {
             profiling::scope!("parallel_filter_sources");
@@ -1091,12 +1087,15 @@ impl LogStore {
                 .collect()
         };
 
+        // Release sources lock before merge
+        drop(sources);
+
         // K-way merge of sorted sources by timestamp
-        self.merge_sorted_sources(per_source)
+        self.merge_sorted_sources(per_source, &time_offsets)
     }
 
     /// K-way merge of pre-sorted `StoreID` vectors by timestamp
-    fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>) -> Vec<StoreID> {
+    fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>, time_offsets: &HashMap<u64, i64>) -> Vec<StoreID> {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
@@ -1112,12 +1111,22 @@ impl LogStore {
         let mut heap: BinaryHeap<Reverse<(chrono::DateTime<Local>, usize, StoreID)>> =
             BinaryHeap::new();
 
+        // Helper to compute adjusted timestamp using the provided offsets
+        let get_adjusted_time = |id: &StoreID, line: &LogLine| -> chrono::DateTime<Local> {
+            let offset_ms = time_offsets.get(&id.source_id).copied().unwrap_or(0);
+            if offset_ms != 0 {
+                line.uncalibrated_timestamp() + chrono::Duration::milliseconds(offset_ms)
+            } else {
+                line.uncalibrated_timestamp()
+            }
+        };
+
         // Initialize heap with first element from each non-empty source
         for (src_idx, iter) in iters.iter_mut().enumerate() {
             if let Some(id) = iter.next() {
                 if let Some(line) = self.get_by_id(&id) {
                     // Apply time offset for accurate merge ordering
-                    let adjusted_time = self.get_adjusted_timestamp(&id, &line);
+                    let adjusted_time = get_adjusted_time(&id, &line);
                     heap.push(Reverse((adjusted_time, src_idx, id)));
                 }
             }
@@ -1131,7 +1140,7 @@ impl LogStore {
             if let Some(next_id) = iters[src_idx].next() {
                 if let Some(line) = self.get_by_id(&next_id) {
                     // Apply time offset for accurate merge ordering
-                    let adjusted_time = self.get_adjusted_timestamp(&next_id, &line);
+                    let adjusted_time = get_adjusted_time(&next_id, &line);
                     heap.push(Reverse((adjusted_time, src_idx, next_id)));
                 }
             }
