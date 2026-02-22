@@ -20,7 +20,7 @@ use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
 use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
-use chrono::Local;
+use chrono::{Datelike, Local};
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -503,6 +503,16 @@ impl SourceData {
         use crate::parser::line::LogLineVariant;
 
         profiling::scope!("SourceData::resync_dlt_time_to_target");
+
+        // Validate target time is within safe range to prevent timestamp overflow
+        const MIN_SAFE_YEAR: i32 = 1700;
+        const MAX_SAFE_YEAR: i32 = 2250;
+        let year = target_time.year();
+        if !(MIN_SAFE_YEAR..=MAX_SAFE_YEAR).contains(&year) {
+            return Err(format!(
+                "Target time year must be between {MIN_SAFE_YEAR}-{MAX_SAFE_YEAR} (got {year})"
+            ));
+        }
 
         // Get the reference line and extract timing info
         let reference_line = {
