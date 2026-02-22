@@ -539,6 +539,7 @@ impl LogTable {
             row.col(|_| {});
             row.col(|_| {});
             row.col(|_| {});
+            row.col(|_| {}); // Score column
             return None;
         };
 
