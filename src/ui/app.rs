@@ -56,7 +56,7 @@ pub struct LogCrabApp {
     pending_dlt_reload: bool,
 
     /// Pending source removal (index of source to remove)
-    pending_source_removal: Option<usize>,
+    pending_source_removal: Option<u64>,
 
     /// Toast notification manager
     toast_manager: ToastManager,
@@ -72,7 +72,8 @@ impl LogCrabApp {
                 if filenames.is_empty() {
                     "LogCrab".to_string()
                 } else {
-                    format!("{} - LogCrab", filenames.join(", "))
+                    let names: Vec<&str> = filenames.iter().map(|(_, name)| name.as_str()).collect();
+                    format!("{} - LogCrab", names.join(", "))
                 }
             },
         );
@@ -297,9 +298,9 @@ impl LogCrabApp {
                 let filenames = session.state.store.get_source_filenames();
                 if !filenames.is_empty() {
                     ui.menu_button("Remove File from session", |ui| {
-                        for (index, filename) in filenames.iter().enumerate() {
-                            if ui.button(filename).clicked() {
-                                self.pending_source_removal = Some(index);
+                        for (source_id, filename) in filenames {
+                            if ui.button(&filename).clicked() {
+                                self.pending_source_removal = Some(source_id);
                                 ui.close();
                             }
                         }
@@ -649,11 +650,11 @@ impl eframe::App for LogCrabApp {
         }
 
         // Process pending source removal
-        if let Some(index) = self.pending_source_removal.take() {
+        if let Some(source_id) = self.pending_source_removal.take() {
             if let Some(ref mut session) = self.session {
                 // Save .crab file before removal to persist any unsaved data
                 session.save_crab_file();
-                session.state.store.remove_source(index);
+                session.state.store.remove_source(source_id);
             }
         }
 

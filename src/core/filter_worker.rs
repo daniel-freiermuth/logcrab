@@ -23,7 +23,7 @@
 //!
 //! The worker is owned by the application and shuts down gracefully when dropped.
 
-use crate::core::log_store::StoreID;
+use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::queue_map::QueueMap;
 use crate::core::LogStore;
 use crate::parser::line::LogLineCore;
@@ -58,7 +58,7 @@ pub struct FilterResult {
     /// Whether case sensitivity was enabled
     pub case_sensitive: bool,
     /// The `LogStore` version these indices were computed for
-    pub store_version: u64,
+    pub store_version: StoreVersion,
 }
 
 /// Handle to send filter requests to the background worker.

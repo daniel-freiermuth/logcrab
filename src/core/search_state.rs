@@ -22,7 +22,7 @@
 //! with background filtering support via the global filter worker.
 
 use crate::core::filter_worker::{FilterRequest, FilterResult, FilterWorkerHandle};
-use crate::core::log_store::StoreID;
+use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::LogStore;
 use fancy_regex::{Error, Regex};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -48,7 +48,7 @@ pub struct SearchState {
     filtered_indices: Arc<Vec<StoreID>>,
 
     /// What we last requested from the worker (optimistic tracking)
-    last_requested_version: u64,
+    last_requested_version: StoreVersion,
     last_requested_text: String,
     last_requested_exclude: String,
     last_requested_case: bool,
@@ -58,7 +58,7 @@ pub struct SearchState {
     indices_computed_for_text: String,
     indices_computed_for_exclude: String,
     indices_computed_for_case: bool,
-    indices_computed_for_version: u64,
+    indices_computed_for_version: StoreVersion,
 
     /// Channel for receiving background filter results
     filter_result_rx: Receiver<FilterResult>,
@@ -83,9 +83,9 @@ impl SearchState {
             indices_computed_for_text: String::new(),
             indices_computed_for_exclude: String::new(),
             indices_computed_for_case: false,
-            indices_computed_for_version: 0,
+            indices_computed_for_version: StoreVersion::default(),
             filtered_indices: Arc::new(Vec::new()),
-            last_requested_version: 0,
+            last_requested_version: StoreVersion::default(),
             filter_result_rx: result_rx,
             filter_result_tx: result_tx,
         }
@@ -174,7 +174,7 @@ impl SearchState {
     }
 
     /// Get the search text that the current filtered indices were computed for.
-    pub fn indices_computed_for(&self) -> (&str, &str, bool, u64) {
+    pub fn indices_computed_for(&self) -> (&str, &str, bool, StoreVersion) {
         (
             &self.indices_computed_for_text,
             &self.indices_computed_for_exclude,

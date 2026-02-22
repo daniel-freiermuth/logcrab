@@ -60,6 +60,7 @@ profiling = { version = "1.0", default-features = false }
 tracy-client = { version = "0.18.4", optional = true }
 tokio = { version = "1.49.0", features = ["sync"] }
 fs2 = "0.4"
+indexmap = { version = "2", features = ["rayon"] }
 
 # Release profile optimizations
 [profile.release]

@@ -21,6 +21,7 @@ use crate::core::{SavedFilter, SavedHighlight};
 use crate::parser::line::{LogLine, LogLineCore};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 use chrono::Local;
+use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -30,9 +31,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, RwLock};
 
+/// Global counter for generating unique source IDs.
+/// Source IDs are stable across the lifetime of a source, even when other sources are removed.
+static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 #[derive(Debug)]
 pub struct SourceData {
+    /// Unique, stable identifier for this source (does not change when other sources are removed)
+    source_id: u64,
     /// Path to the source file
     file_path: PathBuf,
     /// Log lines in file order (index = `line_number` - 1, eternal)
@@ -85,6 +92,7 @@ impl SourceData {
         );
 
         let sd = Self {
+            source_id: SOURCE_ID_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
             file_path,
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
@@ -165,6 +173,11 @@ impl SourceData {
     /// Get the file path for this source
     pub fn file_path(&self) -> &Path {
         &self.file_path
+    }
+
+    /// Get the unique, stable identifier for this source
+    pub const fn source_id(&self) -> u64 {
+        self.source_id
     }
 
     /// Check if this source is a DLT file (based on extension)
@@ -634,9 +647,15 @@ impl SourceData {
 /// Central storage for log lines from one or more sources
 ///
 /// Thread-safe: can be shared across threads with Arc<LogStore>
+/// Uses `IndexMap` for O(1) source lookup by ID while maintaining insertion order.
 #[derive(Debug)]
 pub struct LogStore {
-    sources: RwLock<Vec<Arc<SourceData>>>,
+    /// Sources indexed by their stable `source_id` for O(1) lookup.
+    /// `IndexMap` maintains insertion order for consistent UI display.
+    sources: RwLock<IndexMap<u64, Arc<SourceData>>>,
+    /// Version counter that increments when sources are added or removed.
+    /// This ensures cache invalidation even when line counts happen to sum to the same value.
+    sources_version: AtomicU64,
 }
 
 impl Clone for LogStore {
@@ -644,13 +663,29 @@ impl Clone for LogStore {
         profiling::scope!("LogStore::sources::read");
         Self {
             sources: RwLock::new(self.sources.read().expect("sources lock poisoned").clone()),
+            sources_version: AtomicU64::new(self.sources_version.load(AtomicOrdering::SeqCst)),
         }
     }
 }
 
+/// Version identifier for cache invalidation.
+///
+/// Two-part version ensures no collisions: `sources` tracks structural changes
+/// (add/remove sources), `lines` tracks data changes (lines added/modified).
+/// Equality requires both components to match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct StoreVersion {
+    /// Incremented when sources are added or removed
+    pub sources: u64,
+    /// Sum of per-source versions (incremented when lines are added/modified)
+    pub lines: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StoreID {
-    source_index: usize,
+    /// Stable source identifier (survives source removals)
+    source_id: u64,
+    /// Line index within the source
     line_index: usize,
 }
 
@@ -658,7 +693,7 @@ impl StoreID {
     /// Compare two `StoreIDs` by their line timestamps.
     ///
     /// When both lines exist in the store, compares by timestamp first,
-    /// then by `source_index` and `line_index` for stability.
+    /// then by `source_id` and `line_index` for stability.
     /// When lines are missing (e.g., during file loading), falls back to
     /// structural ordering to maintain a valid total order.
     pub fn cmp(&self, other: &Self, store: &LogStore) -> Ordering {
@@ -672,7 +707,7 @@ impl StoreID {
                 let other_time = store.get_adjusted_timestamp(other, &l2);
                 self_time
                     .cmp(&other_time)
-                    .then_with(|| self.source_index.cmp(&other.source_index))
+                    .then_with(|| self.source_id.cmp(&other.source_id))
                     .then_with(|| self.line_index.cmp(&other.line_index))
             }
             (Some(_), None) => Ordering::Less, // existing lines come first
@@ -686,17 +721,19 @@ impl LogStore {
     /// Create a new empty `LogStore`
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            sources: RwLock::new(Vec::new()),
+            sources: RwLock::new(IndexMap::new()),
+            sources_version: AtomicU64::new(1),
         })
     }
 
-    /// Add a source to the store, returns the `SourceData` for appending lines
+    /// Add a source to the store
     pub fn add_source(self: &Arc<Self>, source_data: &Arc<SourceData>) {
         profiling::scope!("LogStore::sources::write");
         self.sources
             .write()
             .expect("sources lock poisoned")
-            .push(Arc::clone(source_data));
+            .insert(source_data.source_id(), Arc::clone(source_data));
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
     }
 
     /// Check if a file with the given path is already loaded in the store
@@ -704,7 +741,7 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let canonical_path = path.canonicalize().ok();
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.iter().any(|source| {
+        sources.values().any(|source| {
             // Try canonical comparison first, fall back to direct comparison
             if let Some(ref canonical) = canonical_path {
                 if let Ok(source_canonical) = source.file_path.canonicalize() {
@@ -715,16 +752,25 @@ impl LogStore {
         })
     }
 
-    /// Get current version number (bumped whenever data changes)
-    pub fn version(&self) -> u64 {
+    /// Get current version for cache invalidation.
+    ///
+    /// Returns a two-part version:
+    /// - `sources`: incremented when sources are added or removed
+    /// - `lines`: sum of per-source versions (incremented when lines are added/modified)
+    ///
+    /// Comparing the full struct ensures no false cache hits.
+    pub fn version(&self) -> StoreVersion {
         profiling::scope!("LogStore::version");
+        let sources = self.sources_version.load(AtomicOrdering::SeqCst);
         profiling::scope!("LogStore::sources::read");
-        self.sources
+        let lines: u64 = self
+            .sources
             .read()
             .expect("sources lock poisoned")
-            .iter()
+            .values()
             .map(|s| s.version())
-            .sum()
+            .sum();
+        StoreVersion { sources, lines }
     }
 
     /// Get total number of lines across all sources
@@ -733,7 +779,7 @@ impl LogStore {
         self.sources
             .read()
             .expect("sources lock poisoned")
-            .iter()
+            .values()
             .map(|s| s.len())
             .sum()
     }
@@ -742,7 +788,7 @@ impl LogStore {
     pub fn get_source_name(&self, id: &StoreID) -> Option<String> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(id.source_index).map(|source| {
+        sources.get(&id.source_id).map(|source| {
             source
                 .file_path
                 .file_name()
@@ -752,39 +798,38 @@ impl LogStore {
         })
     }
 
-    /// Get all source filenames
-    pub fn get_source_filenames(&self) -> Vec<String> {
+    /// Get all source filenames with their stable source IDs
+    pub fn get_source_filenames(&self) -> Vec<(u64, String)> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         sources
-            .iter()
+            .values()
             .map(|source| {
-                source
+                let source_id = source.source_id();
+                let filename = source
                     .file_path
                     .file_name()
                     .expect("file_path must have a filename component")
                     .to_string_lossy()
-                    .into_owned()
+                    .into_owned();
+                (source_id, filename)
             })
             .collect()
     }
 
-    /// Remove a source by index
+    /// Remove a source by its stable source ID
     ///
-    /// Note: This invalidates any cached `StoreIDs` - callers should refresh their caches.
-    pub fn remove_source(&self, index: usize) -> Option<PathBuf> {
+    /// Note: `StoreID`s referencing the removed source will simply fail to resolve.
+    /// Other `StoreID`s remain valid since they use stable source IDs.
+    pub fn remove_source(&self, source_id: u64) -> Option<PathBuf> {
         profiling::scope!("LogStore::sources::write");
         let mut sources = self.sources.write().expect("sources lock poisoned");
-        if index < sources.len() {
-            let removed = sources.remove(index);
-            let path = removed.file_path().to_path_buf();
-            drop(sources);
-            log::info!("Removed source: {}", path.display());
-            Some(path)
-        } else {
-            drop(sources);
-            None
-        }
+        let removed = sources.swap_remove(&source_id)?;
+        let path = removed.file_path().to_path_buf();
+        drop(sources);
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+        log::info!("Removed source: {}", path.display());
+        Some(path)
     }
 
     /// Check if any DLT sources are still being loaded
@@ -795,7 +840,7 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         sources
-            .iter()
+            .values()
             .filter(|s| s.is_dlt_file())
             .any(|source| Arc::strong_count(source) > 1)
     }
@@ -804,7 +849,7 @@ impl LogStore {
     pub fn cancel_dlt_loading(&self) {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        for source in sources.iter() {
+        for source in sources.values() {
             if source.is_dlt_file() {
                 source.request_cancel();
             }
@@ -845,9 +890,9 @@ impl LogStore {
 
         // Extract DLT sources and their locks
         let mut removed_with_locks = Vec::new();
-        let mut remaining = Vec::new();
+        let mut remaining = IndexMap::new();
 
-        for source in sources.drain(..) {
+        for (source_id, source) in sources.drain(..) {
             if source.is_dlt_file() {
                 let path = source.file_path().to_path_buf();
                 // Try to unwrap the Arc - if there are other references, we can't take the lock
@@ -862,11 +907,11 @@ impl LogStore {
                             arc_source.file_path().display()
                         );
                         // Put it back in remaining sources since we can't reload it
-                        remaining.push(arc_source);
+                        remaining.insert(source_id, arc_source);
                     }
                 }
             } else {
-                remaining.push(source);
+                remaining.insert(source_id, source);
             }
         }
 
@@ -888,7 +933,7 @@ impl LogStore {
     pub fn set_bookmark(&self, id: &StoreID, name: String) {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        if let Some(source) = sources.get(id.source_index) {
+        if let Some(source) = sources.get(&id.source_id) {
             source.set_bookmark(id.line_index, name);
         }
     }
@@ -898,7 +943,7 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         sources
-            .get(id.source_index)
+            .get(&id.source_id)
             .and_then(|s| s.remove_bookmark(id.line_index))
     }
 
@@ -915,7 +960,7 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         let source = sources
-            .get(id.source_index)
+            .get(&id.source_id)
             .ok_or_else(|| "Source not found".to_string())?;
         source.resync_dlt_time_to_target(id.line_index, target_time, ecu_id, app_id)
     }
@@ -931,7 +976,7 @@ impl LogStore {
         let source = {
             let sources = self.sources.read().expect("sources lock poisoned");
             sources
-                .get(id.source_index)
+                .get(&id.source_id)
                 .ok_or_else(|| "Source not found".to_string())?
                 .clone()
         };
@@ -942,7 +987,7 @@ impl LogStore {
     pub fn get_time_offset_ms(&self, id: &StoreID) -> Option<i64> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(id.source_index).map(|s| s.get_time_offset_ms())
+        sources.get(&id.source_id).map(|s| s.get_time_offset_ms())
     }
 
     /// Check if a line has a bookmark
@@ -950,7 +995,7 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         sources
-            .get(id.source_index)
+            .get(&id.source_id)
             .is_some_and(|s| s.has_bookmark(id.line_index))
     }
 
@@ -959,7 +1004,7 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         sources
-            .get(id.source_index)
+            .get(&id.source_id)
             .and_then(|s| s.get_bookmark(id.line_index))
             .map(|b| BookmarkData {
                 store_id: *id,
@@ -973,15 +1018,15 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         sources
-            .iter()
-            .enumerate()
-            .flat_map(|(source_index, source)| {
+            .values()
+            .flat_map(|source| {
+                let source_id = source.source_id();
                 source
                     .get_bookmarks()
                     .into_iter()
                     .map(move |bookmark| BookmarkData {
                         store_id: StoreID {
-                            source_index,
+                            source_id,
                             line_index: bookmark.line_index,
                         },
                         name: bookmark.name,
@@ -995,7 +1040,7 @@ impl LogStore {
         profiling::scope!("LogStore::save_all_crab_files");
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        for source in sources.iter() {
+        for source in sources.values() {
             source.save_crab_file(filters, highlights);
         }
     }
@@ -1020,9 +1065,9 @@ impl LogStore {
         let per_source: Vec<Vec<StoreID>> = {
             profiling::scope!("parallel_filter_sources");
             sources
-                .par_iter()
-                .enumerate()
-                .map(|(s_idx, source)| {
+                .par_values()
+                .map(|source| {
+                    let source_id = source.source_id();
                     let lines = source.lines.read().expect("lines lock poisoned");
                     // Iterate in timestamp order, filter, collect
                     source
@@ -1034,7 +1079,7 @@ impl LogStore {
                             let line = &lines[idx];
                             if predicate(line) {
                                 Some(StoreID {
-                                    source_index: s_idx,
+                                    source_id,
                                     line_index: idx,
                                 })
                             } else {
@@ -1108,7 +1153,7 @@ impl LogStore {
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(id.source_index)?.get_by_id(id.line_index)
+        sources.get(&id.source_id)?.get_by_id(id.line_index)
     }
 }
 

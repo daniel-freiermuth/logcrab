@@ -23,7 +23,7 @@
 //!
 //! The worker is owned by the application and shuts down gracefully when dropped.
 
-use crate::core::log_store::StoreID;
+use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::queue_map::QueueMap;
 use crate::core::LogStore;
 use crate::parser::line::LogLineCore;
@@ -64,7 +64,7 @@ pub struct HistogramRequest {
 /// Cache key for validating histogram results
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HistogramCacheKey {
-    pub store_version: u64,
+    pub store_version: StoreVersion,
     pub search_str: String,
     pub exclude_str: String,
     pub case_sensitive: bool,
