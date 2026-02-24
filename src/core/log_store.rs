@@ -1169,6 +1169,49 @@ impl LogStore {
         }
     }
 
+    /// Find the position of the line closest to a target timestamp in a sorted list.
+    /// Returns the index position within `filtered_indices`.
+    ///
+    /// Assumes `filtered_indices` are sorted by timestamp.
+    pub fn find_closest_line_position_by_time(
+        &self,
+        filtered_indices: &[StoreID],
+        target_time: chrono::DateTime<Local>,
+    ) -> Option<usize> {
+        profiling::scope!("LogStore::find_closest_line_position_by_time");
+        if filtered_indices.is_empty() {
+            return None;
+        }
+
+        // Binary search to find insertion point
+        let idx = filtered_indices.partition_point(|line_idx| {
+            self.get_by_id(line_idx).is_some_and(|line| {
+                self.get_adjusted_timestamp(line_idx, &line) < target_time
+            })
+        });
+
+        // Compare neighbors around the insertion point to find the closest
+        match idx {
+            0 => Some(0),
+            i if i >= filtered_indices.len() => Some(filtered_indices.len() - 1),
+            i => {
+                let before_line = self.get_by_id(&filtered_indices[i - 1])?;
+                let after_line = self.get_by_id(&filtered_indices[i])?;
+                let before_ts = self.get_adjusted_timestamp(&filtered_indices[i - 1], &before_line);
+                let after_ts = self.get_adjusted_timestamp(&filtered_indices[i], &after_line);
+
+                let dist_before = (target_time - before_ts).abs();
+                let dist_after = (after_ts - target_time).abs();
+
+                if dist_before <= dist_after {
+                    Some(i - 1)
+                } else {
+                    Some(i)
+                }
+            }
+        }
+    }
+
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");

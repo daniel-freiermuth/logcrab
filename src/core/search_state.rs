@@ -217,8 +217,13 @@ impl SearchState {
         if indices.is_empty() {
             return None;
         }
-        profiling::scope!("find_min_distance");
-        Some(indices.partition_point(|other| other.cmp(&target, store) == std::cmp::Ordering::Less))
+        
+        // Get target timestamp
+        let target_line = store.get_by_id(&target)?;
+        let target_time = store.get_adjusted_timestamp(&target, &target_line);
+        
+        // Use shared helper to find closest line by timestamp
+        store.find_closest_line_position_by_time(&indices, target_time)
     }
 }
 

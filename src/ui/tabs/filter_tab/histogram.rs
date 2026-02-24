@@ -864,38 +864,8 @@ impl Histogram {
         target_time: DateTime<Local>,
     ) -> Option<StoreID> {
         profiling::scope!("Histogram::find_closest_line_by_time");
-        if filtered_indices.is_empty() {
-            return None;
-        }
-
-        // Binary search to find insertion point
-        // If any line lookup fails (stale indices), just return None
-        let idx = filtered_indices.partition_point(|line_idx| {
-            store.get_by_id(line_idx).is_some_and(|line| {
-                store.get_adjusted_timestamp(line_idx, &line) < target_time
-            })
-        });
-
-        // Compare neighbors around the insertion point to find the closest
-        match idx {
-            0 => Some(filtered_indices[0]),
-            i if i >= filtered_indices.len() => Some(filtered_indices[filtered_indices.len() - 1]),
-            i => {
-                let before_line = store.get_by_id(&filtered_indices[i - 1])?;
-                let after_line = store.get_by_id(&filtered_indices[i])?;
-                let before_ts = store.get_adjusted_timestamp(&filtered_indices[i - 1], &before_line);
-                let after_ts = store.get_adjusted_timestamp(&filtered_indices[i], &after_line);
-
-                let dist_before = (target_time - before_ts).abs();
-                let dist_after = (after_ts - target_time).abs();
-
-                if dist_before <= dist_after {
-                    Some(filtered_indices[i - 1])
-                } else {
-                    Some(filtered_indices[i])
-                }
-            }
-        }
+        let pos = store.find_closest_line_position_by_time(filtered_indices, target_time)?;
+        Some(filtered_indices[pos])
     }
 
     fn render_timeline_labels(
