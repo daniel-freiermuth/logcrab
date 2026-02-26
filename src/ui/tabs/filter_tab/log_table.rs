@@ -211,13 +211,8 @@ impl LogTable {
             };
 
             // Determine if we should show the sync/calibrate option
-            let show_sync_option = if let LogLineVariant::Dlt(ref dlt_line) = line {
-                // For DLT: only show in CalibratedMonotonic mode (when boot_time is set)
-                dlt_line.boot_time.is_some()
-            } else {
-                // For non-DLT files: show calibrate option
-                true
-            };
+            // Always show for all file types (DLT in both StorageTime and CalibratedMonotonic modes)
+            let show_sync_option = true;
 
             if show_sync_option && ui.button("⏱ Calibrate Time Here").clicked() {
                 // Get current timestamp (with any offset applied) and original timestamp
@@ -229,8 +224,8 @@ impl LogTable {
                     original_time
                 };
 
-                // For DLT files, extract storage time and ECU/App IDs
-                // For non-DLT files, use original timestamp (without offset)
+                // For DLT files in CalibratedMonotonic mode, extract storage time and ECU/App IDs
+                // For DLT files in StorageTime mode or non-DLT files, use generic offset mechanism
                 let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(ref dlt_line) = line
                 {
                     let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
@@ -240,19 +235,25 @@ impl LogTable {
                         chrono::Local.timestamp_opt(secs, nsecs).single()
                     });
 
-                    let ecu = dlt_line
-                        .dlt_message
-                        .header
-                        .ecu_id
-                        .as_ref()
-                        .map(std::string::ToString::to_string);
-                    let app = dlt_line
-                        .dlt_message
-                        .extended_header
-                        .as_ref()
-                        .map(|ext| ext.application_id.clone());
-
-                    (stor_time, ecu, app)
+                    // Only pass ECU/App IDs if in CalibratedMonotonic mode (boot_time is set)
+                    // This determines whether to use resync_dlt_time_to_target or set_time_offset_to_target
+                    if dlt_line.boot_time.is_some() {
+                        let ecu = dlt_line
+                            .dlt_message
+                            .header
+                            .ecu_id
+                            .as_ref()
+                            .map(std::string::ToString::to_string);
+                        let app = dlt_line
+                            .dlt_message
+                            .extended_header
+                            .as_ref()
+                            .map(|ext| ext.application_id.clone());
+                        (stor_time, ecu, app)
+                    } else {
+                        // StorageTime mode: use generic offset
+                        (stor_time, None, None)
+                    }
                 } else {
                     // For non-DLT files, use original timestamp (line.timestamp() without offset)
                     (Some(original_time), None, None)
