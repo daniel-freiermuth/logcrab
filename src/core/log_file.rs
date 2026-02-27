@@ -22,13 +22,19 @@ use crate::core::log_store::SourceData;
 use crate::parser::{btsnoop, detect_format, dlt, generic, logcat, pcap, LogFormat};
 use crate::ui::ProgressToastHandle;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
 /// Progress callback type for DLT parsing
 pub type ProgressCallback = Box<dyn Fn(f32, &str) + Send>;
+
+/// Initial chunk size for incremental text file loading
+/// Start small for fast initial feedback, then grow to handle merge overhead
+const TEXT_INITIAL_CHUNK_SIZE: usize = 1 << 13; // 8,192 lines
+const TEXT_MAX_CHUNK_SIZE: usize = 1 << 18; // 262,144 lines
+const TEXT_CHUNKS_BEFORE_GROWTH: usize = 3; // Double chunk size every 3 chunks
 
 /// Packet capture format types
 enum PacketFormat {
@@ -256,40 +262,34 @@ impl LogFileLoader {
         } else if is_pcap_file {
             Self::read_pcap_file(&path, &data_source, &toast)
         } else {
-            // Read file content first to detect format
-            let Some(content) = Self::read_file_content(&path, &toast) else {
+            // Read sample of file to detect format (avoids loading entire file)
+            let Some(sample) = Self::read_file_sample(&path, &toast) else {
                 return;
             };
 
             // Detect format and dispatch to appropriate parser
-            let format = detect_format(&content);
+            let format = detect_format(&sample);
             log::info!("Detected format: {format:?}");
 
             match format {
                 LogFormat::Bugreport { year } => Self::read_bugreport_file(
                     &path,
-                    &content,
                     year,
                     &data_source,
                     &toast,
-                    start_time,
                     file_size,
                 ),
                 LogFormat::Logcat { year } => Self::read_logcat_file(
                     &path,
-                    &content,
                     year,
                     &data_source,
                     &toast,
-                    start_time,
                     file_size,
                 ),
                 LogFormat::Generic => Self::read_generic_file(
                     &path,
-                    &content,
                     &data_source,
                     &toast,
-                    start_time,
                     file_size,
                 ),
             }
@@ -305,9 +305,15 @@ impl LogFileLoader {
         toast.dismiss();
     }
 
-    /// Read file content and handle errors
-    fn read_file_content(path: &Path, toast: &ProgressToastHandle) -> Option<String> {
-        let mut file = match File::open(path) {
+    /// Read first portion of file for format detection
+    /// 
+    /// This reads only the first ~100KB or 1000 lines (whichever comes first)
+    /// to detect the file format without loading the entire file into memory.
+    fn read_file_sample(path: &Path, toast: &ProgressToastHandle) -> Option<String> {
+        const MAX_SAMPLE_BYTES: usize = 100 * 1024; // 100 KB
+        const MAX_SAMPLE_LINES: usize = 1000;
+
+        let file = match File::open(path) {
             Ok(f) => f,
             Err(e) => {
                 log::error!("Cannot open file: {e}");
@@ -316,60 +322,44 @@ impl LogFileLoader {
             }
         };
 
-        let read_start = std::time::Instant::now();
-        let mut buffer = Vec::new();
-        if let Err(e) = file.read_to_end(&mut buffer) {
-            log::error!("Cannot read file content: {e}");
-            toast.set_error(format!("Cannot read file: {e}"));
-            return None;
+        let reader = BufReader::new(file);
+        let mut sample = String::new();
+        let mut lines_read = 0;
+
+        for line_result in reader.lines() {
+            let line = match line_result {
+                Ok(l) => l,
+                Err(e) => {
+                    log::warn!("Error reading sample line: {e}");
+                    break;
+                }
+            };
+
+            sample.push_str(&line);
+            sample.push('\n');
+            lines_read += 1;
+
+            if sample.len() >= MAX_SAMPLE_BYTES || lines_read >= MAX_SAMPLE_LINES {
+                break;
+            }
         }
 
-        let read_duration = read_start.elapsed();
-        log::info!(
-            "File I/O took {:?} to read {} bytes",
-            read_duration,
-            buffer.len()
-        );
-
-        // Convert to UTF-8 with lossy conversion
-        let utf8_start = std::time::Instant::now();
-        let mut content = String::from_utf8_lossy(&buffer).to_string();
-        let content_len = content.len();
-
-        // Check for and remove null bytes
-        let null_count = content.bytes().filter(|&b| b == 0).count();
-        if null_count > 0 {
-            log::warn!("File contains {null_count} null bytes which will be removed");
-            content = content.replace('\0', "");
-        }
-
-        log::info!(
-            "UTF-8 conversion took {:?}, original bytes: {}, UTF-8 bytes: {}, null bytes: {}",
-            utf8_start.elapsed(),
-            buffer.len(),
-            content_len,
-            null_count
-        );
-
-        Some(content)
+        log::debug!("Read {lines_read} lines ({} bytes) for format detection", sample.len());
+        Some(sample)
     }
 
     fn read_bugreport_file(
         path: &Path,
-        content: &str,
         year: i32,
         source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
         log::info!("Parsing as bugreport format with year {year}");
-        Self::parse_text_file(
+        Self::parse_text_file_streaming(
             path,
-            content,
             source,
             toast,
-            start_time,
             file_size,
             |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
         )
@@ -377,20 +367,16 @@ impl LogFileLoader {
 
     fn read_logcat_file(
         path: &Path,
-        content: &str,
         year: i32,
         source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
         log::info!("Parsing as logcat format with year {year}");
-        Self::parse_text_file(
+        Self::parse_text_file_streaming(
             path,
-            content,
             source,
             toast,
-            start_time,
             file_size,
             |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
         )
@@ -398,25 +384,146 @@ impl LogFileLoader {
 
     fn read_generic_file(
         path: &Path,
-        content: &str,
         source: &Arc<SourceData>,
         toast: &ProgressToastHandle,
-        start_time: std::time::Instant,
         file_size: u64,
     ) -> bool {
         log::info!("Parsing as generic format");
-        Self::parse_text_file(
+        Self::parse_text_file_streaming(
             path,
-            content,
             source,
             toast,
-            start_time,
             file_size,
             generic::parse_generic,
         )
     }
 
-    /// Common text file parsing logic used by both logcat and generic parsers
+    /// Streaming text file parser with incremental chunk loading
+    /// 
+    /// This function reads the file line-by-line from disk rather than loading
+    /// the entire content into memory first. It uses exponentially growing chunk
+    /// sizes to balance UI responsiveness with append performance.
+    fn parse_text_file_streaming<F>(
+        path: &Path,
+        source: &Arc<SourceData>,
+        toast: &ProgressToastHandle,
+        file_size: u64,
+        parse_fn: F,
+    ) -> bool
+    where
+        F: Fn(String, usize) -> Option<crate::parser::line::LogLine>,
+    {
+        profiling::scope!("parse_text_file_streaming");
+
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(e) => {
+                log::error!("Cannot open file: {e}");
+                toast.set_error(format!("Cannot open file: {e}"));
+                return false;
+            }
+        };
+
+        let reader = BufReader::new(file);
+        let mut chunk_lines = Vec::new();
+        let mut file_line_number = 0;
+        let mut bytes_read: usize = 0;
+        let mut chunk_count = 0;
+        let mut current_chunk_size = TEXT_INITIAL_CHUNK_SIZE;
+        let parse_start = std::time::Instant::now();
+
+        let file_name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy();
+
+        for line_result in reader.lines() {
+            let line_buffer = match line_result {
+                Ok(line) => line,
+                Err(e) => {
+                    log::warn!("Error reading line {file_line_number}: {e}");
+                    continue;
+                }
+            };
+
+            file_line_number += 1;
+            bytes_read += line_buffer.len() + 1; // +1 for newline
+
+            // Update progress every 500 lines
+            if file_line_number % 500 == 0 {
+                let progress = (bytes_read as f32 / file_size as f32).min(1.0);
+                toast.update(
+                    progress,
+                    format!(
+                        "Loading {}... ({} lines)",
+                        file_name,
+                        source.len() + chunk_lines.len()
+                    ),
+                );
+            }
+
+            // Skip empty lines
+            if line_buffer.trim().is_empty() {
+                continue;
+            }
+
+            // Parse the line
+            let Some(log_line) = parse_fn(line_buffer, file_line_number) else {
+                continue;
+            };
+
+            chunk_lines.push(log_line);
+
+            // Append chunk when it reaches current size
+            if chunk_lines.len() >= current_chunk_size {
+                source.append_lines(std::mem::take(&mut chunk_lines));
+                chunk_count += 1;
+
+                // Grow chunk size exponentially (double every N chunks)
+                if chunk_count % TEXT_CHUNKS_BEFORE_GROWTH == 0
+                    && current_chunk_size < TEXT_MAX_CHUNK_SIZE
+                {
+                    current_chunk_size = (current_chunk_size * 2).min(TEXT_MAX_CHUNK_SIZE);
+                    log::debug!("Increased chunk size to {current_chunk_size} lines");
+                }
+
+                let progress = (bytes_read as f32 / file_size as f32).min(1.0);
+                toast.update(
+                    progress,
+                    format!("Loading {}... ({} lines)", file_name, source.len()),
+                );
+            }
+        }
+
+        // Append any remaining lines
+        if !chunk_lines.is_empty() {
+            source.append_lines(chunk_lines);
+        }
+
+        let parse_duration = parse_start.elapsed();
+        log::info!(
+            "Streaming parse took {:?} to process {} lines from {} ({} chunks)",
+            parse_duration,
+            source.len(),
+            path.display(),
+            chunk_count
+        );
+        log::info!(
+            "Line processing stats: total_file_lines={}, parsed_lines={}, skipped={}",
+            file_line_number,
+            source.len(),
+            file_line_number - source.len()
+        );
+
+        !source.is_empty()
+    }
+
+    /// Legacy text file parser (loads entire file into memory)
+    /// 
+    /// This is kept for compatibility with formats that need the full content
+    /// upfront (e.g., certain special processing cases). New code should prefer
+    /// `parse_text_file_streaming` for better memory efficiency.
+    #[allow(dead_code)]
     fn parse_text_file<F>(
         path: &Path,
         content: &str,
