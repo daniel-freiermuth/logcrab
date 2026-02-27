@@ -36,10 +36,17 @@ const TEXT_INITIAL_CHUNK_SIZE: usize = 1 << 13; // 8,192 lines
 const TEXT_MAX_CHUNK_SIZE: usize = 1 << 18; // 262,144 lines
 const TEXT_CHUNKS_BEFORE_GROWTH: usize = 3; // Double chunk size every 3 chunks
 
-/// Packet capture format types
-enum PacketFormat {
+/// Detected file format - either binary or text-based
+#[derive(Debug, Clone)]
+enum FileFormat {
+    /// DLT binary format (AUTOSAR Diagnostic Log and Trace)
+    Dlt,
+    /// PCAP packet capture format
     Pcap,
+    /// BTSnoop packet capture format
     Btsnoop,
+    /// Text-based log formats (logcat, bugreport, generic)
+    Text(LogFormat),
 }
 
 /// Handles asynchronous loading and processing of log files
@@ -79,30 +86,75 @@ impl LogFileLoader {
         Some(data_source)
     }
 
-    /// Detect packet capture format by reading magic bytes
-    fn detect_packet_format(path: &Path) -> Option<PacketFormat> {
+    /// Detect file format by checking magic bytes (binary formats) or content (text formats).
+    ///
+    /// This function is designed to be easily replaceable with a library-based solution.
+    /// It checks binary formats first (DLT, PCAP, BTSnoop) via magic bytes,
+    /// then falls back to sampling text content for text-based log formats.
+    ///
+    /// Returns `Err` if file cannot be read, `Ok(FileFormat)` otherwise.
+    fn detect_file_format(
+        path: &Path,
+        toast: &ProgressToastHandle,
+    ) -> Result<FileFormat, String> {
+        // First attempt: Check for binary formats via magic bytes
+        if let Some(binary_format) = Self::detect_binary_format(path) {
+            log::info!("Detected binary format: {binary_format:?}");
+            return Ok(binary_format);
+        }
+
+        // Second attempt: Sample file content to detect text-based formats
+        let sample = Self::read_file_sample(path, toast)
+            .ok_or_else(|| "Failed to read file sample".to_string())?;
+
+        let text_format = detect_format(&sample);
+        log::info!("Detected text format: {text_format:?}");
+        Ok(FileFormat::Text(text_format))
+    }
+
+    /// Detect binary file formats by reading magic bytes.
+    ///
+    /// Checks the first 8 bytes of the file for known magic signatures:
+    /// - DLT: "DLT\x01" (0x44 0x4C 0x54 0x01)
+    /// - BTSnoop: "btsnoop\0"
+    /// - PCAP: Various magic bytes for different PCAP variants
+    ///
+    /// Returns `Some(FileFormat)` if a binary format is detected, `None` otherwise.
+    /// This allows graceful fallback to text format detection.
+    fn detect_binary_format(path: &Path) -> Option<FileFormat> {
         use std::io::Read;
 
         let mut file = File::open(path).ok()?;
         let mut magic = [0u8; 8];
-        file.read_exact(&mut magic).ok()?;
 
-        // Check btsnoop magic: "btsnoop\0"
-        if &magic == b"btsnoop\0" {
-            return Some(PacketFormat::Btsnoop);
+        // Read up to 8 bytes for magic detection
+        let bytes_read = file.read(&mut magic).ok()?;
+        if bytes_read < 4 {
+            // File too small to be a binary format we support
+            return None;
         }
 
-        // Check PCAP magic bytes (various formats)
-        match &magic[0..4] {
+        // Match all binary formats by magic bytes
+        match &magic[..] {
+            // DLT: "DLT\x01" (0x44 0x4c 0x54 0x01)
+            [0x44, 0x4c, 0x54, 0x01, ..] if bytes_read >= 4 => Some(FileFormat::Dlt),
+            
+            // BTSnoop: "btsnoop\0" (0x62 0x74 0x73 0x6e 0x6f 0x6f 0x70 0x00)
+            [0x62, 0x74, 0x73, 0x6e, 0x6f, 0x6f, 0x70, 0x00] if bytes_read >= 8 => {
+                Some(FileFormat::Btsnoop)
+            }
+            
+            // PCAP formats (various magic bytes)
             // Legacy pcap (little-endian)
-            [0xd4, 0xc3, 0xb2, 0xa1]
+            [0xd4, 0xc3, 0xb2, 0xa1, ..]
             // Legacy pcap (big-endian)
-            | [0xa1, 0xb2, 0xc3, 0xd4]
+            | [0xa1, 0xb2, 0xc3, 0xd4, ..]
             // Legacy pcap with nanosecond timestamps
-            | [0x4d, 0x3c, 0xb2, 0xa1]
-            | [0xa1, 0xb2, 0x3c, 0x4d]
+            | [0x4d, 0x3c, 0xb2, 0xa1, ..]
+            | [0xa1, 0xb2, 0x3c, 0x4d, ..]
             // pcapng (Section Header Block)
-            | [0x0a, 0x0d, 0x0d, 0x0a] => Some(PacketFormat::Pcap),
+            | [0x0a, 0x0d, 0x0d, 0x0a, ..] if bytes_read >= 4 => Some(FileFormat::Pcap),
+            
             _ => None,
         }
     }
@@ -221,77 +273,31 @@ impl LogFileLoader {
         };
         log::info!("File size: {file_size} bytes");
 
-        // Check if this is a DLT binary file by extension
-        let is_dlt_file = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"));
-
-        // Check if this is a PCAP or BTSnoop file by extension
-        // Note: BTSnoop files sometimes have .pcap extension, so we need magic byte detection
-        let has_pcap_ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| {
-                ext.eq_ignore_ascii_case("pcap") || ext.eq_ignore_ascii_case("pcapng")
-            });
-
-        // Check if this is a BTSnoop file by extension
-        let has_btsnoop_ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("btsnoop"));
-
-        // For files with .pcap extension, check magic bytes to distinguish btsnoop from pcap
-        let (is_pcap_file, is_btsnoop_file) = if has_pcap_ext {
-            // Check magic bytes to determine if it's btsnoop or pcap
-            match Self::detect_packet_format(&path) {
-                Some(PacketFormat::Btsnoop) => (false, true),
-                Some(PacketFormat::Pcap) => (true, false),
-                None => (true, false), // Default to PCAP if detection fails
+        // Detect file format (checks magic bytes for binary formats, then content for text formats)
+        let format = match Self::detect_file_format(&path, &toast) {
+            Ok(fmt) => fmt,
+            Err(e) => {
+                log::error!("Failed to detect file format: {e}");
+                toast.set_error(format!("Failed to detect file format: {e}"));
+                return;
             }
-        } else {
-            (false, has_btsnoop_ext)
         };
 
-        // Load file based on detected format
-        let source_added = if is_dlt_file {
-            Self::read_dlt_file(&path, &data_source, &toast, dlt_timestamp_source)
-        } else if is_btsnoop_file {
-            Self::read_btsnoop_file(&path, &data_source, &toast)
-        } else if is_pcap_file {
-            Self::read_pcap_file(&path, &data_source, &toast)
-        } else {
-            // Read sample of file to detect format (avoids loading entire file)
-            let Some(sample) = Self::read_file_sample(&path, &toast) else {
-                return;
-            };
-
-            // Detect format and dispatch to appropriate parser
-            let format = detect_format(&sample);
-            log::info!("Detected format: {format:?}");
-
-            match format {
-                LogFormat::Bugreport { year } => Self::read_bugreport_file(
-                    &path,
-                    year,
-                    &data_source,
-                    &toast,
-                    file_size,
-                ),
-                LogFormat::Logcat { year } => Self::read_logcat_file(
-                    &path,
-                    year,
-                    &data_source,
-                    &toast,
-                    file_size,
-                ),
-                LogFormat::Generic => Self::read_generic_file(
-                    &path,
-                    &data_source,
-                    &toast,
-                    file_size,
-                ),
+        // Dispatch to appropriate parser based on detected format
+        let source_added = match format {
+            FileFormat::Dlt => {
+                Self::read_dlt_file(&path, &data_source, &toast, dlt_timestamp_source)
+            }
+            FileFormat::Btsnoop => Self::read_btsnoop_file(&path, &data_source, &toast),
+            FileFormat::Pcap => Self::read_pcap_file(&path, &data_source, &toast),
+            FileFormat::Text(LogFormat::Bugreport { year }) => {
+                Self::read_bugreport_file(&path, year, &data_source, &toast, file_size)
+            }
+            FileFormat::Text(LogFormat::Logcat { year }) => {
+                Self::read_logcat_file(&path, year, &data_source, &toast, file_size)
+            }
+            FileFormat::Text(LogFormat::Generic) => {
+                Self::read_generic_file(&path, &data_source, &toast, file_size)
             }
         };
 
