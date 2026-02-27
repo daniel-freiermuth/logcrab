@@ -72,7 +72,8 @@ impl LogCrabApp {
                 if filenames.is_empty() {
                     "LogCrab".to_string()
                 } else {
-                    let names: Vec<&str> = filenames.iter().map(|(_, name)| name.as_str()).collect();
+                    let names: Vec<&str> =
+                        filenames.iter().map(|(_, name)| name.as_str()).collect();
                     format!("{} - LogCrab", names.join(", "))
                 }
             },

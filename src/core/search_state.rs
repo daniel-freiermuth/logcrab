@@ -217,11 +217,11 @@ impl SearchState {
         if indices.is_empty() {
             return None;
         }
-        
+
         // Get target timestamp
         let target_line = store.get_by_id(&target)?;
         let target_time = store.get_adjusted_timestamp(&target, &target_line);
-        
+
         // Use shared helper to find closest line by timestamp
         store.find_closest_line_position_by_time(&indices, target_time)
     }
@@ -281,20 +281,20 @@ mod tests {
         tx.send(FilterResult {
             filtered_indices: Arc::new(vec![]),
             search_text: "first".to_string(),
-            exclude_text: "".to_string(),
+            exclude_text: String::new(),
             case_sensitive: false,
             store_version: StoreVersion::default(),
         })
-        .unwrap();
+        .expect("Failed to send FilterResult for 'first'");
 
         tx.send(FilterResult {
             filtered_indices: Arc::new(vec![]),
             search_text: "second".to_string(),
-            exclude_text: "".to_string(),
+            exclude_text: String::new(),
             case_sensitive: false,
             store_version: StoreVersion::default(),
         })
-        .unwrap();
+        .expect("Failed to send FilterResult for 'second'");
 
         // Should drain channel and return true only once
         assert!(state.check_filter_results());

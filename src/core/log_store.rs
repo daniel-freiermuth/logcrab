@@ -391,7 +391,7 @@ impl SourceData {
         }
 
         profiling::scope!("SourceData::append_lines");
-        
+
         // Append lines and capture the range of new indices atomically
         let new_start_idx = {
             profiling::scope!("SourceData::lines::write");
@@ -419,14 +419,17 @@ impl SourceData {
         // Merge into by_timestamp atomically - hold write lock during merge
         {
             profiling::scope!("SourceData::by_timestamp::write");
-            let mut by_ts_guard = self.by_timestamp.write().expect("by_timestamp lock poisoned");
-            
+            let mut by_ts_guard = self
+                .by_timestamp
+                .write()
+                .expect("by_timestamp lock poisoned");
+
             profiling::scope!("merge_timestamp_indices");
             let existing_len = by_ts_guard.len();
             let mut merged = Vec::with_capacity(existing_len + new_by_ts.len());
             let mut i_exist = 0;
             let mut j_new = 0;
-            
+
             while i_exist < existing_len && j_new < new_by_ts.len() {
                 let ts_exist = lines_guard[by_ts_guard[i_exist]].uncalibrated_timestamp();
                 let ts_new = lines_guard[new_by_ts[j_new]].uncalibrated_timestamp();
@@ -438,14 +441,14 @@ impl SourceData {
                     j_new += 1;
                 }
             }
-            
+
             // Append remaining elements
             merged.extend_from_slice(&by_ts_guard[i_exist..]);
             merged.extend_from_slice(&new_by_ts[j_new..]);
-            
+
             *by_ts_guard = merged;
         }
-        
+
         drop(lines_guard);
         self.bump_version();
     }
@@ -502,11 +505,13 @@ impl SourceData {
     ) -> Result<(), String> {
         use crate::parser::line::LogLineVariant;
 
+        /// Minimum and maximum safe year for DLT timestamp calibration
+        const MIN_SAFE_YEAR: i32 = 1700;
+        const MAX_SAFE_YEAR: i32 = 2250;
+
         profiling::scope!("SourceData::resync_dlt_time_to_target");
 
         // Validate target time is within safe range to prevent timestamp overflow
-        const MIN_SAFE_YEAR: i32 = 1700;
-        const MAX_SAFE_YEAR: i32 = 2250;
         let year = target_time.year();
         if !(MIN_SAFE_YEAR..=MAX_SAFE_YEAR).contains(&year) {
             return Err(format!(
@@ -609,7 +614,7 @@ impl SourceData {
             let mut indices: Vec<usize> = (0..lines.len()).collect();
             indices.par_sort_by_key(|&idx| lines[idx].uncalibrated_timestamp());
             drop(lines);
-            
+
             *self
                 .by_timestamp
                 .write()
@@ -1105,7 +1110,11 @@ impl LogStore {
     }
 
     /// K-way merge of pre-sorted `StoreID` vectors by timestamp
-    fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>, time_offsets: &HashMap<u64, i64>) -> Vec<StoreID> {
+    fn merge_sorted_sources(
+        &self,
+        sources: Vec<Vec<StoreID>>,
+        time_offsets: &HashMap<u64, i64>,
+    ) -> Vec<StoreID> {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
@@ -1185,9 +1194,8 @@ impl LogStore {
 
         // Binary search to find insertion point
         let idx = filtered_indices.partition_point(|line_idx| {
-            self.get_by_id(line_idx).is_some_and(|line| {
-                self.get_adjusted_timestamp(line_idx, &line) < target_time
-            })
+            self.get_by_id(line_idx)
+                .is_some_and(|line| self.get_adjusted_timestamp(line_idx, &line) < target_time)
         });
 
         // Compare neighbors around the insertion point to find the closest

@@ -43,7 +43,7 @@ enum FileFormat {
     Dlt,
     /// PCAP packet capture format
     Pcap,
-    /// BTSnoop packet capture format
+    /// `BTSnoop` packet capture format
     Btsnoop,
     /// Text-based log formats (logcat, bugreport, generic)
     Text(LogFormat),
@@ -89,14 +89,11 @@ impl LogFileLoader {
     /// Detect file format by checking magic bytes (binary formats) or content (text formats).
     ///
     /// This function is designed to be easily replaceable with a library-based solution.
-    /// It checks binary formats first (DLT, PCAP, BTSnoop) via magic bytes,
+    /// It checks binary formats first (DLT, PCAP, `BTSnoop`) via magic bytes,
     /// then falls back to sampling text content for text-based log formats.
     ///
     /// Returns `Err` if file cannot be read, `Ok(FileFormat)` otherwise.
-    fn detect_file_format(
-        path: &Path,
-        toast: &ProgressToastHandle,
-    ) -> Result<FileFormat, String> {
+    fn detect_file_format(path: &Path, toast: &ProgressToastHandle) -> Result<FileFormat, String> {
         // First attempt: Check for binary formats via magic bytes
         if let Some(binary_format) = Self::detect_binary_format(path) {
             log::info!("Detected binary format: {binary_format:?}");
@@ -116,7 +113,7 @@ impl LogFileLoader {
     ///
     /// Checks the first 8 bytes of the file for known magic signatures:
     /// - DLT: "DLT\x01" (0x44 0x4C 0x54 0x01)
-    /// - BTSnoop: "btsnoop\0"
+    /// - `BTSnoop`: "btsnoop\0"
     /// - PCAP: Various magic bytes for different PCAP variants
     ///
     /// Returns `Some(FileFormat)` if a binary format is detected, `None` otherwise.
@@ -138,12 +135,12 @@ impl LogFileLoader {
         match &magic[..] {
             // DLT: "DLT\x01" (0x44 0x4c 0x54 0x01)
             [0x44, 0x4c, 0x54, 0x01, ..] if bytes_read >= 4 => Some(FileFormat::Dlt),
-            
+
             // BTSnoop: "btsnoop\0" (0x62 0x74 0x73 0x6e 0x6f 0x6f 0x70 0x00)
             [0x62, 0x74, 0x73, 0x6e, 0x6f, 0x6f, 0x70, 0x00] if bytes_read >= 8 => {
                 Some(FileFormat::Btsnoop)
             }
-            
+
             // PCAP formats (various magic bytes)
             // Legacy pcap (little-endian)
             [0xd4, 0xc3, 0xb2, 0xa1, ..]
@@ -154,7 +151,7 @@ impl LogFileLoader {
             | [0xa1, 0xb2, 0x3c, 0x4d, ..]
             // pcapng (Section Header Block)
             | [0x0a, 0x0d, 0x0d, 0x0a, ..] if bytes_read >= 4 => Some(FileFormat::Pcap),
-            
+
             _ => None,
         }
     }
@@ -312,7 +309,7 @@ impl LogFileLoader {
     }
 
     /// Read first portion of file for format detection
-    /// 
+    ///
     /// This reads only the first ~100KB or 1000 lines (whichever comes first)
     /// to detect the file format without loading the entire file into memory.
     fn read_file_sample(path: &Path, toast: &ProgressToastHandle) -> Option<String> {
@@ -350,7 +347,10 @@ impl LogFileLoader {
             }
         }
 
-        log::debug!("Read {lines_read} lines ({} bytes) for format detection", sample.len());
+        log::debug!(
+            "Read {lines_read} lines ({} bytes) for format detection",
+            sample.len()
+        );
         Some(sample)
     }
 
@@ -362,13 +362,9 @@ impl LogFileLoader {
         file_size: u64,
     ) -> bool {
         log::info!("Parsing as bugreport format with year {year}");
-        Self::parse_text_file_streaming(
-            path,
-            source,
-            toast,
-            file_size,
-            |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
-        )
+        Self::parse_text_file_streaming(path, source, toast, file_size, |raw, line_number| {
+            logcat::parse_logcat_with_year(raw, line_number, year)
+        })
     }
 
     fn read_logcat_file(
@@ -379,13 +375,9 @@ impl LogFileLoader {
         file_size: u64,
     ) -> bool {
         log::info!("Parsing as logcat format with year {year}");
-        Self::parse_text_file_streaming(
-            path,
-            source,
-            toast,
-            file_size,
-            |raw, line_number| logcat::parse_logcat_with_year(raw, line_number, year),
-        )
+        Self::parse_text_file_streaming(path, source, toast, file_size, |raw, line_number| {
+            logcat::parse_logcat_with_year(raw, line_number, year)
+        })
     }
 
     fn read_generic_file(
@@ -395,17 +387,11 @@ impl LogFileLoader {
         file_size: u64,
     ) -> bool {
         log::info!("Parsing as generic format");
-        Self::parse_text_file_streaming(
-            path,
-            source,
-            toast,
-            file_size,
-            generic::parse_generic,
-        )
+        Self::parse_text_file_streaming(path, source, toast, file_size, generic::parse_generic)
     }
 
     /// Streaming text file parser with incremental chunk loading
-    /// 
+    ///
     /// This function reads the file line-by-line from disk rather than loading
     /// the entire content into memory first. It uses exponentially growing chunk
     /// sizes to balance UI responsiveness with append performance.
@@ -525,7 +511,7 @@ impl LogFileLoader {
     }
 
     /// Legacy text file parser (loads entire file into memory)
-    /// 
+    ///
     /// This is kept for compatibility with formats that need the full content
     /// upfront (e.g., certain special processing cases). New code should prefer
     /// `parse_text_file_streaming` for better memory efficiency.

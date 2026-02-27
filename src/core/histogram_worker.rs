@@ -268,17 +268,16 @@ impl HistogramWorker {
     ) -> Option<(DateTime<Local>, DateTime<Local>)> {
         profiling::scope!("Histogram::calculate_time_range");
         // Use adjusted timestamps (with per-source offsets) for accurate time range
-        let first_ts = filtered_indices
-            .iter()
-            .find_map(|idx| {
-                store.get_by_id(idx).map(|line| store.get_adjusted_timestamp(idx, &line))
-            });
-        let last_ts = filtered_indices
-            .iter()
-            .rev()
-            .find_map(|idx| {
-                store.get_by_id(idx).map(|line| store.get_adjusted_timestamp(idx, &line))
-            });
+        let first_ts = filtered_indices.iter().find_map(|idx| {
+            store
+                .get_by_id(idx)
+                .map(|line| store.get_adjusted_timestamp(idx, &line))
+        });
+        let last_ts = filtered_indices.iter().rev().find_map(|idx| {
+            store
+                .get_by_id(idx)
+                .map(|line| store.get_adjusted_timestamp(idx, &line))
+        });
 
         match (first_ts, last_ts) {
             (Some(start), Some(end)) => Some((start, end)),
