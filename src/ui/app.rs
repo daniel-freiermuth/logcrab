@@ -436,16 +436,17 @@ impl LogCrabApp {
                 changed |= ui
                     .selectable_value(
                         &mut self.global_config.dlt_timestamp_source,
-                        crate::config::DltTimestampSource::CalibratedMonotonic,
-                        "Calibrated Monotonic (more precise)",
+                        crate::config::DltTimestampSource::StorageTime,
+                        "Storage Timestamp",
                     )
                     .changed();
                 changed |= ui
                     .selectable_value(
                         &mut self.global_config.dlt_timestamp_source,
-                        crate::config::DltTimestampSource::StorageTime,
-                        "Storage Time (less precise)",
+                        crate::config::DltTimestampSource::CalibratedMonotonic,
+                        "Derive From Monotonic",
                     )
+                    .on_hover_text("More precise in limited timespans")
                     .changed();
             });
             if changed {

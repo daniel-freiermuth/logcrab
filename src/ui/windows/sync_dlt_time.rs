@@ -46,7 +46,7 @@ impl SyncDltTimeWindow {
             .show(ui.ctx(), |ui| {
                 // Show both current/calculated and original/storage times with buttons
                 let (current_label, original_label) = if self.is_dlt {
-                    ("Calculated time:", "Storage time:")
+                    ("Derived from monotonic:", "Storage timestamp:")
                 } else {
                     ("Current time:", "Original time:")
                 };

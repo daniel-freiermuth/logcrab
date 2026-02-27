@@ -25,10 +25,10 @@ use std::path::PathBuf;
 /// DLT timestamp source configuration
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DltTimestampSource {
-    /// Use storage header timestamp (wall-clock time, less precise)
-    StorageTime,
-    /// Use calibrated monotonic clock (boot time + header timestamp, more precise)
+    /// Use storage header timestamp (wall-clock time)
     #[default]
+    StorageTime,
+    /// Use calibrated monotonic clock (boot time + header timestamp, more precise in limited timespans)
     CalibratedMonotonic,
 }
 
