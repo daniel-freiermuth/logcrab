@@ -35,6 +35,8 @@ pub enum FilterInternalEvent {
     FavoriteToggled,
     /// Convert this filter to a highlight
     ConvertToHighlight,
+    /// Export filtered results to file
+    ExportFiltered,
 }
 
 /// Reusable filter search bar component with internal state for inline editing
@@ -100,6 +102,15 @@ impl FilterBar {
             Self::render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
+
+            // Export button for filtered results
+            if ui
+                .button("Export…")
+                .on_hover_text("Export filtered results to file")
+                .clicked()
+            {
+                events.push(FilterInternalEvent::ExportFiltered);
+            }
         });
 
         events

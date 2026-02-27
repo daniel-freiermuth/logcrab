@@ -141,6 +141,22 @@ impl FilterView {
                 FilterInternalEvent::ConvertToHighlight => {
                     events.push(FilterViewEvent::ConvertToHighlight);
                 }
+                FilterInternalEvent::ExportFiltered => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Export Filtered Results")
+                        .add_filter("Text", &["txt"])
+                        .set_file_name("filtered_results.txt")
+                        .save_file()
+                    {
+                        if let Err(e) =
+                            export_filtered_results(&self.state, &log_view_state.store, &path)
+                        {
+                            log::error!("Failed to export filtered results: {e}");
+                        } else {
+                            log::info!("Filtered results exported to {}", path.display());
+                        }
+                    }
+                }
             }
         }
 
@@ -662,3 +678,6 @@ impl LogCrabTab for FilterView {
         Some(self.state.get_id())
     }
 }
+
+mod export;
+use export::export_filtered_results;
