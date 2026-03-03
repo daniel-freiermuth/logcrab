@@ -55,9 +55,10 @@ pub struct GlobalConfig {
     #[serde(default)]
     pub last_filters_directory: Option<PathBuf>,
 
-    /// DLT timestamp source (storage time or calibrated monotonic clock)
+    /// Per-format file type configuration (e.g. DLT timestamp source).
+    /// Serialized to the global config file so settings persist across sessions.
     #[serde(default)]
-    pub dlt_timestamp_source: DltTimestampSource,
+    pub file_config: crate::core::log_store::GlobalFileConfig,
 
     /// Show bookmarks as markers in the timeline/histogram (default: false)
     #[serde(default)]

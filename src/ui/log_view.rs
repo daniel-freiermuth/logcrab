@@ -51,11 +51,9 @@ pub struct CrabSession {
     /// Shared state passed to all tabs
     pub state: SessionState,
 
-    /// Global configuration (needed for DLT timestamp source)
-    global_config: Arc<GlobalConfig>,
-
     /// Pending tab add request (set by add button callback)
     pending_tab_add: Option<PendingTabAdd>,
+
 }
 
 impl CrabSession {
@@ -63,14 +61,12 @@ impl CrabSession {
         store: Arc<LogStore>,
         filter_worker: crate::core::FilterWorkerHandle,
         histogram_worker: HistogramWorkerHandle,
-        global_config: Arc<GlobalConfig>,
     ) -> Self {
         let mut cs = Self {
             dock_state: DockState::new(Vec::new()),
             monotonic_filter_counter: 0,
             pending_tab_add: None,
             state: SessionState::new(store, filter_worker, histogram_worker),
-            global_config,
         };
         cs.add_filter_view(false, None);
 
@@ -108,7 +104,12 @@ impl CrabSession {
     ///
     /// Loads the file asynchronously and adds it as an additional source to the store.
     /// Skips files that are already loaded.
-    pub fn add_file(&mut self, path: PathBuf, toast: &ProgressToastHandle) {
+    pub fn add_file(
+        &mut self,
+        path: PathBuf,
+        toast: &ProgressToastHandle,
+        file_config: &crate::core::log_store::GlobalFileConfig,
+    ) {
         // Check if the file is already loaded
         if self.state.store.contains_file(&path) {
             log::info!("Skipping already loaded file: {}", path.display());
@@ -118,97 +119,23 @@ impl CrabSession {
 
         log::info!("Adding file to session: {}", path.display());
 
-        let Some(source) = LogFileLoader::load_async(
+        let Some(variant) = LogFileLoader::load_file(
             path,
             toast.clone(),
-            self.global_config.dlt_timestamp_source,
             None,
+            file_config,
         ) else {
             toast.set_error("File is already open in another LogCrab instance".to_string());
             toast.dismiss();
             return;
         };
-        let (filters, highlights) = source.load_saved_filters_and_highlights();
-        self.state.store.add_source(&source);
+        let (filters, highlights) = variant.load_saved_filters_and_highlights();
+        self.state.store.add_source(variant);
         for saved_filter in &filters {
             self.add_filter_if_not_exists(saved_filter);
         }
         for saved_highlight in &highlights {
             self.add_highlight_if_not_exists(saved_highlight);
-        }
-    }
-
-    /// Reload all DLT files with a new timestamp source setting
-    ///
-    /// This removes all DLT sources from the store and re-loads them
-    /// with the new timestamp source setting. The bookmarks are preserved
-    /// in the .crab files.
-    pub fn reload_dlt_files(
-        &self,
-        dlt_timestamp_source: crate::config::DltTimestampSource,
-        toast_manager: &crate::ui::toasts::ToastManager,
-    ) {
-        // First save .crab files to persist any unsaved bookmarks
-        self.save_crab_file();
-
-        // If any DLT files are still loading, request cancellation and wait for them to stop
-        if self.state.store.has_loading_dlt_sources() {
-            log::info!("DLT files are still loading, requesting cancellation...");
-
-            // Request cancellation of all DLT loading operations
-            self.state.store.cancel_dlt_loading();
-
-            let wait_toast = toast_manager.create_progress_toast(
-                "Stopping Background Tasks",
-                "Cancelling scoring and waiting for completion...",
-            );
-
-            // Wait up to 5 seconds for cancellation to complete
-            if !self.state.store.wait_for_dlt_loading(5) {
-                log::error!("Timeout waiting for DLT loading cancellation");
-                wait_toast.set_error("Timeout cancelling background tasks".to_string());
-                return;
-            }
-
-            wait_toast.dismiss();
-            log::info!("Background tasks cancelled, proceeding with reload");
-        }
-
-        // Remove all DLT sources and get their paths with locks
-        let dlt_sources_with_locks = self.state.store.remove_dlt_sources();
-
-        if dlt_sources_with_locks.is_empty() {
-            log::info!("No DLT files to reload");
-            return;
-        }
-
-        log::info!(
-            "Reloading {} DLT files with new timestamp source",
-            dlt_sources_with_locks.len()
-        );
-
-        // Re-add each DLT file with its existing lock to avoid race conditions
-        for (path, lock_file, lock_path) in dlt_sources_with_locks {
-            let toast = toast_manager.create_progress_toast(
-                format!(
-                    "Reloading {}",
-                    path.file_name().unwrap_or_default().to_string_lossy()
-                ),
-                "Starting...",
-            );
-            // Directly load and add the file with the existing lock
-            if let Some(source) = LogFileLoader::load_async(
-                path.clone(),
-                toast.clone(),
-                dlt_timestamp_source,
-                Some((lock_file, lock_path)),
-            ) {
-                self.state.store.add_source(&source);
-            } else {
-                log::error!("Failed to reload DLT file: {}", path.display());
-                toast.set_error("Failed to reload file".to_string());
-                toast.dismiss();
-            }
         }
     }
 
@@ -421,6 +348,11 @@ impl CrabSession {
                         .push_to_focused_leaf(Box::new(BookmarksView::default()));
                 }
             }
+        }
+
+        // Drive any open calibration windows for all sources (one per source per frame).
+        if self.state.store.render_file_states(ui) {
+            self.state.modified = true;
         }
 
         // Handle highlight-to-filter conversion

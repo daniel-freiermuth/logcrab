@@ -18,7 +18,8 @@
 
 use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
-use crate::parser::line::{LogLine, LogLineCore};
+use crate::filetype::LineType;
+use crate::parser::line::{LogLine, LogLineCore, LogLineVariant};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 use chrono::{Datelike, Local};
 use indexmap::IndexMap;
@@ -37,19 +38,26 @@ static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 #[derive(Debug)]
-pub struct SourceData {
+pub struct SourceData<FT>
+where
+    FT: InputFileType,
+{
     /// Unique, stable identifier for this source (does not change when other sources are removed)
     source_id: u64,
     /// Path to the source file
     file_path: PathBuf,
     /// Log lines in file order (index = `line_number` - 1, eternal)
-    lines: RwLock<Vec<LogLine>>,
+    lines: RwLock<Vec<FT::LineType>>,
     /// Indices into `lines`, sorted by timestamp for time-ordered iteration
     by_timestamp: RwLock<Vec<usize>>,
+    /// File type config — shared across all sources of this type (e.g. DLT timestamp source setting).
+    /// Wrapped in `Arc<RwLock>` so a single instance is shared and can be mutated from the UI.
+    pub config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
+    /// Per-source file state — user-visible state specific to this file (e.g. time offsets, calibration).
+    /// Wrapped in `RwLock` for interior mutability without duplication.
+    pub file_state: RwLock<<FT::LineType as LineType>::FileState>,
     /// Bookmarks for this source, keyed by line index within this source
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
-    /// Time offset in milliseconds (for non-DLT file synchronization)
-    time_offset_ms: RwLock<i64>,
     /// Locked .crab file handle and path to prevent multiple instances from opening the same session.
     /// The OS-level file lock (via fs2) is held for the lifetime of this `SourceData`,
     /// providing exclusive access. The Mutex allows interior mutability for reads/writes.
@@ -60,14 +68,21 @@ pub struct SourceData {
     cancel_requested: AtomicBool,
 }
 
-impl SourceData {
-    /// Create a `SourceData` for a file source
+impl<FT: InputFileType> SourceData<FT>
+where
+    FT::LineType: Clone,
+{
+    /// Create a `SourceData` for a file source.
     ///
-    /// Acquires an exclusive lock on the .crab session file to prevent
-    /// multiple instances from opening the same file simultaneously.
+    /// `config` is a shared `Arc<RwLock<T::Config>>` whose lifetime should span the
+    /// whole session. All sources of the same type share the same `Arc` instance so
+    /// that a single config mutation propagates to every open file of that type.
+    ///
+    /// Acquires an exclusive lock on the `.crab` session file to prevent multiple
+    /// instances from opening the same file simultaneously.
     ///
     /// Returns `None` if the lock cannot be acquired (file already open in another instance).
-    pub fn new(file_path: PathBuf) -> Option<Self> {
+    pub fn new(file_path: PathBuf, config: Arc<RwLock<<FT::LineType as LineType>::Config>>) -> Option<Self> {
         assert!(
             file_path.file_name().is_some(),
             "file_path must have a filename component: {}",
@@ -76,15 +91,22 @@ impl SourceData {
 
         let crab_path = Self::compute_crab_path(&file_path);
         let crab_lock = Self::acquire_crab_lock(&crab_path)?;
-        Some(Self::new_with_lock(file_path, crab_lock, crab_path))
+        Some(Self::new_with_lock(file_path, crab_lock, crab_path, config))
     }
 
-    /// Create a `SourceData` with an existing .crab file lock
+    /// Create a `SourceData` with an existing `.crab` file lock.
     ///
-    /// This is useful when reloading files - we can pass the lock from the old
-    /// `SourceData` to the new one, avoiding the race condition where the OS hasn't
-    /// released the lock yet.
-    pub fn new_with_lock(file_path: PathBuf, crab_lock: File, crab_path: PathBuf) -> Self {
+    /// `config` is the shared `Arc<RwLock<T::Config>>` for this file type — see
+    /// [`Self::new`] for ownership semantics.
+    ///
+    /// Passing the lock from the old `SourceData` avoids the race condition where the
+    /// OS hasn't released the lock before the new source tries to acquire it.
+    pub fn new_with_lock(
+        file_path: PathBuf,
+        crab_lock: File,
+        crab_path: PathBuf,
+        config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
+    ) -> Self {
         assert!(
             file_path.file_name().is_some(),
             "file_path must have a filename component: {}",
@@ -96,8 +118,9 @@ impl SourceData {
             file_path,
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
+            config,
+            file_state: RwLock::new(Default::default()),
             bookmarks: RwLock::new(HashMap::new()),
-            time_offset_ms: RwLock::new(0),
             crab_lock: Mutex::new((crab_lock, crab_path)),
             version: AtomicU64::new(1),
             cancel_requested: AtomicBool::new(false),
@@ -180,31 +203,6 @@ impl SourceData {
         self.source_id
     }
 
-    /// Check if this source is a DLT file (based on extension)
-    pub fn is_dlt_file(&self) -> bool {
-        self.file_path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("dlt"))
-    }
-
-    /// Extract the .crab file lock from this source
-    ///
-    /// This is used when reloading files to transfer the lock to the new `SourceData`,
-    /// avoiding the race condition where the OS hasn't released the lock yet.
-    ///
-    /// Returns (`File`, `PathBuf`) representing the locked file handle and its path.
-    pub fn take_crab_lock(self) -> (File, PathBuf) {
-        self.crab_lock
-            .into_inner()
-            .expect("crab_lock mutex poisoned")
-    }
-
-    /// Request cancellation of background loading/scoring operations
-    pub fn request_cancel(&self) {
-        self.cancel_requested.store(true, AtomicOrdering::SeqCst);
-    }
-
     /// Check if cancellation has been requested
     pub fn is_cancelled(&self) -> bool {
         self.cancel_requested.load(AtomicOrdering::SeqCst)
@@ -266,7 +264,7 @@ impl SourceData {
     /// Load bookmarks from this source's .crab file
     fn load_bookmarks(&self) {
         let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
-        match CrabFile::load_from_file(file) {
+        match CrabFile::<FT>::load_from_file(file) {
             Ok(crab_data) => {
                 log::info!(
                     "Loaded {} bookmarks from {}",
@@ -281,14 +279,10 @@ impl SourceData {
                     }
                 }
 
-                // Load time offset
                 *self
-                    .time_offset_ms
+                    .file_state
                     .write()
-                    .expect("time_offset_ms lock poisoned") = crab_data.time_offset_ms;
-                if crab_data.time_offset_ms != 0 {
-                    log::info!("Loaded time offset: {} ms", crab_data.time_offset_ms);
-                }
+                    .expect("file_state lock poisoned") = crab_data.file_state;
             }
             Err(crate::core::SessionError::Io(ref e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
@@ -307,15 +301,12 @@ impl SourceData {
     /// Save bookmarks to this source's .crab file
     /// Note: filters and highlights are passed in since they're shared across sources
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
-        let crab_data = CrabFile {
+        let crab_data = CrabFile::<FT> {
             version: CRAB_FILE_VERSION,
             bookmarks: self.get_bookmarks(),
             filters: filters.to_vec(),
             highlights: highlights.to_vec(),
-            time_offset_ms: *self
-                .time_offset_ms
-                .read()
-                .expect("time_offset_ms lock poisoned"),
+            file_state: self.file_state.read().expect("file_state lock poisoned").clone(),
         };
 
         // Use the locked file handle for writing to avoid conflicts
@@ -359,7 +350,7 @@ impl SourceData {
             .expect("lines lock poisoned")
             .get(reference_line_index)
             .ok_or_else(|| "Reference line not found".to_string())?
-            .uncalibrated_timestamp();
+            .timestamp(&self.config.read().unwrap(), &self.file_state.read().unwrap());
 
         // Calculate offset: target_time - original_time
         let offset_ms = target_time.timestamp_millis() - original_time.timestamp_millis();
@@ -385,12 +376,15 @@ impl SourceData {
     ///
     /// Lines are stored in file order (append-only). Only the timestamp index
     /// needs to be rebuilt. Heavy work is done outside the write lock.
-    pub fn append_lines(&self, lines: Vec<LogLine>) {
+    pub fn append_lines(&self, lines: Vec<FT::LineType>) {
         if lines.is_empty() {
             return;
         }
 
         profiling::scope!("SourceData::append_lines");
+
+        let config = self.config.read().unwrap();
+        let file_state = self.file_state.read().unwrap();
 
         // Append lines and capture the range of new indices atomically
         let new_start_idx = {
@@ -412,7 +406,7 @@ impl SourceData {
             let lines_read = self.lines.read().expect("lines lock poisoned");
             profiling::scope!("sort_new_indices");
             let mut indices: Vec<usize> = (new_start_idx..lines_read.len()).collect();
-            indices.par_sort_by_key(|&idx| lines_read[idx].uncalibrated_timestamp());
+            indices.par_sort_by_key(|&idx| lines_read[idx].timestamp(&*config, &*file_state));
             (lines_read, indices)
         };
 
@@ -431,8 +425,8 @@ impl SourceData {
             let mut j_new = 0;
 
             while i_exist < existing_len && j_new < new_by_ts.len() {
-                let ts_exist = lines_guard[by_ts_guard[i_exist]].uncalibrated_timestamp();
-                let ts_new = lines_guard[new_by_ts[j_new]].uncalibrated_timestamp();
+                let ts_exist = lines_guard[by_ts_guard[i_exist]].timestamp(&*config, &*file_state);
+                let ts_new = lines_guard[new_by_ts[j_new]].timestamp(&*config, &*file_state);
                 if ts_exist <= ts_new {
                     merged.push(by_ts_guard[i_exist]);
                     i_exist += 1;
@@ -482,154 +476,74 @@ impl SourceData {
 
     /// Get a clone of all lines for iteration
     /// This clones the entire Vec - use sparingly (e.g., one-time scoring)
-    pub fn clone_lines(&self) -> Vec<LogLine> {
+    pub fn clone_lines(&self) -> Vec<FT::LineType> {
         profiling::scope!("SourceData::clone_lines");
         self.lines.read().expect("lines lock poisoned").clone()
     }
 
-    pub fn get_by_id(&self, id: usize) -> Option<LogLine> {
+    pub fn get_by_id(&self, id: usize) -> Option<FT::LineType> {
         profiling::scope!("SourceData::lines::read");
         let guard = self.lines.read().expect("lines lock poisoned");
         guard.get(id).cloned()
     }
 
-    /// Resynchronize DLT timestamps to a custom target time (per file, per ECU, per App)
-    /// Uses the reference line to calculate `boot_time` such that it results in the target timestamp
-    /// Only updates entries in this source file that match both the ECU ID and App ID
-    pub fn resync_dlt_time_to_target(
-        &self,
-        reference_line_index: usize,
-        target_time: chrono::DateTime<chrono::Local>,
-        ecu_id: Option<&String>,
-        app_id: Option<&String>,
-    ) -> Result<(), String> {
-        use crate::parser::line::LogLineVariant;
+    /// Look up a single line and return it as the display [`LogLine`] DTO.
+    ///
+    /// Acquires `lines`, `config`, and `file_state` locks exactly once so the
+    /// timestamp, message, and all other fields are computed under the same
+    /// read epoch.  Returns `None` when `line_index` is out of range.
+    pub fn get_as_log_line(&self, line_index: usize) -> Option<LogLine> {
+        profiling::scope!("SourceData::get_as_log_line");
+        let lines = self.lines.read().expect("lines lock poisoned");
+        let config = self.config.read().expect("config lock poisoned");
+        let file_state = self.file_state.read().expect("file_state lock poisoned");
+        let line = lines.get(line_index)?;
+        let raw_message = line.message();
+        Some(LogLine {
+            timestamp: line.timestamp(&*config, &*file_state),
+            message: line.display_message(&*file_state),
+            raw: line.raw(),
+            line_number: line.line_number(),
+            anomaly_score: line.anomaly_score(),
+            template_key: crate::parser::normalize_message(&raw_message)
+        })
+    }
 
-        /// Minimum and maximum safe year for DLT timestamp calibration
-        const MIN_SAFE_YEAR: i32 = 1700;
-        const MAX_SAFE_YEAR: i32 = 2250;
+    /// Filter lines by mapping each `FT::LineType` to a different type `U` before applying the predicate.
+    ///
+    /// Used by `DataSourceVariant::Dlt` to present `DltLogLine` lines as `LogLineVariant` to
+    /// predicates that expect the display type.
+    pub fn filter_sorted_mapped<U, F, Map>(&self, map: &Map, predicate: &F) -> Vec<usize>
+    where
+        Map: Fn(&FT::LineType) -> U + Sync,
+        F: Fn(&U) -> bool + Sync,
+    {
+        profiling::scope!("SourceData::filter_sorted_mapped");
+        let lines = self.lines.read().expect("lines lock poisoned");
+        self.by_timestamp
+            .read()
+            .expect("by_timestamp lock poisoned")
+            .par_iter()
+            .filter_map(|&idx| predicate(&map(&lines[idx])).then_some(idx))
+            .collect()
+    }
 
-        profiling::scope!("SourceData::resync_dlt_time_to_target");
-
-        // Validate target time is within safe range to prevent timestamp overflow
-        let year = target_time.year();
-        if !(MIN_SAFE_YEAR..=MAX_SAFE_YEAR).contains(&year) {
-            return Err(format!(
-                "Target time year must be between {MIN_SAFE_YEAR}-{MAX_SAFE_YEAR} (got {year})"
-            ));
+    /// Render format-specific context menu items for the line at `line_index`.
+    ///
+    /// Must be called inside an egui `context_menu` closure.
+    pub fn render_line_context_menu(&self, line_index: usize, ui: &mut egui::Ui) {
+        let lines = self.lines.read().expect("lines lock poisoned");
+        let config = self.config.read().expect("config lock poisoned");
+        let mut file_state = self.file_state.write().expect("file_state lock poisoned");
+        if let Some(line) = lines.get(line_index) {
+            line.egui_render_context_menu(ui, &*config, &mut *file_state);
         }
-
-        // Get the reference line and extract timing info
-        let reference_line = {
-            let guard = self.lines.read().expect("lines lock poisoned");
-            guard
-                .get(reference_line_index)
-                .cloned()
-                .ok_or_else(|| "Reference line not found".to_string())?
-        };
-
-        // Extract header timestamp (time since boot) from reference line
-        let header_timestamp = match &reference_line {
-            LogLineVariant::Dlt(dlt_line) => {
-                // Get header timestamp (time since boot)
-                let header_ts = dlt_line
-                    .dlt_message
-                    .header
-                    .timestamp
-                    .ok_or_else(|| "DLT message missing header timestamp".to_string())?;
-                crate::parser::dlt::dlt_header_time_to_timedelta(header_ts)
-            }
-            LogLineVariant::Generic(_)
-            | LogLineVariant::Logcat(_)
-            | LogLineVariant::Pcap(_)
-            | LogLineVariant::Btsnoop(_) => {
-                return Err("Reference line is not a DLT entry".to_string())
-            }
-        };
-
-        // Calculate new boot_time: target_time - time_since_boot
-        let new_boot_time = target_time
-            .checked_sub_signed(header_timestamp)
-            .ok_or_else(|| "Failed to calculate boot time".to_string())?;
-
-        log::info!(
-            "Resyncing DLT timestamps with new boot_time: {new_boot_time} (target: {target_time}) for file, ECU: {ecu_id:?}, App: {app_id:?}"
-        );
-
-        // Update all DLT entries in this file matching the ECU and App
-        {
-            profiling::scope!("SourceData::lines::write");
-            let mut guard = self.lines.write().expect("lines lock poisoned");
-            for line in guard.iter_mut() {
-                if let LogLineVariant::Dlt(dlt_line) = line {
-                    // Check if this line matches the target ECU and App
-                    let should_update = if let Some(target_ecu) = ecu_id {
-                        // ECU must match
-                        let ecu_matches = dlt_line
-                            .dlt_message
-                            .header
-                            .ecu_id
-                            .as_ref()
-                            .is_some_and(|ecu| ecu.as_str() == target_ecu);
-
-                        if !ecu_matches {
-                            false
-                        } else if let Some(target_app) = app_id {
-                            // If app is specified, it must also match
-                            dlt_line
-                                .dlt_message
-                                .extended_header
-                                .as_ref()
-                                .is_some_and(|ext| {
-                                    ext.application_id.as_str() == target_app.as_str()
-                                })
-                        } else {
-                            // No app filter, apply to all apps for this ECU
-                            true
-                        }
-                    } else {
-                        false
-                    };
-
-                    if should_update {
-                        // Recalculate timestamp: new_boot_time + time_since_boot
-                        if let Some(header_ts) = dlt_line.dlt_message.header.timestamp {
-                            let time_since_boot =
-                                crate::parser::dlt::dlt_header_time_to_timedelta(header_ts);
-                            if let Some(new_timestamp) =
-                                new_boot_time.checked_add_signed(time_since_boot)
-                            {
-                                dlt_line.timestamp = new_timestamp;
-                                dlt_line.boot_time = Some(new_boot_time);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Rebuild timestamp-sorted index atomically with current lines state
-        {
-            let lines = self.lines.read().expect("lines lock poisoned");
-            let mut indices: Vec<usize> = (0..lines.len()).collect();
-            indices.par_sort_by_key(|&idx| lines[idx].uncalibrated_timestamp());
-            drop(lines);
-
-            *self
-                .by_timestamp
-                .write()
-                .expect("by_timestamp lock poisoned") = indices;
-        }
-
-        self.bump_version();
-
-        Ok(())
     }
 
     /// Load and merge filters and highlights
     pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
         let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
-        match CrabFile::load_from_file(file) {
+        match CrabFile::<FT>::load_from_file(file) {
             Ok(crab_data) => {
                 return (crab_data.filters, crab_data.highlights);
             }
@@ -649,6 +563,40 @@ impl SourceData {
     }
 }
 
+crate::register_filetypes! {
+    binary {
+        dlt:     Dlt:     DltFileType:     DltLogLine,
+        btsnoop: Btsnoop: BtsnoopFileType: BtsnoopLogLine,
+        pcap:    Pcap:    PcapFileType:    PcapLogLine,
+    }
+    text {
+        bugreport: Bugreport: BugreportFileType: LogcatLogLine,
+        logcat:    Logcat:   LogcatFileType:    LogcatLogLine,
+        generic:   Generic:  GenericFileType:   GenericLogLine,
+    }
+}
+
+/// Display-ready log line, produced by [`LogStore::get_by_id`].
+///
+/// All fields are pre-computed under the source locks so callers never need a
+/// second lookup or lock acquisition.  Format-specific dispatch (context menus,
+/// calibration UI) goes through [`StoreID`] + [`LogStore`] methods.
+#[derive(Debug, Clone)]
+pub struct LogLine {
+    /// Fully-adjusted timestamp: config-selected clock + calibration offset.
+    pub timestamp: chrono::DateTime<chrono::Local>,
+    /// Rendered message text.
+    pub message: String,
+    /// Original raw source text.
+    pub raw: String,
+    /// 1-based line number within the source file.
+    pub line_number: usize,
+    /// Anomaly score in [0, 100].
+    pub anomaly_score: f64,
+    /// Normalised template key for anomaly detection.
+    pub template_key: String,
+}
+
 /// Central storage for log lines from one or more sources
 ///
 /// Thread-safe: can be shared across threads with Arc<LogStore>
@@ -657,7 +605,7 @@ impl SourceData {
 pub struct LogStore {
     /// Sources indexed by their stable `source_id` for O(1) lookup.
     /// `IndexMap` maintains insertion order for consistent UI display.
-    sources: RwLock<IndexMap<u64, Arc<SourceData>>>,
+    sources: RwLock<IndexMap<u64, DataSourceVariant>>,
     /// Version counter that increments when sources are added or removed.
     /// This ensures cache invalidation even when line counts happen to sum to the same value.
     sources_version: AtomicU64,
@@ -702,14 +650,9 @@ impl StoreID {
     /// When lines are missing (e.g., during file loading), falls back to
     /// structural ordering to maintain a valid total order.
     pub fn cmp(&self, other: &Self, store: &LogStore) -> Ordering {
-        let self_line = store.get_by_id(self);
-        let other_line = store.get_by_id(other);
-
-        match (self_line, other_line) {
-            (Some(l1), Some(l2)) => {
-                // Both lines exist: compare by adjusted timestamp (with offset), then structurally for stability
-                let self_time = store.get_adjusted_timestamp(self, &l1);
-                let other_time = store.get_adjusted_timestamp(other, &l2);
+        match (store.adjusted_timestamp(self), store.adjusted_timestamp(other)) {
+            (Some(self_time), Some(other_time)) => {
+                // Both lines exist: compare by calibrated timestamp, then structurally for stability
                 self_time
                     .cmp(&other_time)
                     .then_with(|| self.source_id.cmp(&other.source_id))
@@ -734,10 +677,11 @@ impl LogStore {
     /// Add a source to the store
     pub fn add_source(self: &Arc<Self>, source_data: &Arc<SourceData>) {
         profiling::scope!("LogStore::sources::write");
+        let id = variant.source_id();
         self.sources
             .write()
             .expect("sources lock poisoned")
-            .insert(source_data.source_id(), Arc::clone(source_data));
+            .insert(id, variant);
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
     }
 
@@ -749,11 +693,11 @@ impl LogStore {
         sources.values().any(|source| {
             // Try canonical comparison first, fall back to direct comparison
             if let Some(ref canonical) = canonical_path {
-                if let Ok(source_canonical) = source.file_path.canonicalize() {
+                if let Ok(source_canonical) = source.file_path().canonicalize() {
                     return &source_canonical == canonical;
                 }
             }
-            source.file_path == path
+            source.file_path() == path
         })
     }
 
@@ -795,7 +739,7 @@ impl LogStore {
         let sources = self.sources.read().expect("sources lock poisoned");
         sources.get(&id.source_id).map(|source| {
             source
-                .file_path
+                .file_path()
                 .file_name()
                 .expect("file_path must have a filename component")
                 .to_string_lossy()
@@ -812,7 +756,7 @@ impl LogStore {
             .map(|source| {
                 let source_id = source.source_id();
                 let filename = source
-                    .file_path
+                    .file_path()
                     .file_name()
                     .expect("file_path must have a filename component")
                     .to_string_lossy()
@@ -835,99 +779,6 @@ impl LogStore {
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
         log::info!("Removed source: {}", path.display());
         Some(path)
-    }
-
-    /// Check if any DLT sources are still being loaded
-    ///
-    /// Returns true if any DLT source has multiple Arc references, which indicates
-    /// a background loading thread is still holding a reference.
-    pub fn has_loading_dlt_sources(&self) -> bool {
-        profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().expect("sources lock poisoned");
-        sources
-            .values()
-            .filter(|s| s.is_dlt_file())
-            .any(|source| Arc::strong_count(source) > 1)
-    }
-
-    /// Request cancellation of all DLT source loading/scoring operations
-    pub fn cancel_dlt_loading(&self) {
-        profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().expect("sources lock poisoned");
-        for source in sources.values() {
-            if source.is_dlt_file() {
-                source.request_cancel();
-            }
-        }
-    }
-
-    /// Wait for all DLT sources to finish loading (background threads to complete)
-    ///
-    /// Polls the Arc strong counts until they all drop to 1, indicating background
-    /// threads have released their references. Returns true if all completed within
-    /// the timeout, false if timeout was reached.
-    pub fn wait_for_dlt_loading(&self, timeout_secs: u64) -> bool {
-        use std::time::{Duration, Instant};
-
-        let start = Instant::now();
-        let timeout = Duration::from_secs(timeout_secs);
-
-        while start.elapsed() < timeout {
-            if !self.has_loading_dlt_sources() {
-                return true;
-            }
-            // Sleep briefly to avoid busy-waiting
-            std::thread::sleep(Duration::from_millis(100));
-        }
-
-        false
-    }
-
-    /// Remove all DLT sources from the store
-    ///
-    /// Returns tuples of (path, lock) for each removed DLT source so they can be re-added
-    /// with the same lock, avoiding file locking race conditions.
-    ///
-    /// Note: This invalidates any cached `StoreID`s - callers should refresh their caches.
-    pub fn remove_dlt_sources(&self) -> Vec<(PathBuf, File, PathBuf)> {
-        profiling::scope!("LogStore::sources::write");
-        let mut sources = self.sources.write().expect("sources lock poisoned");
-
-        // Extract DLT sources and their locks
-        let mut removed_with_locks = Vec::new();
-        let mut remaining = IndexMap::new();
-
-        for (source_id, source) in sources.drain(..) {
-            if source.is_dlt_file() {
-                let path = source.file_path().to_path_buf();
-                // Try to unwrap the Arc - if there are other references, we can't take the lock
-                match Arc::try_unwrap(source) {
-                    Ok(source_data) => {
-                        let (lock_file, lock_path) = source_data.take_crab_lock();
-                        removed_with_locks.push((path, lock_file, lock_path));
-                    }
-                    Err(arc_source) => {
-                        log::warn!(
-                            "Cannot extract lock from {} - Arc has multiple references",
-                            arc_source.file_path().display()
-                        );
-                        // Put it back in remaining sources since we can't reload it
-                        remaining.insert(source_id, arc_source);
-                    }
-                }
-            } else {
-                remaining.insert(source_id, source);
-            }
-        }
-
-        *sources = remaining;
-        drop(sources);
-
-        log::info!(
-            "Removed {} DLT sources from store (with locks)",
-            removed_with_locks.len()
-        );
-        removed_with_locks
     }
 
     // ========================================================================
@@ -1066,12 +917,6 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
 
-        // Collect time offsets to avoid recursive locking in merge
-        let time_offsets: HashMap<u64, i64> = sources
-            .iter()
-            .map(|(&source_id, source)| (source_id, source.get_time_offset_ms()))
-            .collect();
-
         // Parallel filter each source, collect results
         let per_source: Vec<Vec<StoreID>> = {
             profiling::scope!("parallel_filter_sources");
@@ -1079,25 +924,11 @@ impl LogStore {
                 .par_values()
                 .map(|source| {
                     let source_id = source.source_id();
-                    let lines = source.lines.read().expect("lines lock poisoned");
-                    // Iterate in timestamp order, filter, collect
                     source
-                        .by_timestamp
-                        .read()
-                        .expect("by_timestamp lock poisoned")
-                        .par_iter()
-                        .filter_map(|&idx| {
-                            let line = &lines[idx];
-                            if predicate(line) {
-                                Some(StoreID {
-                                    source_id,
-                                    line_index: idx,
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .collect() // Materialize ParIter here so that it can be iterated sequentially later
+                        .filter_sorted(&predicate)
+                        .into_iter()
+                        .map(|line_index| StoreID { source_id, line_index })
+                        .collect()
                 })
                 .collect()
         };
@@ -1106,14 +937,13 @@ impl LogStore {
         drop(sources);
 
         // K-way merge of sorted sources by timestamp
-        self.merge_sorted_sources(per_source, &time_offsets)
+        self.merge_sorted_sources(per_source)
     }
 
     /// K-way merge of pre-sorted `StoreID` vectors by timestamp
     fn merge_sorted_sources(
         &self,
         sources: Vec<Vec<StoreID>>,
-        time_offsets: &HashMap<u64, i64>,
     ) -> Vec<StoreID> {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
@@ -1130,24 +960,13 @@ impl LogStore {
         let mut heap: BinaryHeap<Reverse<(chrono::DateTime<Local>, usize, StoreID)>> =
             BinaryHeap::new();
 
-        // Helper to compute adjusted timestamp using the provided offsets
-        let get_adjusted_time = |id: &StoreID, line: &LogLine| -> chrono::DateTime<Local> {
-            let offset_ms = time_offsets.get(&id.source_id).copied().unwrap_or(0);
-            if offset_ms != 0 {
-                line.uncalibrated_timestamp() + chrono::Duration::milliseconds(offset_ms)
-            } else {
-                line.uncalibrated_timestamp()
-            }
-        };
-
         // Initialize heap with first element from each non-empty source
         for (src_idx, iter) in iters.iter_mut().enumerate() {
-            if let Some(id) = iter.next() {
-                if let Some(line) = self.get_by_id(&id) {
-                    // Apply time offset for accurate merge ordering
-                    let adjusted_time = get_adjusted_time(&id, &line);
-                    heap.push(Reverse((adjusted_time, src_idx, id)));
-                }
+            if let Some((id, adjusted_time)) =
+                    iter.find_map(|id| self
+                           .adjusted_timestamp(&id)
+                           .map(|time| (id, time))) {
+                heap.push(Reverse((adjusted_time, src_idx, id)));
             }
         }
 
@@ -1156,26 +975,29 @@ impl LogStore {
             result.push(id);
 
             // Push the next element from this source onto the heap
-            if let Some(next_id) = iters[src_idx].next() {
-                if let Some(line) = self.get_by_id(&next_id) {
-                    // Apply time offset for accurate merge ordering
-                    let adjusted_time = get_adjusted_time(&next_id, &line);
-                    heap.push(Reverse((adjusted_time, src_idx, next_id)));
-                }
+            if let Some((next_id, adjusted_time)) = iters[src_idx].find_map(|id| self
+                           .adjusted_timestamp(&id)
+                           .map(|time| (id, time))) {
+                heap.push(Reverse((adjusted_time, src_idx, next_id)));
             }
         }
 
         result
     }
 
-    /// Get timestamp with time offset applied
-    pub fn get_adjusted_timestamp(&self, id: &StoreID, line: &LogLine) -> chrono::DateTime<Local> {
-        let offset_ms = self.get_time_offset_ms(id).unwrap_or(0);
-        if offset_ms != 0 {
-            line.uncalibrated_timestamp() + chrono::Duration::milliseconds(offset_ms)
-        } else {
-            line.uncalibrated_timestamp()
-        }
+    /// Get the fully-calibrated timestamp for the line identified by `id`.
+    ///
+    /// Delegates to [`DataSourceVariant::adjusted_timestamp`] which locks `config`
+    /// and `file_state` and calls `LineType::timestamp()`.  Both config-driven
+    /// source selection (e.g. DLT ECU/session/storage clock) and the per-source
+    /// calibration offset are applied.  Returns `None` if the source or line is
+    /// not found.
+    pub fn adjusted_timestamp(&self, id: &StoreID) -> Option<chrono::DateTime<Local>> {
+        profiling::scope!("LogStore::adjusted_timestamp");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        sources
+            .get(&id.source_id)
+            .and_then(|s| s.adjusted_timestamp(id.line_index))
     }
 
     /// Find the position of the line closest to a target timestamp in a sorted list.
@@ -1194,8 +1016,7 @@ impl LogStore {
 
         // Binary search to find insertion point
         let idx = filtered_indices.partition_point(|line_idx| {
-            self.get_by_id(line_idx)
-                .is_some_and(|line| self.get_adjusted_timestamp(line_idx, &line) < target_time)
+            self.adjusted_timestamp(line_idx).is_some_and(|ts| ts < target_time)
         });
 
         // Compare neighbors around the insertion point to find the closest
@@ -1203,10 +1024,8 @@ impl LogStore {
             0 => Some(0),
             i if i >= filtered_indices.len() => Some(filtered_indices.len() - 1),
             i => {
-                let before_line = self.get_by_id(&filtered_indices[i - 1])?;
-                let after_line = self.get_by_id(&filtered_indices[i])?;
-                let before_ts = self.get_adjusted_timestamp(&filtered_indices[i - 1], &before_line);
-                let after_ts = self.get_adjusted_timestamp(&filtered_indices[i], &after_line);
+                let before_ts = self.adjusted_timestamp(&filtered_indices[i - 1])?;
+                let after_ts = self.adjusted_timestamp(&filtered_indices[i])?;
 
                 let dist_before = (target_time - before_ts).abs();
                 let dist_after = (after_ts - target_time).abs();
@@ -1223,7 +1042,7 @@ impl LogStore {
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(&id.source_id)?.get_by_id(id.line_index)
+        sources.get(&id.source_id)?.get_log_line(id.line_index)
     }
 }
 

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::anomaly::scorer::AnomalyScorer;
-use crate::parser::line::{LogLine, LogLineCore};
+use crate::core::log_store::LogLine;
 
 /// Scores based on template rarity (inverse frequency)
 pub struct RarityScorer {
@@ -24,10 +24,10 @@ impl AnomalyScorer for RarityScorer {
             return 1.0; // First line is always novel
         }
 
-        let template_key = line.template_key();
+        let template_key = &line.template_key;
         let count = self
             .template_counts
-            .get(&template_key)
+            .get(template_key)
             .copied()
             .unwrap_or(0);
 
@@ -49,7 +49,7 @@ impl AnomalyScorer for RarityScorer {
     }
 
     fn update(&mut self, line: &LogLine) {
-        *self.template_counts.entry(line.template_key()).or_insert(0) += 1;
+        *self.template_counts.entry(line.template_key.to_owned()).or_insert(0) += 1;
         self.total_lines += 1;
     }
 }

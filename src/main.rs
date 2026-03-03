@@ -17,6 +17,7 @@
 mod anomaly;
 mod config;
 mod core;
+mod filetype;
 mod input;
 mod parser;
 mod ui;

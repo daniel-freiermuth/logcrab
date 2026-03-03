@@ -1,4 +1,5 @@
 // pub mod async_cache;
+pub mod chunked_loader;
 pub mod filter_worker;
 pub mod histogram_worker;
 pub mod log_file;
@@ -10,6 +11,7 @@ pub mod session;
 // pub mod task_worker;
 
 // pub use async_cache::AsyncCache;
+pub use chunked_loader::ChunkedLoader;
 pub use filter_worker::{FilterWorker, FilterWorkerHandle};
 pub use log_file::LogFileLoader;
 pub use log_store::LogStore;

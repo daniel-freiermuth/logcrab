@@ -26,7 +26,6 @@
 use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::queue_map::QueueMap;
 use crate::core::LogStore;
-use crate::parser::line::LogLineCore;
 use fancy_regex::Regex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};

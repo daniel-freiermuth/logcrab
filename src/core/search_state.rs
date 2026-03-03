@@ -219,8 +219,7 @@ impl SearchState {
         }
 
         // Get target timestamp
-        let target_line = store.get_by_id(&target)?;
-        let target_time = store.get_adjusted_timestamp(&target, &target_line);
+        let target_time = store.adjusted_timestamp(&target)?;
 
         // Binary search to find the first line with timestamp >= target_time
         let idx = indices.partition_point(|line_idx| {

@@ -17,623 +17,158 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
-use crate::config::DltTimestampSource;
-use crate::core::log_store::SourceData;
-use crate::parser::{btsnoop, detect_format, dlt, generic, logcat, pcap, LogFormat};
+use crate::core::log_store::{DataSourceVariant, GlobalFileConfig, SourceData};
+use crate::core::ChunkedLoader;
+use crate::filetype::{InputFileType, LineType};
 use crate::ui::ProgressToastHandle;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
 
-/// Progress callback type for DLT parsing
-pub type ProgressCallback = Box<dyn Fn(f32, &str) + Send>;
-
-/// Initial chunk size for incremental text file loading
-/// Start small for fast initial feedback, then grow to handle merge overhead
-const TEXT_INITIAL_CHUNK_SIZE: usize = 1 << 13; // 8,192 lines
-const TEXT_MAX_CHUNK_SIZE: usize = 1 << 18; // 262,144 lines
-const TEXT_CHUNKS_BEFORE_GROWTH: usize = 3; // Double chunk size every 3 chunks
-
-/// Detected file format - either binary or text-based
-#[derive(Debug, Clone)]
-enum FileFormat {
-    /// DLT binary format (AUTOSAR Diagnostic Log and Trace)
-    Dlt,
-    /// PCAP packet capture format
-    Pcap,
-    /// `BTSnoop` packet capture format
-    Btsnoop,
-    /// Text-based log formats (logcat, bugreport, generic)
-    Text(LogFormat),
-}
+/// Initial chunk size for incremental loading — small for fast initial feedback.
+const INITIAL_CHUNK_SIZE: usize = 1 << 13; // 8,192 items
+/// Maximum chunk size — prevents excessive merge overhead.
+const MAX_CHUNK_SIZE: usize = 1 << 18; // 262,144 items
+/// Number of chunks between each chunk-size doubling.
+const CHUNKS_BEFORE_GROWTH: usize = 3;
 
 /// Handles asynchronous loading and processing of log files
 pub struct LogFileLoader;
 
 impl LogFileLoader {
-    /// Start loading a file in the background.
+    /// Load a file of any supported format into a typed [`DataSourceVariant`].
     ///
-    /// The toast handle will be updated with progress and dismissed when complete.
-    /// Returns the `SourceData` that will be populated with log lines.
+    /// Format detection is synchronous and fast (reads ≤16 bytes for binary,
+    /// ≤100 KB for text). A background thread is then spawned to drive
+    /// [`ChunkedLoader`], so this call returns before the file is fully loaded.
     ///
-    /// If `crab_lock` is provided, uses it instead of acquiring a new lock.
-    /// This is useful when reloading files to avoid lock release race conditions.
+    /// `file_config` is the session-wide [`GlobalFileConfig`]; each typed source
+    /// receives `Arc::clone` of its type's config arc so config mutations propagate live.
     ///
-    /// Returns None if the .crab session file is already locked by another instance.
-    pub fn load_async(
+    /// Returns `None` if the `.crab` session file is already locked by another instance.
+    pub fn load_file(
         path: PathBuf,
         toast: ProgressToastHandle,
-        dlt_timestamp_source: DltTimestampSource,
         crab_lock: Option<(File, PathBuf)>,
-    ) -> Option<Arc<SourceData>> {
+        file_config: &GlobalFileConfig,
+    ) -> Option<DataSourceVariant> {
+        let mut crab_lock = crab_lock;
+        crate::core::log_store::try_open_binary(&path, &toast, &mut crab_lock, file_config).or_else(|| {
+            crate::core::log_store::open_text_source(&path, &toast, crab_lock, file_config)
+        })
+    }
+
+    /// Create a typed [`SourceData<T>`], spawn a background loading thread, and
+    /// return the source before loading completes.
+    ///
+    /// `open_fn` is called from the background thread and must return a
+    /// ready-to-read [`InputFileType`] for the given path.
+    ///
+    /// Returns `None` if the `.crab` file is already locked by another instance.
+    pub(crate) fn load_typed<FT>(
+        path: PathBuf,
+        toast: &ProgressToastHandle,
+        crab_lock: Option<(File, PathBuf)>,
+        config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
+        open_fn: impl FnOnce(&Path) -> Result<FT, String> + Send + 'static,
+    ) -> Option<Arc<SourceData<FT>>>
+    where
+        FT: InputFileType + Send + 'static,
+        FT::LineType: Clone,
+    {
         let data_source = if let Some((lock_file, lock_path)) = crab_lock {
             Arc::new(SourceData::new_with_lock(
                 path.clone(),
                 lock_file,
                 lock_path,
+                config,
             ))
         } else {
-            Arc::new(SourceData::new(path.clone())?)
+            Arc::new(SourceData::new(path.clone(), config)?)
         };
-        let source_clone = data_source.clone();
-
+        let source_clone = Arc::clone(&data_source);
+        let toast_clone = toast.clone();
         thread::spawn(move || {
-            Self::process_file_background(path, source_clone, toast, dlt_timestamp_source);
+            Self::background_load(path, source_clone, toast_clone, open_fn);
         });
-
         Some(data_source)
     }
 
-    /// Detect file format by checking magic bytes (binary formats) or content (text formats).
-    ///
-    /// This function is designed to be easily replaceable with a library-based solution.
-    /// It checks binary formats first (DLT, PCAP, `BTSnoop`) via magic bytes,
-    /// then falls back to sampling text content for text-based log formats.
-    ///
-    /// Returns `Err` if file cannot be read, `Ok(FileFormat)` otherwise.
-    fn detect_file_format(path: &Path, toast: &ProgressToastHandle) -> Result<FileFormat, String> {
-        // First attempt: Check for binary formats via magic bytes
-        if let Some(binary_format) = Self::detect_binary_format(path) {
-            log::info!("Detected binary format: {binary_format:?}");
-            return Ok(binary_format);
-        }
-
-        // Second attempt: Sample file content to detect text-based formats
-        let sample = Self::read_file_sample(path, toast)
-            .ok_or_else(|| "Failed to read file sample".to_string())?;
-
-        let text_format = detect_format(&sample);
-        log::info!("Detected text format: {text_format:?}");
-        Ok(FileFormat::Text(text_format))
-    }
-
-    /// Detect binary file formats by reading magic bytes.
-    ///
-    /// Checks the first 8 bytes of the file for known magic signatures:
-    /// - DLT: "DLT\x01" (0x44 0x4C 0x54 0x01)
-    /// - `BTSnoop`: "btsnoop\0"
-    /// - PCAP: Various magic bytes for different PCAP variants
-    ///
-    /// Returns `Some(FileFormat)` if a binary format is detected, `None` otherwise.
-    /// This allows graceful fallback to text format detection.
-    fn detect_binary_format(path: &Path) -> Option<FileFormat> {
-        use std::io::Read;
-
-        let mut file = File::open(path).ok()?;
-        let mut magic = [0u8; 8];
-
-        // Read up to 8 bytes for magic detection
-        let bytes_read = file.read(&mut magic).ok()?;
-        if bytes_read < 4 {
-            // File too small to be a binary format we support
-            return None;
-        }
-
-        // Match all binary formats by magic bytes
-        match &magic[..] {
-            // DLT: "DLT\x01" (0x44 0x4c 0x54 0x01)
-            [0x44, 0x4c, 0x54, 0x01, ..] if bytes_read >= 4 => Some(FileFormat::Dlt),
-
-            // BTSnoop: "btsnoop\0" (0x62 0x74 0x73 0x6e 0x6f 0x6f 0x70 0x00)
-            [0x62, 0x74, 0x73, 0x6e, 0x6f, 0x6f, 0x70, 0x00] if bytes_read >= 8 => {
-                Some(FileFormat::Btsnoop)
-            }
-
-            // PCAP formats (various magic bytes)
-            // Legacy pcap (little-endian)
-            [0xd4, 0xc3, 0xb2, 0xa1, ..]
-            // Legacy pcap (big-endian)
-            | [0xa1, 0xb2, 0xc3, 0xd4, ..]
-            // Legacy pcap with nanosecond timestamps
-            | [0x4d, 0x3c, 0xb2, 0xa1, ..]
-            | [0xa1, 0xb2, 0x3c, 0x4d, ..]
-            // pcapng (Section Header Block)
-            | [0x0a, 0x0d, 0x0d, 0x0a, ..] if bytes_read >= 4 => Some(FileFormat::Pcap),
-
-            _ => None,
-        }
-    }
-
-    fn read_dlt_file(
-        path: &Path,
-        data_source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-        dlt_timestamp_source: DltTimestampSource,
-    ) -> bool {
-        log::info!("Detected DLT binary file, using dlt-core parser");
-        toast.update(
-            0.0,
-            format!("Parsing DLT binary file {}...", path.display()),
-        );
-
-        // Create progress callback that updates the toast
-        let toast_clone = toast.clone();
-        let progress_callback: ProgressCallback = Box::new(move |progress, message| {
-            toast_clone.update(progress, message);
-        });
-
-        match dlt::parse_dlt_file_with_progress(
-            path,
-            data_source,
-            &progress_callback,
-            dlt_timestamp_source,
-        ) {
-            Ok(total_lines) => {
-                log::info!("Successfully parsed {total_lines} DLT messages");
-                true
-            }
-            Err(e) => {
-                log::error!("Failed to parse DLT file: {e}");
-                toast.set_error(format!("Failed to parse DLT file: {e}"));
-                false
-            }
-        }
-    }
-
-    fn read_pcap_file(
-        path: &Path,
-        data_source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-    ) -> bool {
-        log::info!("Detected PCAP file, using pcap parser");
-        toast.update(0.0, format!("Parsing PCAP file {}...", path.display()));
-
-        // Create progress callback that updates the toast
-        let toast_clone = toast.clone();
-        let progress_callback: ProgressCallback = Box::new(move |progress, message| {
-            toast_clone.update(progress, message);
-        });
-
-        match pcap::parse_pcap_file_with_progress(path, data_source, &progress_callback) {
-            Ok(total_packets) => {
-                log::info!("Successfully parsed {total_packets} packets");
-                true
-            }
-            Err(e) => {
-                log::error!("Failed to parse PCAP file: {e}");
-                toast.set_error(format!("Failed to parse PCAP file: {e}"));
-                false
-            }
-        }
-    }
-
-    fn read_btsnoop_file(
-        path: &Path,
-        data_source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-    ) -> bool {
-        log::info!("Detected BTSnoop file, using btsnoop parser");
-        toast.update(0.0, format!("Parsing BTSnoop file {}...", path.display()));
-
-        // Create progress callback that updates the toast
-        let toast_clone = toast.clone();
-        let progress_callback: ProgressCallback = Box::new(move |progress, message| {
-            toast_clone.update(progress, message);
-        });
-
-        match btsnoop::parse_btsnoop_file_with_progress(path, data_source, &progress_callback) {
-            Ok(total_packets) => {
-                log::info!("Successfully parsed {total_packets} HCI packets");
-                true
-            }
-            Err(e) => {
-                log::error!("Failed to parse BTSnoop file: {e}");
-                toast.set_error(format!("Failed to parse BTSnoop file: {e}"));
-                false
-            }
-        }
-    }
-
-    #[allow(clippy::needless_pass_by_value)] // Values are moved into thread::spawn closure
-    fn process_file_background(
+    /// Open the file via `open_fn`, drive [`ChunkedLoader`], score, and dismiss the toast.
+    fn background_load<FT>(
         path: PathBuf,
-        data_source: Arc<SourceData>,
+        data_source: Arc<SourceData<FT>>,
         toast: ProgressToastHandle,
-        dlt_timestamp_source: DltTimestampSource,
-    ) {
+        open_fn: impl FnOnce(&Path) -> Result<FT, String>,
+    ) where
+        FT: InputFileType,
+        FT::LineType: Clone,
+    {
         let start_time = std::time::Instant::now();
-        log::debug!(
-            "Starting background file processing for: {}",
-            path.display()
-        );
+        let file_size = std::fs::metadata(&path).map_or(0, |m| m.len());
+        let file_name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy()
+            .into_owned();
 
-        // Get file size for progress tracking
-        let file_size = match std::fs::metadata(&path) {
-            Ok(metadata) => metadata.len(),
+        log::debug!("background_load: opening {}", path.display());
+        let mut file_type = match open_fn(&path) {
+            Ok(ft) => ft,
             Err(e) => {
-                log::error!("Cannot read file metadata: {e}");
-                toast.set_error(format!("Cannot read file: {e}"));
-                return;
-            }
-        };
-        log::info!("File size: {file_size} bytes");
-
-        // Detect file format (checks magic bytes for binary formats, then content for text formats)
-        let format = match Self::detect_file_format(&path, &toast) {
-            Ok(fmt) => fmt,
-            Err(e) => {
-                log::error!("Failed to detect file format: {e}");
-                toast.set_error(format!("Failed to detect file format: {e}"));
+                log::error!("Failed to open {}: {e}", path.display());
+                toast.set_error(format!("Failed to open file: {e}"));
+                toast.dismiss();
                 return;
             }
         };
 
-        // Dispatch to appropriate parser based on detected format
-        let source_added = match format {
-            FileFormat::Dlt => {
-                Self::read_dlt_file(&path, &data_source, &toast, dlt_timestamp_source)
-            }
-            FileFormat::Btsnoop => Self::read_btsnoop_file(&path, &data_source, &toast),
-            FileFormat::Pcap => Self::read_pcap_file(&path, &data_source, &toast),
-            FileFormat::Text(LogFormat::Bugreport { year }) => {
-                Self::read_bugreport_file(&path, year, &data_source, &toast, file_size)
-            }
-            FileFormat::Text(LogFormat::Logcat { year }) => {
-                Self::read_logcat_file(&path, year, &data_source, &toast, file_size)
-            }
-            FileFormat::Text(LogFormat::Generic) => {
-                Self::read_generic_file(&path, &data_source, &toast, file_size)
-            }
+        let loader = ChunkedLoader {
+            initial_chunk_size: INITIAL_CHUNK_SIZE,
+            max_chunk_size: MAX_CHUNK_SIZE,
+            chunks_before_growth: CHUNKS_BEFORE_GROWTH,
         };
 
-        if source_added && !data_source.is_empty() {
+        let loaded = loader.run(&mut file_type, &data_source, &file_name, file_size, &toast);
+
+        if loaded && !data_source.is_empty() {
             Self::score_lines(&data_source, &path, &toast, start_time);
         } else if data_source.is_empty() {
             toast.set_error("No log lines found in file");
         }
-
-        // Toast auto-dismisses when dropped (handle goes out of scope)
         toast.dismiss();
     }
 
-    /// Read first portion of file for format detection
+    /// Score all lines in `data_source` and persist the results.
     ///
-    /// This reads only the first ~100KB or 1000 lines (whichever comes first)
-    /// to detect the file format without loading the entire file into memory.
-    fn read_file_sample(path: &Path, toast: &ProgressToastHandle) -> Option<String> {
-        const MAX_SAMPLE_BYTES: usize = 100 * 1024; // 100 KB
-        const MAX_SAMPLE_LINES: usize = 1000;
-
-        let file = match File::open(path) {
-            Ok(f) => f,
-            Err(e) => {
-                log::error!("Cannot open file: {e}");
-                toast.set_error(format!("Cannot open file: {e}"));
-                return None;
-            }
-        };
-
-        let reader = BufReader::new(file);
-        let mut sample = String::new();
-        let mut lines_read = 0;
-
-        for line_result in reader.lines() {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(e) => {
-                    log::warn!("Error reading sample line: {e}");
-                    break;
-                }
-            };
-
-            sample.push_str(&line);
-            sample.push('\n');
-            lines_read += 1;
-
-            if sample.len() >= MAX_SAMPLE_BYTES || lines_read >= MAX_SAMPLE_LINES {
-                break;
-            }
-        }
-
-        log::debug!(
-            "Read {lines_read} lines ({} bytes) for format detection",
-            sample.len()
-        );
-        Some(sample)
-    }
-
-    fn read_bugreport_file(
-        path: &Path,
-        year: i32,
-        source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-        file_size: u64,
-    ) -> bool {
-        log::info!("Parsing as bugreport format with year {year}");
-        Self::parse_text_file_streaming(path, source, toast, file_size, |raw, line_number| {
-            logcat::parse_logcat_with_year(raw, line_number, year)
-        })
-    }
-
-    fn read_logcat_file(
-        path: &Path,
-        year: i32,
-        source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-        file_size: u64,
-    ) -> bool {
-        log::info!("Parsing as logcat format with year {year}");
-        Self::parse_text_file_streaming(path, source, toast, file_size, |raw, line_number| {
-            logcat::parse_logcat_with_year(raw, line_number, year)
-        })
-    }
-
-    fn read_generic_file(
-        path: &Path,
-        source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-        file_size: u64,
-    ) -> bool {
-        log::info!("Parsing as generic format");
-        Self::parse_text_file_streaming(path, source, toast, file_size, generic::parse_generic)
-    }
-
-    /// Streaming text file parser with incremental chunk loading
-    ///
-    /// This function reads the file line-by-line from disk rather than loading
-    /// the entire content into memory first. It uses exponentially growing chunk
-    /// sizes to balance UI responsiveness with append performance.
-    fn parse_text_file_streaming<F>(
-        path: &Path,
-        source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-        file_size: u64,
-        parse_fn: F,
-    ) -> bool
-    where
-        F: Fn(String, usize) -> Option<crate::parser::line::LogLine>,
-    {
-        profiling::scope!("parse_text_file_streaming");
-
-        let file = match File::open(path) {
-            Ok(f) => f,
-            Err(e) => {
-                log::error!("Cannot open file: {e}");
-                toast.set_error(format!("Cannot open file: {e}"));
-                return false;
-            }
-        };
-
-        let reader = BufReader::new(file);
-        let mut chunk_lines = Vec::new();
-        let mut file_line_number = 0;
-        let mut bytes_read: usize = 0;
-        let mut chunk_count = 0;
-        let mut current_chunk_size = TEXT_INITIAL_CHUNK_SIZE;
-        let parse_start = std::time::Instant::now();
-
-        let file_name = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy();
-
-        for line_result in reader.lines() {
-            let line_buffer = match line_result {
-                Ok(line) => line,
-                Err(e) => {
-                    log::warn!("Error reading line {file_line_number}: {e}");
-                    continue;
-                }
-            };
-
-            file_line_number += 1;
-            bytes_read += line_buffer.len() + 1; // +1 for newline
-
-            // Update progress every 500 lines
-            if file_line_number % 500 == 0 {
-                let progress = (bytes_read as f32 / file_size as f32).min(1.0);
-                toast.update(
-                    progress,
-                    format!(
-                        "Loading {}... ({} lines)",
-                        file_name,
-                        source.len() + chunk_lines.len()
-                    ),
-                );
-            }
-
-            // Skip empty lines
-            if line_buffer.trim().is_empty() {
-                continue;
-            }
-
-            // Parse the line
-            let Some(log_line) = parse_fn(line_buffer, file_line_number) else {
-                continue;
-            };
-
-            chunk_lines.push(log_line);
-
-            // Append chunk when it reaches current size
-            if chunk_lines.len() >= current_chunk_size {
-                source.append_lines(std::mem::take(&mut chunk_lines));
-                chunk_count += 1;
-
-                // Grow chunk size exponentially (double every N chunks)
-                if chunk_count % TEXT_CHUNKS_BEFORE_GROWTH == 0
-                    && current_chunk_size < TEXT_MAX_CHUNK_SIZE
-                {
-                    current_chunk_size = (current_chunk_size * 2).min(TEXT_MAX_CHUNK_SIZE);
-                    log::debug!("Increased chunk size to {current_chunk_size} lines");
-                }
-
-                let progress = (bytes_read as f32 / file_size as f32).min(1.0);
-                toast.update(
-                    progress,
-                    format!("Loading {}... ({} lines)", file_name, source.len()),
-                );
-            }
-        }
-
-        // Append any remaining lines
-        if !chunk_lines.is_empty() {
-            source.append_lines(chunk_lines);
-        }
-
-        let parse_duration = parse_start.elapsed();
-        log::info!(
-            "Streaming parse took {:?} to process {} lines from {} ({} chunks)",
-            parse_duration,
-            source.len(),
-            path.display(),
-            chunk_count
-        );
-        log::info!(
-            "Line processing stats: total_file_lines={}, parsed_lines={}, skipped={}",
-            file_line_number,
-            source.len(),
-            file_line_number - source.len()
-        );
-
-        !source.is_empty()
-    }
-
-    /// Legacy text file parser (loads entire file into memory)
-    ///
-    /// This is kept for compatibility with formats that need the full content
-    /// upfront (e.g., certain special processing cases). New code should prefer
-    /// `parse_text_file_streaming` for better memory efficiency.
-    #[allow(dead_code)]
-    fn parse_text_file<F>(
-        path: &Path,
-        content: &str,
-        source: &Arc<SourceData>,
-        toast: &ProgressToastHandle,
-        start_time: std::time::Instant,
-        file_size: u64,
-        parse_fn: F,
-    ) -> bool
-    where
-        F: Fn(String, usize) -> Option<crate::parser::line::LogLine>,
-    {
-        const CHUNK_SIZE: usize = 10_000;
-
-        let mut chunk_lines = Vec::new();
-        let mut bytes_read: usize = 0;
-
-        profiling::scope!("parse_lines");
-
-        let parse_start = std::time::Instant::now();
-        let mut file_line_number = 0;
-        let total_lines_in_content = content.lines().count();
-        log::info!("File contains {total_lines_in_content} lines");
-
-        let file_name = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy();
-
-        for line_buffer in content.lines() {
-            file_line_number += 1;
-            bytes_read += line_buffer.len() + 1;
-
-            if file_line_number % 500 == 0 {
-                let progress = (bytes_read as f32 / file_size as f32).min(1.0);
-                toast.update(
-                    progress,
-                    format!(
-                        "Loading {}... ({} lines)",
-                        file_name,
-                        source.len() + chunk_lines.len()
-                    ),
-                );
-            }
-
-            if line_buffer.trim().is_empty() {
-                continue;
-            }
-
-            let Some(log_line) = parse_fn(line_buffer.to_string(), file_line_number) else {
-                continue;
-            };
-
-            // Template key is now computed lazily in LogLineCore trait
-            chunk_lines.push(log_line);
-
-            if chunk_lines.len() >= CHUNK_SIZE {
-                source.append_lines(std::mem::take(&mut chunk_lines));
-                let progress = (bytes_read as f32 / file_size as f32).min(1.0);
-                toast.update(
-                    progress,
-                    format!("Loading {}... ({} lines)", file_name, source.len()),
-                );
-                log::debug!("Sent partial load: {} lines", source.len());
-            }
-        }
-
-        if !chunk_lines.is_empty() {
-            source.append_lines(chunk_lines);
-        }
-
-        let parse_duration = parse_start.elapsed();
-        log::info!(
-            "Parsing took {:?} to process {} lines from {}",
-            parse_duration,
-            source.len(),
-            path.display()
-        );
-        log::info!(
-            "Line processing stats: file_line_number={}, lines_in_content={}, parsed_lines={}, skipped={}",
-            file_line_number,
-            total_lines_in_content,
-            source.len(),
-            file_line_number - source.len()
-        );
-
-        log::info!("Total time to display file: {:?}", start_time.elapsed());
-        true
-    }
-
-    /// Score lines and update toast with progress
-    fn score_lines(
-        data_source: &Arc<SourceData>,
+    /// Iterates directly over the typed source so no intermediate `Vec<LogLine>` is
+    /// allocated.  Each [`LogLine`] DTO is built under a single lock acquisition
+    /// via [`SourceData::get_as_log_line`].
+    fn score_lines<FT>(
+        data_source: &Arc<SourceData<FT>>,
         path: &Path,
         toast: &ProgressToastHandle,
         start_time: std::time::Instant,
-    ) {
+    ) where
+        FT: InputFileType,
+        FT::LineType: Clone,
+    {
         static N_SKIP_INITIAL: usize = 10;
 
-        // Switch toast to scoring phase
         toast.set_title("Calculating Anomaly Scores");
         toast.update(0.0, "Starting...");
 
         let score_start = std::time::Instant::now();
-        log::debug!(
-            "Starting background anomaly scoring for {} lines",
-            data_source.len()
-        );
+        let total_lines = data_source.len();
+        log::debug!("Starting background anomaly scoring for {total_lines} lines");
 
         let mut scorer = create_default_scorer();
         let mut raw_scores = Vec::new();
 
         profiling::scope!("score_lines");
 
-        let total_lines = data_source.len();
-
-        for (idx, log_line) in data_source.clone_lines().into_iter().enumerate() {
-            // Check for cancellation every 1000 lines
+        for idx in 0..total_lines {
             if idx % 1000 == 0 {
                 if data_source.is_cancelled() {
                     log::info!("Anomaly scoring cancelled for {}", path.display());
@@ -641,10 +176,15 @@ impl LogFileLoader {
                     toast.dismiss();
                     return;
                 }
-
                 let progress = idx as f32 / total_lines as f32;
                 toast.update(progress, format!("Scoring... ({idx}/{total_lines})"));
             }
+
+            let Some(log_line) = data_source.get_as_log_line(idx) else {
+                log::warn!("Skipping scoring for line {idx} due to missing entry");
+                raw_scores.push(0.0);
+                continue;
+            };
 
             if idx > N_SKIP_INITIAL - 1 {
                 raw_scores.push(scorer.score(&log_line));
@@ -663,28 +203,21 @@ impl LogFileLoader {
 
         toast.update(1.0, "Done!");
 
-        // Log score statistics
         if !raw_scores.is_empty() {
             let min_raw = raw_scores.iter().copied().fold(f64::INFINITY, f64::min);
             let max_raw = raw_scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let avg_raw: f64 = raw_scores.iter().sum::<f64>() / raw_scores.len() as f64;
             log::info!(
                 "Score statistics - Raw: min={:.3}, max={:.3}, avg={:.3}, total_lines={}",
-                min_raw,
-                max_raw,
-                avg_raw,
+                min_raw, max_raw, avg_raw,
                 raw_scores.len()
             );
         }
 
-        // Store scores directly on the source
         data_source.set_scores(&normalized_scores);
 
         let score_duration = score_start.elapsed();
-        log::info!(
-            "Anomaly scoring took {score_duration:?} for {}",
-            path.display()
-        );
+        log::info!("Anomaly scoring took {score_duration:?} for {}", path.display());
         log::info!("Total processing time: {:?}", start_time.elapsed());
     }
 }

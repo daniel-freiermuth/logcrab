@@ -320,8 +320,7 @@ impl Histogram {
     ) -> Option<f64> {
         let selected_line_index = selected_line_index?;
         let line = store.get_by_id(&selected_line_index)?;
-        let sel_ts = store.get_adjusted_timestamp(&selected_line_index, &line);
-
+        let sel_ts = line.timestamp;
         let elapsed = (sel_ts - start_time).as_seconds_f64();
         let total = (end_time - start_time).as_seconds_f64();
 
@@ -705,7 +704,7 @@ impl Histogram {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };
-                let ts = store.get_adjusted_timestamp(line_idx, &line);
+                let ts = line.timestamp;
                 let elapsed = ts - view_start;
 
                 // Skip markers outside visible range
@@ -755,7 +754,7 @@ impl Histogram {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };
-                let ts = store.get_adjusted_timestamp(line_idx, &line);
+                let ts = line.timestamp;
                 let elapsed = ts - view_start;
 
                 // Skip markers outside visible range
@@ -916,7 +915,7 @@ impl Histogram {
 
             if let Some(selected_line_index) = selected_line_index {
                 if let Some(line) = store.get_by_id(&selected_line_index) {
-                    let sel_ts = store.get_adjusted_timestamp(&selected_line_index, &line);
+                    let sel_ts = line.timestamp;
                     ui.separator();
                     ui.colored_label(
                         selected_color,
