@@ -26,7 +26,6 @@
 use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::queue_map::QueueMap;
 use crate::core::LogStore;
-use crate::parser::line::LogLineCore;
 use chrono::{DateTime, Local};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -236,7 +235,7 @@ impl HistogramWorker {
                 .filter(|idx| {
                     store.get_by_id(idx).is_some_and(|line| {
                         // Use adjusted timestamp for zoom filtering
-                        let ts = store.get_adjusted_timestamp(idx, &line);
+                        let ts = line.timestamp;
                         ts >= start_time && ts <= end_time
                     })
                 })
@@ -268,16 +267,13 @@ impl HistogramWorker {
     ) -> Option<(DateTime<Local>, DateTime<Local>)> {
         profiling::scope!("Histogram::calculate_time_range");
         // Use adjusted timestamps (with per-source offsets) for accurate time range
-        let first_ts = filtered_indices.iter().find_map(|idx| {
-            store
-                .get_by_id(idx)
-                .map(|line| store.get_adjusted_timestamp(idx, &line))
-        });
-        let last_ts = filtered_indices.iter().rev().find_map(|idx| {
-            store
-                .get_by_id(idx)
-                .map(|line| store.get_adjusted_timestamp(idx, &line))
-        });
+        let first_ts = filtered_indices
+            .iter()
+            .find_map(|idx| store.get_by_id(idx).map(|line| line.timestamp));
+        let last_ts = filtered_indices
+            .iter()
+            .rev()
+            .find_map(|idx| store.get_by_id(idx).map(|line| line.timestamp));
 
         match (first_ts, last_ts) {
             (Some(start), Some(end)) => Some((start, end)),
@@ -299,12 +295,12 @@ impl HistogramWorker {
         for line_idx in filtered_indices {
             if let Some(line) = store.get_by_id(line_idx) {
                 // Use adjusted timestamp (with per-source offsets) for accurate binning
-                let ts = store.get_adjusted_timestamp(line_idx, &line);
+                let ts = line.timestamp;
                 let bucket_idx = Self::timestamp_to_bucket(ts, start_time, bucket_size);
                 buckets[bucket_idx] += 1;
 
                 // Use anomaly_score from the line
-                let line_score = line.anomaly_score() / 100.0;
+                let line_score = line.anomaly_score / 100.0;
                 // Determine which score bucket this falls into
                 let score_bucket =
                     ((line_score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);

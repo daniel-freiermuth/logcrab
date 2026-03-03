@@ -1,6 +1,15 @@
+// LogCrab - GPL-3.0-or-later
+// Copyright (C) 2026 Daniel Freiermuth
+
 use chrono::{DateTime, Local, TimeZone};
 
-pub struct SyncDltTimeWindow {
+/// Per-source calibration window state.
+///
+/// Stored as `#[serde(skip)]` inside each typed `FileState`.  Created directly by
+/// `egui_render_context_menu` when the user clicks "Calibrate Time Here"; driven
+/// each frame by `LineType::egui_render_file_state`.
+#[derive(Debug, Clone)]
+pub struct CalibrationWindow {
     target_time_str: String,
     focus_requested: bool,
     is_dlt: bool,
@@ -9,7 +18,7 @@ pub struct SyncDltTimeWindow {
     apply_to_all_apps: bool,
 }
 
-impl SyncDltTimeWindow {
+impl CalibrationWindow {
     pub fn new(
         current_time: DateTime<Local>,
         is_dlt: bool,
@@ -26,25 +35,25 @@ impl SyncDltTimeWindow {
         }
     }
 
-    /// Render the sync time window
+    /// Render the calibration window.
     ///
-    /// Returns `Ok(Some((target_time, apply_to_all_apps)))` if the user confirmed the sync,
-    /// Ok(None) if the window is still open,
-    /// Err(()) if the operation was cancelled.
+    /// Returns:
+    /// - `Ok(Some((target_time, apply_to_all_apps)))` — user confirmed
+    /// - `Ok(None)` — window still open
+    /// - `Err(())` — user cancelled
     pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<(DateTime<Local>, bool)>, ()> {
         let mut result = Ok(None);
 
         let title = if self.is_dlt {
-            "⏱ Calibrate DLT Time"
+            "\u{23F1} Calibrate DLT Time"
         } else {
-            "⏱ Calibrate Time"
+            "\u{23F1} Calibrate Time"
         };
 
         egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                // Show both current/calculated and original/storage times with buttons
                 let (current_label, original_label) = if self.is_dlt {
                     ("Derived from monotonic:", "Storage timestamp:")
                 } else {
@@ -83,35 +92,31 @@ impl SyncDltTimeWindow {
 
                 let response = ui.text_edit_singleline(&mut self.target_time_str);
 
-                // Request focus on first frame only
                 if !self.focus_requested {
                     response.request_focus();
                     self.focus_requested = true;
                 }
 
-                // Parse the time string and show validation
                 let parsed_time = self.parse_time();
                 match &parsed_time {
                     Ok(dt) => {
                         ui.label(format!(
-                            "✓ Valid: {}",
+                            "\u{2713} Valid: {}",
                             dt.format("%Y-%m-%d %H:%M:%S%.3f %z")
                         ));
                     }
                     Err(e) => {
-                        ui.colored_label(egui::Color32::RED, format!("✗ {e}"));
+                        ui.colored_label(egui::Color32::RED, format!("\u{2717} {e}"));
                     }
                 }
 
                 ui.add_space(10.0);
 
-                // For DLT files, show checkbox to apply to all applications
                 if self.is_dlt {
                     ui.checkbox(&mut self.apply_to_all_apps, "Apply to all applications");
                     ui.add_space(5.0);
                 }
 
-                // Check if Enter was pressed
                 let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let enter_submitted =
                     response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -138,13 +143,11 @@ impl SyncDltTimeWindow {
         result
     }
 
-    /// Parse the time string with multiple format attempts
     fn parse_time(&self) -> Result<DateTime<Local>, String> {
         use chrono::NaiveDateTime;
 
         let s = self.target_time_str.trim();
 
-        // Try parsing with milliseconds: "YYYY-MM-DD HH:MM:SS.mmm"
         if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.3f") {
             return Local
                 .from_local_datetime(&naive)
@@ -152,7 +155,6 @@ impl SyncDltTimeWindow {
                 .ok_or_else(|| "Ambiguous or invalid local time".to_string());
         }
 
-        // Try parsing without milliseconds: "YYYY-MM-DD HH:MM:SS"
         if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
             return Local
                 .from_local_datetime(&naive)
@@ -160,7 +162,6 @@ impl SyncDltTimeWindow {
                 .ok_or_else(|| "Ambiguous or invalid local time".to_string());
         }
 
-        // Try parsing with just date: "YYYY-MM-DD"
         if let Ok(naive) =
             NaiveDateTime::parse_from_str(&format!("{s} 00:00:00"), "%Y-%m-%d %H:%M:%S")
         {

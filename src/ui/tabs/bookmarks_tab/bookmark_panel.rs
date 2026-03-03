@@ -16,10 +16,9 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::core::log_store::LogLine;
 use crate::core::log_store::StoreID;
 use crate::core::LogStore;
-use crate::parser::line::{LogLine, LogLineCore};
-use crate::parser::logline_types::format_time_diff;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::log_table::{
@@ -39,27 +38,11 @@ pub struct BookmarkData {
 /// Events emitted by the bookmark panel
 #[derive(Debug, Clone)]
 pub enum BookmarkPanelEvent {
-    BookmarkClicked {
-        store_id: StoreID,
-    },
-    BookmarkDeleted {
-        store_id: StoreID,
-    },
-    BookmarkRenamed {
-        store_id: StoreID,
-        new_name: String,
-    },
-    StartRenaming {
-        store_id: StoreID,
-    },
+    BookmarkClicked { store_id: StoreID },
+    BookmarkDeleted { store_id: StoreID },
+    BookmarkRenamed { store_id: StoreID, new_name: String },
+    StartRenaming { store_id: StoreID },
     CancelRenaming,
-    SyncTime {
-        line_index: StoreID,
-        calculated_time: chrono::DateTime<chrono::Local>,
-        storage_time: Option<chrono::DateTime<chrono::Local>>,
-        ecu_id: Option<String>,
-        app_id: Option<String>,
-    },
 }
 
 /// Reusable bookmark panel component
@@ -73,7 +56,6 @@ impl BookmarkPanel {
         line_idx: StoreID,
         events: &mut Vec<BookmarkPanelEvent>,
     ) {
-        use crate::parser::line::{LogLineCore, LogLineVariant};
         response.context_menu(|ui| {
             if ui.button("📑 Remove Bookmark").clicked() {
                 events.push(BookmarkPanelEvent::BookmarkDeleted { store_id: line_idx });
@@ -90,75 +72,18 @@ impl BookmarkPanel {
                 return;
             };
 
-            // Determine if we should show the sync/calibrate option
-            // Always show calibrate option for all file types
-            // (DLT in both StorageTime and CalibratedMonotonic modes)
-            let show_sync_option = true;
-
-            if show_sync_option && ui.button("⏱ Calibrate Time Here").clicked() {
-                // Get current timestamp (with any offset applied) and original timestamp
-                let offset_ms = store.get_time_offset_ms(&line_idx).unwrap_or(0);
-                let original_time = line.uncalibrated_timestamp();
-                let calculated_time = if offset_ms != 0 {
-                    original_time + chrono::Duration::milliseconds(offset_ms)
-                } else {
-                    original_time
-                };
-
-                // For DLT files in CalibratedMonotonic mode, extract storage time and ECU/App IDs
-                // For DLT files in StorageTime mode or non-DLT files, use generic offset mechanism
-                let (storage_time, ecu_id, app_id) = if let LogLineVariant::Dlt(ref dlt_line) = line
-                {
-                    let stor_time = dlt_line.dlt_message.storage_header.as_ref().and_then(|sh| {
-                        use chrono::TimeZone;
-                        let secs = i64::from(sh.timestamp.seconds);
-                        let nsecs = sh.timestamp.microseconds * 1000;
-                        chrono::Local.timestamp_opt(secs, nsecs).single()
-                    });
-
-                    // Only pass ECU/App IDs if in CalibratedMonotonic mode (boot_time is set)
-                    // This determines whether to use resync_dlt_time_to_target or set_time_offset_to_target
-                    if dlt_line.boot_time.is_some() {
-                        let ecu = dlt_line
-                            .dlt_message
-                            .header
-                            .ecu_id
-                            .as_ref()
-                            .map(std::string::ToString::to_string);
-                        let app = dlt_line
-                            .dlt_message
-                            .extended_header
-                            .as_ref()
-                            .map(|ext| ext.application_id.clone());
-                        (stor_time, ecu, app)
-                    } else {
-                        // StorageTime mode: use generic offset
-                        (stor_time, None, None)
-                    }
-                } else {
-                    // For non-DLT files, use original timestamp (line.timestamp() without offset)
-                    (Some(original_time), None, None)
-                };
-
-                events.push(BookmarkPanelEvent::SyncTime {
-                    line_index: line_idx,
-                    calculated_time,
-                    storage_time,
-                    ecu_id,
-                    app_id,
-                });
-                ui.close();
-            }
+            // Type-specific context menu items (DLT calibration for typed sources).
+            store.render_typed_context_menu_items(&line_idx, ui);
 
             ui.separator();
 
             if ui.button("📋 Copy Message").clicked() {
-                ui.ctx().copy_text(line.message());
+                ui.ctx().copy_text(line.message.clone());
                 ui.close();
             }
 
             if ui.button("📋 Copy Full Line").clicked() {
-                ui.ctx().copy_text(line.raw());
+                ui.ctx().copy_text(line.raw);
                 ui.close();
             }
         });
@@ -321,7 +246,7 @@ impl BookmarkPanel {
             return;
         };
 
-        let color = score_to_color(line.anomaly_score(), dark_mode);
+        let color = score_to_color(line.anomaly_score, dark_mode);
 
         let mut row_clicked = false;
 
@@ -404,7 +329,7 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
-            let line_number = line.line_number();
+            let line_number = line.line_number;
             let text = if is_selected {
                 RichText::new(format!("★ ▶ {line_number}"))
                     .color(color)
@@ -440,14 +365,8 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
-            // Apply time offset if present
-            let base_time = line.uncalibrated_timestamp();
-            let offset_ms = store.get_time_offset_ms(store_id).unwrap_or(0);
-            let display_time = if offset_ms != 0 {
-                base_time + chrono::Duration::milliseconds(offset_ms)
-            } else {
-                base_time
-            };
+            // Timestamp is already calibrated (includes source time offset)
+            let display_time = line.timestamp;
 
             let timestamp_str = display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             ui.label(RichText::new(&timestamp_str).color(color));
@@ -578,18 +497,8 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
-            // Add time offset prefix if present
-            let offset_ms = store.get_time_offset_ms(store_id).unwrap_or(0);
-            let prefix = if offset_ms != 0 {
-                let offset_duration = chrono::Duration::milliseconds(offset_ms);
-                format!("[{}] ", format_time_diff(offset_duration))
-            } else {
-                String::new()
-            };
-
-            let message = format!("{}{}", prefix, line.message());
             let job = FilterHighlight::highlight_text_with_filters(
-                &message,
+                &line.message,
                 color,
                 all_filter_highlights,
                 dark_mode,

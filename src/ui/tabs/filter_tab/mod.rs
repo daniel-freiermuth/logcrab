@@ -33,8 +33,7 @@ use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::{FilterToHighlightData, SessionState};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::LogCrabTab;
-use crate::ui::windows::{ChangeFilternameWindow, SyncDltTimeWindow};
-use chrono::{DateTime, Local};
+use crate::ui::windows::ChangeFilternameWindow;
 use egui::Ui;
 use std::collections::HashMap;
 
@@ -47,13 +46,6 @@ pub enum FilterViewEvent {
     BookmarkToggled {
         store_id: StoreID,
     },
-    SyncTime {
-        store_id: StoreID,
-        calculated_time: DateTime<Local>,
-        storage_time: Option<DateTime<Local>>,
-        ecu_id: Option<String>,
-        app_id: Option<String>,
-    },
     FilterNameEditRequested,
     FavoriteToggled,
     /// Convert this filter to a highlight
@@ -65,7 +57,6 @@ pub struct FilterView {
     should_focus_search: bool,
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
-    sync_dlt_time_window: Option<(StoreID, SyncDltTimeWindow, Option<String>, Option<String>)>,
     filter_bar: FilterBar,
 }
 
@@ -75,7 +66,6 @@ impl FilterView {
             should_focus_search: false,
             state,
             change_filtername_window: None,
-            sync_dlt_time_window: None,
             filter_bar: FilterBar::new(),
         }
     }
@@ -230,21 +220,6 @@ impl FilterView {
                         store_id: line_index,
                     });
                 }
-                LogTableEvent::SyncTime {
-                    line_index,
-                    calculated_time,
-                    storage_time,
-                    ecu_id,
-                    app_id,
-                } => {
-                    events.push(FilterViewEvent::SyncTime {
-                        store_id: line_index,
-                        calculated_time,
-                        storage_time,
-                        ecu_id,
-                        app_id,
-                    });
-                }
             }
         }
 
@@ -287,28 +262,6 @@ impl FilterView {
                     data_state.selected_line_index = Some(store_id);
                     data_state.toggle_bookmark(store_id);
                     data_state.modified = true;
-                }
-                FilterViewEvent::SyncTime {
-                    store_id,
-                    calculated_time,
-                    storage_time,
-                    ecu_id,
-                    app_id,
-                } => {
-                    // Open the sync time window with both times
-                    let is_dlt = ecu_id.is_some() || app_id.is_some();
-                    self.sync_dlt_time_window = Some((
-                        store_id,
-                        SyncDltTimeWindow::new(
-                            calculated_time,
-                            is_dlt,
-                            Some(calculated_time),
-                            storage_time,
-                        ),
-                        ecu_id,
-                        app_id,
-                    ));
-                    data_state.selected_line_index = Some(store_id);
                 }
                 FilterViewEvent::FilterNameEditRequested => {
                     // Prompt for new name
@@ -369,65 +322,6 @@ impl FilterView {
                 Err(()) => {
                     // Cancelled
                     self.change_filtername_window = None;
-                }
-            }
-        }
-
-        // Handle time sync dialog (DLT calibration or file offset)
-        if let Some((store_id, ref mut window, ref ecu_id, ref app_id)) = self.sync_dlt_time_window
-        {
-            match window.render(ui) {
-                Ok(Some((target_time, apply_to_all_apps))) => {
-                    // User confirmed - perform the sync
-                    let is_dlt = ecu_id.is_some() || app_id.is_some();
-
-                    let result = if is_dlt {
-                        // DLT calibration (per ECU, per App or all apps)
-                        let app_filter = if apply_to_all_apps {
-                            None
-                        } else {
-                            app_id.as_ref()
-                        };
-
-                        data_state.store.resync_dlt_time_to_target(
-                            &store_id,
-                            target_time,
-                            ecu_id.as_ref(),
-                            app_filter,
-                        )
-                    } else {
-                        // Non-DLT file offset
-                        data_state
-                            .store
-                            .set_time_offset_to_target(&store_id, target_time)
-                    };
-
-                    match result {
-                        Ok(()) => {
-                            let sync_type = if is_dlt {
-                                if apply_to_all_apps {
-                                    "DLT timestamps (all applications)"
-                                } else {
-                                    "DLT timestamps"
-                                }
-                            } else {
-                                "file time offset"
-                            };
-                            log::info!("Successfully synced {sync_type} to target: {target_time}");
-                            data_state.modified = true;
-                        }
-                        Err(e) => {
-                            log::error!("Failed to sync time: {e}");
-                        }
-                    }
-                    self.sync_dlt_time_window = None;
-                }
-                Ok(None) => {
-                    // Still editing
-                }
-                Err(()) => {
-                    // Cancelled
-                    self.sync_dlt_time_window = None;
                 }
             }
         }

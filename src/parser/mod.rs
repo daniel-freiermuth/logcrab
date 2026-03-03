@@ -1,14 +1,68 @@
-pub mod btsnoop;
-pub mod dlt;
-pub mod generic;
-pub mod line;
-pub mod logcat;
-pub mod logline_types;
-pub mod pcap;
-
-use chrono::Datelike;
 use fancy_regex::Regex;
 use std::sync::LazyLock;
+
+/// Format time difference with 3 significant digits and appropriate unit
+pub fn format_time_diff(diff: chrono::Duration) -> String {
+    let sign = if diff < chrono::Duration::zero() {
+        "-"
+    } else {
+        "+"
+    };
+
+    // Use absolute value for calculations
+    let abs_diff = if diff < chrono::Duration::zero() {
+        -diff
+    } else {
+        diff
+    };
+
+    // Select appropriate unit based on magnitude
+    let (value, unit) = if abs_diff.num_days().abs() >= 1 {
+        // Days (as float for fractional days)
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 86400.0, "d")
+    } else if abs_diff.num_hours().abs() >= 1 {
+        // Hours
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 3600.0, "h")
+    } else if abs_diff.num_minutes().abs() >= 1 {
+        // Minutes
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 60.0, "m")
+    } else if abs_diff.num_seconds().abs() >= 1 {
+        // Seconds
+        let total_millis = abs_diff.num_milliseconds() as f64;
+        (total_millis / 1000.0, "s")
+    } else if let Some(micros) = abs_diff.num_microseconds() {
+        if micros.abs() >= 1000 {
+            // Milliseconds
+            (micros.abs() as f64 / 1000.0, "ms")
+        } else if micros.abs() >= 1 {
+            // Microseconds
+            (micros.abs() as f64, "µs")
+        } else if let Some(nanos) = abs_diff.num_nanoseconds() {
+            // Nanoseconds
+            (nanos.abs() as f64, "ns")
+        } else {
+            (0.0, "ns")
+        }
+    } else {
+        // Fallback for very large durations
+        let total_secs = abs_diff.num_seconds() as f64;
+        (total_secs / 86400.0, "d")
+    };
+
+    // Format with 3 significant digits
+    if value >= 100.0 {
+        format!("{sign}{value:>3.0}{unit}")
+    } else if value >= 10.0 {
+        format!("{sign}{value:>3.1}{unit}")
+    } else if value >= 1.0 {
+        format!("{sign}{value:>3.2}{unit}")
+    } else {
+        format!("{sign}{value:>4.3}{unit}")
+    }
+}
 
 // Normalization patterns
 static NUMBER_PATTERN: LazyLock<Regex> =
@@ -24,66 +78,6 @@ static URL_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"https?://[^\s]+").expect("valid regex literal"));
 static WHITESPACE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s+").expect("valid regex literal"));
-
-/// Detected log format for a file
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogFormat {
-    /// Android bugreport file (contains dumpstate header with year)
-    Bugreport { year: i32 },
-    /// Pure logcat output (MM-DD HH:MM:SS.mmm, no year - uses current year)
-    Logcat { year: i32 },
-    /// Generic format (various timestamp formats with year)
-    Generic,
-}
-
-/// Detect the log format by sampling the first lines of content
-/// Returns the detected format, or Generic as fallback
-pub fn detect_format(content: &str) -> LogFormat {
-    // First check for bugreport dumpstate header - this indicates a bugreport file
-    if let Some(year) = logcat::detect_year_from_header(content) {
-        log::info!("Detected bugreport dumpstate header with year {year}");
-        return LogFormat::Bugreport { year };
-    }
-
-    // Otherwise, sample lines to detect pure logcat format
-    let mut logcat_matches = 0;
-    let mut total_checked = 0;
-
-    for line in content.lines().take(500) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        // Check if line matches logcat timestamp pattern (MM-DD HH:MM:SS.mmm)
-        if logcat::is_logcat_line(trimmed) {
-            logcat_matches += 1;
-        }
-        total_checked += 1;
-
-        // Stop after finding enough logcat lines (at least 10 matches)
-        if logcat_matches >= 10 {
-            break;
-        }
-
-        // Also stop if we've checked too many without finding logcat
-        if total_checked >= 100 && logcat_matches == 0 {
-            break;
-        }
-    }
-
-    // If we found logcat lines, treat as pure logcat (use current year)
-    if logcat_matches > 0 {
-        let year = chrono::Local::now().year();
-        log::info!(
-            "Detected {logcat_matches} logcat lines, using logcat format with current year {year}"
-        );
-        return LogFormat::Logcat { year };
-    }
-
-    log::info!("Using generic log format");
-    LogFormat::Generic
-}
 
 /// Normalize a log message to create a template key
 /// This helps identify structurally similar messages

@@ -1,5 +1,5 @@
 use crate::anomaly::scorer::AnomalyScorer;
-use crate::parser::line::{LogLine, LogLineCore};
+use crate::core::log_store::LogLine;
 use chrono::{DateTime, Duration, Local};
 use std::collections::{HashMap, VecDeque};
 
@@ -35,15 +35,15 @@ impl TemporalScorer {
 
 impl AnomalyScorer for TemporalScorer {
     fn score(&mut self, line: &LogLine) -> f64 {
-        let current_time = line.uncalibrated_timestamp();
+        let current_time = line.timestamp;
 
         self.clean_old_entries(current_time);
 
         let mut score: f64 = 0.0;
 
         // Component 1: Time since last occurrence (recency)
-        let template_key = line.template_key();
-        if let Some(&last_time) = self.last_seen.get(&template_key) {
+        let template_key = &line.template_key;
+        if let Some(&last_time) = self.last_seen.get(template_key) {
             let time_diff = current_time - last_time;
             let time_diff_secs = time_diff.num_seconds().abs(); // Use absolute value for out-of-order logs
 
@@ -78,10 +78,11 @@ impl AnomalyScorer for TemporalScorer {
     }
 
     fn update(&mut self, line: &LogLine) {
-        let current_time = line.uncalibrated_timestamp();
+        let current_time = line.timestamp;
 
         // Update last seen time for this template
-        self.last_seen.insert(line.template_key(), current_time);
+        self.last_seen
+            .insert(line.template_key.clone(), current_time);
 
         // Add to recent timestamps
         self.recent_timestamps.push_back(current_time);

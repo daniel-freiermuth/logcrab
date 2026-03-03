@@ -219,13 +219,13 @@ impl SearchState {
         }
 
         // Get target timestamp
-        let target_line = store.get_by_id(&target)?;
-        let target_time = store.get_adjusted_timestamp(&target, &target_line);
+        let target_time = store.adjusted_timestamp(&target)?;
 
         // Binary search to find the first line with timestamp >= target_time
         let idx = indices.partition_point(|line_idx| {
-            store.get_by_id(line_idx)
-                .is_some_and(|line| store.get_adjusted_timestamp(line_idx, &line) < target_time)
+            store
+                .adjusted_timestamp(line_idx)
+                .is_some_and(|ts| ts < target_time)
         });
 
         // Quick check: did we find the exact target at the partition point?
@@ -238,8 +238,7 @@ impl SearchState {
         let mut range_start = idx;
         while range_start > 0 {
             let prev_idx = range_start - 1;
-            if let Some(line) = store.get_by_id(&indices[prev_idx]) {
-                let ts = store.get_adjusted_timestamp(&indices[prev_idx], &line);
+            if let Some(ts) = store.adjusted_timestamp(&indices[prev_idx]) {
                 if ts == target_time {
                     range_start = prev_idx;
                     if indices[prev_idx] == target {
@@ -256,20 +255,23 @@ impl SearchState {
         // Scan forwards to find exact target or determine the range end
         let mut pos = range_start;
         while pos < indices.len() {
-            if let Some(line) = store.get_by_id(&indices[pos]) {
-                let ts = store.get_adjusted_timestamp(&indices[pos], &line);
-                if ts == target_time {
-                    if indices[pos] == target {
-                        return Some(pos);
+            if let Some(ts) = store.adjusted_timestamp(&indices[pos]) {
+                match ts.cmp(&target_time) {
+                    std::cmp::Ordering::Equal => {
+                        if indices[pos] == target {
+                            return Some(pos);
+                        }
+                        pos += 1;
                     }
-                    pos += 1;
-                } else if ts > target_time {
-                    // We've gone past target_time without finding exact match
-                    // Return closest position (before the overshoot)
-                    return Some(pos.saturating_sub(1).max(range_start));
-                } else {
-                    // ts < target_time, shouldn't happen after partition_point
-                    pos += 1;
+                    std::cmp::Ordering::Greater => {
+                        // We've gone past target_time without finding exact match
+                        // Return closest position (before the overshoot)
+                        return Some(pos.saturating_sub(1).max(range_start));
+                    }
+                    std::cmp::Ordering::Less => {
+                        // ts < target_time, shouldn't happen after partition_point
+                        pos += 1;
+                    }
                 }
             } else {
                 break;

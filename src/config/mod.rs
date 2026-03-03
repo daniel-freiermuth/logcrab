@@ -28,8 +28,8 @@ pub enum DltTimestampSource {
     /// Use storage header timestamp (wall-clock time)
     #[default]
     StorageTime,
-    /// Use calibrated monotonic clock (boot time + header timestamp, more precise in limited timespans)
-    CalibratedMonotonic,
+    /// Use inferred monotonic clock (boot time + header timestamp, more precise in limited timespans)
+    InferredMonotonic,
 }
 
 /// Global user configuration stored in config directory
@@ -55,9 +55,10 @@ pub struct GlobalConfig {
     #[serde(default)]
     pub last_filters_directory: Option<PathBuf>,
 
-    /// DLT timestamp source (storage time or calibrated monotonic clock)
+    /// Per-format file type configuration (e.g. DLT timestamp source).
+    /// Serialized to the global config file so settings persist across sessions.
     #[serde(default)]
-    pub dlt_timestamp_source: DltTimestampSource,
+    pub file_config: crate::core::log_store::GlobalFileConfig,
 
     /// Show bookmarks as markers in the timeline/histogram (default: false)
     #[serde(default)]

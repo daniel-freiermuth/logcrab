@@ -2,10 +2,10 @@ use super::windows;
 use super::ToastManager;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorker;
+use crate::core::log_store::all_file_extensions;
 use crate::core::{FilterWorker, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
@@ -51,9 +51,6 @@ pub struct LogCrabApp {
 
     /// Pending dropped files to load
     pending_drop_files: Vec<PathBuf>,
-
-    /// Pending DLT file reload (set when DLT timestamp source changes)
-    pending_dlt_reload: bool,
 
     /// Pending source removal (index of source to remove)
     pending_source_removal: Option<u64>,
@@ -103,7 +100,6 @@ impl LogCrabApp {
             global_config,
             pending_rebind: None,
             pending_drop_files: Vec::new(),
-            pending_dlt_reload: false,
             pending_source_removal: None,
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
         };
@@ -130,7 +126,6 @@ impl LogCrabApp {
             store,
             self.filter_worker.handle(),
             self.histogram_worker.handle(),
-            Arc::new(self.global_config.clone()),
         ));
     }
 
@@ -157,19 +152,14 @@ impl LogCrabApp {
                 .toast_manager
                 .create_progress_toast(file_name, "Starting...");
 
-            session.add_file(path, &toast_handle);
+            session.add_file(&path, &toast_handle, &self.global_config.file_config);
         }
     }
 
     /// Show file dialog and load selected file
     fn open_file_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new()
-            .add_filter(
-                "Log Files",
-                &[
-                    "log", "txt", "dlt", "pcap", "pcapng", "btsnoop", "snoop", "crab",
-                ],
-            )
+            .add_filter("Log Files", &all_file_extensions())
             .add_filter("All Files", &["*"]);
 
         if let Some(ref dir) = self.global_config.last_log_directory {
@@ -194,12 +184,7 @@ impl LogCrabApp {
     /// Show file dialog and add selected file(s) to the current workspace
     fn add_file_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new()
-            .add_filter(
-                "Log Files",
-                &[
-                    "log", "txt", "dlt", "pcap", "pcapng", "btsnoop", "snoop", "crab",
-                ],
-            )
+            .add_filter("Log Files", &all_file_extensions())
             .add_filter("All Files", &["*"]);
 
         if let Some(ref dir) = self.global_config.last_log_directory {
@@ -431,36 +416,16 @@ impl LogCrabApp {
 
             ui.separator();
 
-            ui.label("DLT Timestamp Source:");
-            let mut changed = false;
-            ui.horizontal(|ui| {
-                changed |= ui
-                    .selectable_value(
-                        &mut self.global_config.dlt_timestamp_source,
-                        crate::config::DltTimestampSource::StorageTime,
-                        "Storage Timestamp",
-                    )
-                    .changed();
-                changed |= ui
-                    .selectable_value(
-                        &mut self.global_config.dlt_timestamp_source,
-                        crate::config::DltTimestampSource::CalibratedMonotonic,
-                        "Derive From Monotonic",
-                    )
-                    .on_hover_text("More precise in limited timespans")
-                    .changed();
-            });
-            if changed {
-                // Save config when changed
+            if self.global_config.file_config.render(ui) {
                 if let Err(e) = self.global_config.save() {
                     log::error!("Failed to save config: {e}");
                 }
-                log::info!(
-                    "DLT timestamp source changed to: {:?}",
-                    self.global_config.dlt_timestamp_source
-                );
-                // Request reload of DLT files with the new timestamp source
-                self.pending_dlt_reload = true;
+                if let Some(ref mut session) = self.session {
+                    session
+                        .state
+                        .store
+                        .rebuild_all_time_indices(&self.global_config.file_config);
+                }
             }
         });
 
@@ -640,15 +605,6 @@ impl eframe::App for LogCrabApp {
             profiling::scope!("process_dropped_files");
             let files = std::mem::take(&mut self.pending_drop_files);
             self.process_dropped_files(files);
-        }
-
-        // Process pending DLT file reload (triggered by DLT timestamp source change)
-        if self.pending_dlt_reload {
-            self.pending_dlt_reload = false;
-            if let Some(ref mut session) = self.session {
-                session
-                    .reload_dlt_files(self.global_config.dlt_timestamp_source, &self.toast_manager);
-            }
         }
 
         // Process pending source removal

@@ -1,39 +1,181 @@
 // LogCrab - GPL-3.0-or-later
-// This file is part of LogCrab.
-//
-// Copyright (C) 2025 Daniel Freiermuth
-//
-// LogCrab is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// LogCrab is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
+// Copyright (C) 2026 Daniel Freiermuth
 
-//! `BTSnoop` (Bluetooth HCI log) file parser for Bluetooth traffic analysis.
-//!
-//! Supports Android btsnoop logs and btmon format.
-
-use crate::core::log_file::ProgressCallback;
-use crate::core::log_store::SourceData;
-
-use super::line::{BtsnoopLogLine, LogLine};
 use chrono::{DateTime, Local, TimeDelta};
+use egui::Ui;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::sync::Arc;
 
-/// Initial chunk size for incremental loading
-const BTSNOOP_INITIAL_CHUNK_SIZE: usize = 1 << 12; // 4,096 packets
-const BTSNOOP_MAX_CHUNK_SIZE: usize = 1 << 18; // 262,144 packets
-const BTSNOOP_CHUNKS_BEFORE_GROWTH: usize = 3; // Double chunk size every 3 chunks
+use crate::filetype::{BinaryFileType, InputFileType, LineType};
+
+// ============================================================================
+// BtsnoopLogLine
+// ============================================================================
+
+/// `BTSnoop` (Bluetooth HCI log) format log line representing an HCI packet
+#[derive(Debug, Clone)]
+pub struct BtsnoopLogLine {
+    /// Parsed HCI packet information
+    pub hci_info: HciPacketInfo,
+    /// Original packet number in source file
+    pub line_number: usize,
+    /// Anomaly score (mutable)
+    pub anomaly_score: f64,
+}
+
+impl BtsnoopLogLine {
+    pub const fn new(hci_info: HciPacketInfo, line_number: usize) -> Self {
+        Self {
+            hci_info,
+            line_number,
+            anomaly_score: 0.0,
+        }
+    }
+}
+
+// ============================================================================
+// BtsnoopFileState
+// ============================================================================
+
+/// Type alias kept for compatibility; the shared [`crate::filetype::SimpleFileState`]
+/// provides all interior-mutable time-offset and calibration state.
+pub type BtsnoopFileState = crate::filetype::SimpleFileState;
+
+// ============================================================================
+// LineType implementation
+// ============================================================================
+
+impl LineType for BtsnoopLogLine {
+    type Config = ();
+    type FileState = BtsnoopFileState;
+
+    fn file_state_from_v2(time_offset_ms: i64) -> BtsnoopFileState {
+        let s = BtsnoopFileState::default();
+        s.set_time_offset_ms(time_offset_ms);
+        s
+    }
+
+    fn timestamp(&self, _config: &(), file_state: &BtsnoopFileState) -> DateTime<Local> {
+        self.hci_info.timestamp + chrono::Duration::milliseconds(file_state.time_offset_ms())
+    }
+
+    fn message(&self) -> String {
+        self.hci_info.format_message()
+    }
+
+    fn display_message(&self, _config: &(), file_state: &BtsnoopFileState) -> String {
+        let offset_ms = file_state.time_offset_ms();
+        if offset_ms != 0 {
+            format!(
+                "[{}] {}",
+                crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)),
+                self.message()
+            )
+        } else {
+            self.hci_info.format_message()
+        }
+    }
+
+    fn raw(&self) -> String {
+        self.hci_info.format_raw()
+    }
+
+    fn line_number(&self) -> usize {
+        self.line_number
+    }
+
+    fn anomaly_score(&self) -> f64 {
+        self.anomaly_score
+    }
+
+    fn set_anomaly_score(&mut self, score: f64) {
+        self.anomaly_score = score;
+    }
+
+    fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &BtsnoopFileState) {
+        if ui.button("⏱ Calibrate Time Here").clicked() {
+            let raw_time = self.hci_info.timestamp;
+            let display_time =
+                raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms());
+            *file_state
+                .calibration
+                .lock()
+                .expect("calibration lock poisoned") = Some((
+                raw_time,
+                crate::filetype::CalibrationWindow::new(
+                    display_time,
+                    false,
+                    Some(display_time),
+                    None,
+                ),
+            ));
+            ui.close();
+        }
+    }
+}
+
+// ============================================================================
+// BtsnoopFileType (InputFileType + BinaryFileType)
+// ============================================================================
+
+/// Stateful reader for Bluetooth HCI logs in the `BTSnoop` format.
+///
+/// All packets are parsed eagerly at `open()` time (the `btsnoop` crate requires the
+/// full file in memory), then drained in chunks via `read()`.
+pub struct BtsnoopFileType {
+    lines: Vec<BtsnoopLogLine>,
+    cursor: usize,
+    file_size: u64,
+}
+
+impl InputFileType for BtsnoopFileType {
+    type LineType = BtsnoopLogLine;
+
+    const FILE_EXTENSIONS: &'static [&'static str] = &["log", "btsnoop"];
+
+    /// Open a `BTSnoop` file for pull-based reading.
+    ///
+    /// Reads and parses the entire file immediately so the `btsnoop` crate can operate
+    /// on the in-memory byte slice.
+    fn open(
+        path: &Path,
+        _config: (),
+        _file_state: std::sync::Arc<BtsnoopFileState>,
+    ) -> Result<Self, String> {
+        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let lines = parse_btsnoop_to_lines(path)?;
+        Ok(Self {
+            lines,
+            cursor: 0,
+            file_size,
+        })
+    }
+
+    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+        let end = (self.cursor + lines_to_read).min(self.lines.len());
+        let batch = self.lines[self.cursor..end].to_vec();
+        self.cursor = end;
+        Ok(batch)
+    }
+
+    fn bytes_consumed(&self) -> u64 {
+        let total = self.lines.len();
+        if total == 0 {
+            return self.file_size;
+        }
+        (self.cursor as f64 / total as f64 * self.file_size as f64) as u64
+    }
+}
+
+impl BinaryFileType for BtsnoopFileType {
+    /// `BTSnoop` file magic: `btsnoop\0` (8 bytes)
+    const MAGIC_BYTES: &'static [&'static [u8]] = &[b"btsnoop\0"];
+}
+
+// ============================================================================
+// HCI parsing utilities (moved from parser/btsnoop.rs)
+// ============================================================================
 
 /// Represents a parsed HCI packet for display
 #[derive(Debug, Clone)]
@@ -112,7 +254,6 @@ fn parse_hci_type_and_info(data: &[u8], _flags: &btsnoop::PacketFlags) -> (Strin
             if data.len() >= 3 {
                 let opcode = u16::from_le_bytes([data[1], data[2]]);
                 let param_len = data[3];
-
                 let cmd_name = get_hci_command_name(opcode);
                 (
                     "HCI_CMD".to_string(),
@@ -132,12 +273,10 @@ fn parse_hci_type_and_info(data: &[u8], _flags: &btsnoop::PacketFlags) -> (Strin
 
                 // Parse L2CAP header if present (need at least 4 more bytes)
                 if data.len() >= 9 && pb_flag != 0x01 {
-                    // pb_flag 0x01 = continuation fragment, no L2CAP header
                     let l2cap_len = u16::from_le_bytes([data[5], data[6]]);
                     let l2cap_cid = u16::from_le_bytes([data[7], data[8]]);
                     let channel_name = get_l2cap_channel_name(l2cap_cid);
 
-                    // Parse L2CAP signaling commands if applicable
                     let l2cap_info =
                         if (l2cap_cid == 0x0001 || l2cap_cid == 0x0005) && data.len() >= 10 {
                             let sig_code = data[9];
@@ -201,10 +340,7 @@ fn parse_hci_type_and_info(data: &[u8], _flags: &btsnoop::PacketFlags) -> (Strin
 /// Get human-readable HCI command name from opcode
 const fn get_hci_command_name(opcode: u16) -> &'static str {
     match opcode {
-        // Special
         0x0000 => "NOP",
-
-        // Link Control Commands (OGF 0x01)
         0x0401 => "Inquiry",
         0x0402 => "Inquiry_Cancel",
         0x0403 => "Periodic_Inquiry_Mode",
@@ -228,8 +364,6 @@ const fn get_hci_command_name(opcode: u16) -> &'static str {
         0x041F => "Read_Remote_Extended_Features",
         0x0428 => "Setup_Synchronous_Connection",
         0x0429 => "Accept_Synchronous_Connection",
-
-        // Link Policy Commands (OGF 0x02)
         0x0801 => "Hold_Mode",
         0x0802 => "Sniff_Mode",
         0x0803 => "Sniff_Mode",
@@ -245,8 +379,6 @@ const fn get_hci_command_name(opcode: u16) -> &'static str {
         0x080F => "Write_Default_Link_Policy_Settings",
         0x0810 => "Flow_Specification",
         0x0811 => "Sniff_Subrating",
-
-        // Controller & Baseband Commands (OGF 0x03)
         0x0C01 => "Set_Event_Mask",
         0x0C03 => "Reset",
         0x0C05 => "Set_Event_Filter",
@@ -326,8 +458,6 @@ const fn get_hci_command_name(opcode: u16) -> &'static str {
         0x0C6B => "Short_Range_Mode",
         0x0C6C => "Read_LE_Host_Support",
         0x0C6D => "Write_LE_Host_Support",
-
-        // Informational Parameters (OGF 0x04)
         0x1001 => "Read_Local_Version_Information",
         0x1002 => "Read_Local_Supported_Commands",
         0x1003 => "Read_Local_Supported_Features",
@@ -337,8 +467,6 @@ const fn get_hci_command_name(opcode: u16) -> &'static str {
         0x1009 => "Read_BD_ADDR",
         0x100A => "Read_Data_Block_Size",
         0x100B => "Read_Local_Supported_Codecs",
-
-        // Status Parameters (OGF 0x05)
         0x1401 => "Read_Failed_Contact_Counter",
         0x1402 => "Reset_Failed_Contact_Counter",
         0x1403 => "Read_Link_Quality",
@@ -346,8 +474,6 @@ const fn get_hci_command_name(opcode: u16) -> &'static str {
         0x1406 => "Read_AFH_Channel_Map",
         0x1407 => "Read_Clock",
         0x1408 => "Read_Encryption_Key_Size",
-
-        // LE Controller Commands (OGF 0x08)
         0x2001 => "LE_Set_Event_Mask",
         0x2002 => "LE_Read_Buffer_Size",
         0x2003 => "LE_Read_Local_Supported_Features",
@@ -426,10 +552,7 @@ const fn get_hci_command_name(opcode: u16) -> &'static str {
         0x204D => "LE_Read_RF_Path_Compensation",
         0x204E => "LE_Write_RF_Path_Compensation",
         0x204F => "LE_Set_Privacy_Mode",
-
-        // Vendor Specific Commands (OGF 0x3F, opcodes 0xFC00-0xFFFF)
         0xFC00..=0xFFFF => "Vendor_Specific",
-
         _ => "Unknown_Command",
     }
 }
@@ -568,127 +691,45 @@ const fn get_l2cap_signaling_code(code: u8) -> &'static str {
     }
 }
 
-/// Parse a btsnoop file with incremental loading
+/// Parse all HCI packets from a btsnoop file and return them as typed log lines.
 ///
-/// Appends parsed lines directly to `source` in batches for progressive display.
-/// Calls `progress_callback` periodically with progress updates.
-///
-/// Returns total number of packets parsed, or error.
-pub fn parse_btsnoop_file_with_progress<P: AsRef<Path>>(
-    path: P,
-    source: &Arc<SourceData>,
-    progress_callback: &ProgressCallback,
-) -> Result<usize, String> {
-    profiling::scope!("parse_btsnoop_file_with_progress");
+/// All packets are parsed eagerly since the `btsnoop` crate requires the entire file to be
+/// in memory.
+fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> Result<Vec<BtsnoopLogLine>, String> {
+    profiling::scope!("parse_btsnoop_to_lines");
     let path = path.as_ref();
     log::info!("Starting btsnoop parsing: {}", path.display());
 
-    let start_time = std::time::Instant::now();
-
-    // Read entire file (btsnoop crate requires byte slice)
     let mut file = File::open(path).map_err(|e| format!("Failed to open btsnoop file: {e}"))?;
-    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
-
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)
         .map_err(|e| format!("Failed to read btsnoop file: {e}"))?;
 
-    log::info!("Read {} bytes into memory", buffer.len());
-
-    // Parse the btsnoop file
     let btsnoop_file = btsnoop::parse_btsnoop_file(&buffer)
         .map_err(|e| format!("Failed to parse btsnoop file: {e:?}"))?;
 
-    log::info!(
-        "Parsed btsnoop header: datalink={:?}, {} packets",
-        btsnoop_file.header.datalink_type,
-        btsnoop_file.packets.len()
-    );
-
-    // Convert packets to log lines incrementally
-    let mut chunk_lines = Vec::new();
-    let mut line_number = 1;
-    let mut last_log_time = std::time::Instant::now();
-    let mut packets_since_log = 0;
-    let mut chunk_count = 0;
-    let mut current_chunk_size = BTSNOOP_INITIAL_CHUNK_SIZE;
+    let mut lines = Vec::with_capacity(btsnoop_file.packets.len());
+    let mut line_number = 1usize;
 
     for packet in &btsnoop_file.packets {
-        // Use btsnoop crate's timestamp() method which handles epoch conversion
         let duration_since_unix = packet.header.timestamp();
-
         let Some(timestamp) = TimeDelta::from_std(duration_since_unix)
             .ok()
             .and_then(|delta| {
                 DateTime::from_timestamp(0, 0).map(|epoch| (epoch + delta).with_timezone(&Local))
             })
         else {
-            log::warn!("Failed to convert packet timestamp at line {line_number}, skipping packet");
+            log::warn!("Failed to convert packet timestamp at line {line_number}, skipping");
             line_number += 1;
             continue;
         };
 
         if let Some(hci_info) = parse_hci_packet(packet, timestamp) {
-            let log_line = LogLine::Btsnoop(BtsnoopLogLine::new(hci_info, line_number));
-            chunk_lines.push(log_line);
-            line_number += 1;
-            packets_since_log += 1;
-
-            if chunk_lines.len() >= current_chunk_size {
-                source.append_lines(std::mem::take(&mut chunk_lines));
-                chunk_count += 1;
-
-                // Grow chunk size exponentially
-                if chunk_count % BTSNOOP_CHUNKS_BEFORE_GROWTH == 0
-                    && current_chunk_size < BTSNOOP_MAX_CHUNK_SIZE
-                {
-                    current_chunk_size = (current_chunk_size * 2).min(BTSNOOP_MAX_CHUNK_SIZE);
-                    log::debug!("Increased chunk size to {current_chunk_size} packets");
-                }
-
-                let progress = source.len() as f32 / btsnoop_file.packets.len() as f32;
-                progress_callback(
-                    progress,
-                    &format!("Parsing btsnoop... ({} packets)", source.len()),
-                );
-
-                // Log performance every 5 seconds
-                let now = std::time::Instant::now();
-                if now.duration_since(last_log_time).as_secs() >= 5 {
-                    let elapsed = now.duration_since(start_time).as_secs_f64();
-                    let rate = f64::from(packets_since_log)
-                        / now.duration_since(last_log_time).as_secs_f64();
-                    log::info!(
-                        "Parsed {} packets in {:.2}s ({:.0} pkt/s)",
-                        source.len(),
-                        elapsed,
-                        rate
-                    );
-                    last_log_time = now;
-                    packets_since_log = 0;
-                }
-            }
+            lines.push(BtsnoopLogLine::new(hci_info, line_number));
         }
+        line_number += 1;
     }
 
-    // Send any remaining lines
-    if !chunk_lines.is_empty() {
-        source.append_lines(chunk_lines);
-    }
-
-    let elapsed = start_time.elapsed();
-    let total_packets = source.len();
-    log::info!(
-        "Completed btsnoop parsing: {} packets in {:.2}s ({:.0} pkt/s, {} MB total)",
-        total_packets,
-        elapsed.as_secs_f64(),
-        total_packets as f64 / elapsed.as_secs_f64(),
-        file_size / 1_048_576
-    );
-
-    if source.is_empty() {
-        Err("No valid HCI packets found in btsnoop file".to_string())
-    } else {
-        Ok(source.len())
-    }
+    log::info!("Parsed {} HCI packets from btsnoop file", lines.len());
+    Ok(lines)
 }

@@ -1,12 +1,12 @@
-use crate::parser::line::LogLine;
+use crate::core::log_store::LogLine;
 
 /// Trait for anomaly scoring components
 pub trait AnomalyScorer: Send {
-    /// Score a line before updating internal state
-    /// Returns a score in [0.0, 1.0] where higher = more anomalous
+    /// Score a line before updating internal state.
+    /// Returns a score in [0.0, 1.0] where higher = more anomalous.
     fn score(&mut self, line: &LogLine) -> f64;
 
-    /// Update internal state after scoring
+    /// Update internal state after scoring.
     fn update(&mut self, line: &LogLine);
 }
 
