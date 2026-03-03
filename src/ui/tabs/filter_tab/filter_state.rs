@@ -19,7 +19,7 @@
 use crate::core::log_store::StoreID;
 use crate::core::{SavedFilter, SearchRule};
 use crate::ui::tabs::filter_tab::histogram::HistogramCache;
-use crate::ui::tabs::filter_tab::log_table::ColumnWidths;
+use crate::ui::tabs::filter_tab::log_table::{ColumnWidths, TimestampMode};
 use egui::Color32;
 
 /// Represents a single filter view with its own search criteria and cached results.
@@ -41,6 +41,13 @@ pub struct FilterState {
 
     /// Column widths for the log table
     pub column_widths: ColumnWidths,
+
+    /// How the timestamp column displays time (absolute or delta).
+    pub timestamp_mode: TimestampMode,
+
+    /// Optional reference row for delta-time mode.
+    /// When set, all delta values are relative to this row's timestamp.
+    pub time_zero_store_id: Option<StoreID>,
 }
 
 impl FilterState {
@@ -53,6 +60,8 @@ impl FilterState {
             closest_row_index: None,
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
+            timestamp_mode: TimestampMode::default(),
+            time_zero_store_id: None,
         }
     }
 
@@ -94,6 +103,8 @@ impl From<&SavedFilter> for FilterState {
             closest_row_index: None,
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
+            timestamp_mode: TimestampMode::default(),
+            time_zero_store_id: None,
         }
     }
 }
