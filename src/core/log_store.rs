@@ -362,7 +362,7 @@ where
     pub fn render_file_state(&self, ui: &egui::Ui) -> bool {
         let changed = self.file_state.egui_render_file_state(ui);
         if changed {
-            self.bump_version();
+            self.rebuild_time_index();
         }
         changed
     }
