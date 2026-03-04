@@ -1,8 +1,94 @@
 use egui::Ui;
 
-pub mod registry;
+pub mod calibration_window;
 pub mod registry_macro;
-pub mod types;
+pub mod generic;
+pub mod logcat;
+pub mod bugreport;
+pub mod dlt;
+pub mod pcap;
+pub mod btsnoop;
+
+pub use calibration_window::CalibrationWindow;
+
+// ============================================================================
+// CalibrationState — typed alias used by every FileState
+// ============================================================================
+
+/// Per-source calibration in progress: the line's raw timestamp (needed to compute the
+/// final offset on confirm) paired with the open [`CalibrationWindow`].
+///
+/// Stored in `FileState` as `#[serde(skip)]`. Created by `egui_render_context_menu`;
+/// driven each frame by `LogFileState::egui_render_file_state`.
+pub type CalibrationState = (chrono::DateTime<chrono::Local>, CalibrationWindow);
+
+/// Shared helper — drives an in-progress calibration window and returns the
+/// offset to apply on confirm, or `None` if still open / cancelled.
+///
+/// Clears `calibration` on both confirm and cancel.
+pub fn render_calibration(
+    ui: &egui::Ui,
+    calibration: &mut Option<CalibrationState>,
+) -> Option<i64> {
+    let (raw_time, result) = if let Some((raw, window)) = calibration.as_mut() {
+        (*raw, window.render(ui))
+    } else {
+        return None;
+    };
+    match result {
+        Ok(Some((target_time, _apply_to_all))) => {
+            *calibration = None;
+            Some(target_time.timestamp_millis() - raw_time.timestamp_millis())
+        }
+        Ok(None) => None,
+        Err(()) => {
+            *calibration = None;
+            None
+        }
+    }
+}
+
+/// Trait that every per-source `FileState` type must implement.
+///
+/// Provides a frame-driven hook for UI state that lives inside the `FileState`
+/// (e.g. an open calibration window).  The default implementation is a no-op so
+/// that simple types like `()` satisfy the bound without any boilerplate.
+pub trait LogFileState {
+    /// Drive any open UI window stored in this state.
+    ///
+    /// Called once per source per frame from `SourceData::render_file_state`.
+    /// Returns `true` when the user confirms a new calibration time (the offset has
+    /// already been written into `self`); the caller then bumps the source version.
+    /// Default: no-op returning `false`.
+    fn egui_render_file_state(&mut self, _ui: &egui::Ui) -> bool {
+        false
+    }
+}
+
+/// Blanket impl so that `()` (used as `FileState` by the legacy Mixed source)
+/// satisfies the `LogFileState` bound without any behaviour.
+impl LogFileState for () {}
+
+// ============================================================================
+// EguiConfig — trait for config types that can render their own settings UI
+// ============================================================================
+
+/// Implemented by every `LineType::Config` type to render format-specific settings UI.
+///
+/// The default impl is a no-op so that config types without user-visible settings
+/// (i.e. `()`) satisfy the bound automatically.
+pub trait EguiConfig {
+    /// Render the settings UI for this config value.
+    ///
+    /// Returns `true` if the value was mutated. The caller is responsible for
+    /// rebuilding any derived state (e.g. timestamp sort indices) on `true`.
+    fn egui_render(&mut self, _ui: &mut Ui) -> bool {
+        false
+    }
+}
+
+/// Blanket impl for `()` — no settings to show.
+impl EguiConfig for () {}
 
 /// Filetype trait infrastructure for logcrab
 pub trait LineType: std::fmt::Debug + Send + Sync {

@@ -18,10 +18,12 @@
 
 use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
-use crate::filetype::LineType;
-use crate::parser::line::{LogLine, LogLineCore, LogLineVariant};
+use crate::filetype::{btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType, generic::GenericFileType, logcat::LogcatFileType, pcap::PcapFileType};
+use crate::filetype::{btsnoop::BtsnoopLogLine, dlt::DltLogLine, generic::GenericLogLine, logcat::LogcatLogLine, pcap::PcapLogLine};
+use crate::filetype::{InputFileType, LineType, LogFileState};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
-use chrono::{Datelike, Local};
+use chrono::{Local};
+use egui;
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -37,7 +39,6 @@ use std::sync::{Arc, Mutex, RwLock};
 static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
-#[derive(Debug)]
 pub struct SourceData<FT>
 where
     FT: InputFileType,
@@ -66,6 +67,16 @@ where
     version: AtomicU64,
     /// Flag to request cancellation of background loading/scoring operations
     cancel_requested: AtomicBool,
+}
+
+impl<FT: InputFileType> std::fmt::Debug for SourceData<FT> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceData")
+            .field("source_id", &self.source_id)
+            .field("file_path", &self.file_path)
+            .field("version", &self.version.load(AtomicOrdering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl<FT: InputFileType> SourceData<FT>
@@ -213,7 +224,7 @@ where
     // ========================================================================
 
     /// Add or update a bookmark for a line in this source
-    fn set_bookmark(&self, line_index: usize, name: String) {
+    pub(crate) fn set_bookmark(&self, line_index: usize, name: String) {
         profiling::scope!("SourceData::bookmarks::write");
         let bookmark = Bookmark { line_index, name };
         self.bookmarks
@@ -223,7 +234,7 @@ where
     }
 
     /// Remove a bookmark from this source
-    fn remove_bookmark(&self, line_index: usize) -> Option<Bookmark> {
+    pub(crate) fn remove_bookmark(&self, line_index: usize) -> Option<Bookmark> {
         profiling::scope!("SourceData::bookmarks::write");
         self.bookmarks
             .write()
@@ -232,7 +243,7 @@ where
     }
 
     /// Check if a line has a bookmark
-    fn has_bookmark(&self, line_index: usize) -> bool {
+    pub(crate) fn has_bookmark(&self, line_index: usize) -> bool {
         profiling::scope!("SourceData::bookmarks::read");
         self.bookmarks
             .read()
@@ -241,7 +252,7 @@ where
     }
 
     /// Get a bookmark by line index
-    fn get_bookmark(&self, line_index: usize) -> Option<Bookmark> {
+    pub(crate) fn get_bookmark(&self, line_index: usize) -> Option<Bookmark> {
         profiling::scope!("SourceData::bookmarks::read");
         self.bookmarks
             .read()
@@ -251,7 +262,7 @@ where
     }
 
     /// Get all bookmarks for this source
-    fn get_bookmarks(&self) -> Vec<Bookmark> {
+    pub(crate) fn get_bookmarks(&self) -> Vec<Bookmark> {
         profiling::scope!("SourceData::bookmarks::read");
         self.bookmarks
             .read()
@@ -326,46 +337,39 @@ where
     // Time Synchronization
     // ========================================================================
 
-    /// Get the current time offset in milliseconds
-    pub fn get_time_offset_ms(&self) -> i64 {
-        *self
-            .time_offset_ms
-            .read()
-            .expect("time_offset_ms lock poisoned")
+    /// Re-sort `by_timestamp` using the current config and file-state, then bump the version.
+    ///
+    /// Call this after the shared `config` arc has been mutated externally (e.g.
+    /// `DltTimestampSource` was changed), so that timestamp ordering and dependent
+    /// filter caches are invalidated.
+    pub fn rebuild_time_index(&self) {
+        let lines = self.lines.read().expect("lines lock poisoned");
+        let config = self.config.read().expect("config lock poisoned");
+        let file_state = self.file_state.read().expect("file_state lock poisoned");
+        let mut indices: Vec<usize> = (0..lines.len()).collect();
+        indices.par_sort_by_key(|&idx| lines[idx].timestamp(&config, &file_state));
+        drop(file_state);
+        drop(config);
+        drop(lines);
+        *self.by_timestamp.write().expect("by_timestamp lock poisoned") = indices;
+        self.bump_version();
     }
 
-    /// Set time offset for this source to synchronize with target time for a specific line
-    /// Used for non-DLT files
-    pub fn set_time_offset_to_target(
-        &self,
-        reference_line_index: usize,
-        target_time: chrono::DateTime<chrono::Local>,
-    ) -> Result<(), String> {
-        profiling::scope!("SourceData::set_time_offset_to_target");
-
-        // Get the reference line's original timestamp
-        let original_time = self
-            .lines
-            .read()
-            .expect("lines lock poisoned")
-            .get(reference_line_index)
-            .ok_or_else(|| "Reference line not found".to_string())?
-            .timestamp(&self.config.read().unwrap(), &self.file_state.read().unwrap());
-
-        // Calculate offset: target_time - original_time
-        let offset_ms = target_time.timestamp_millis() - original_time.timestamp_millis();
-
-        log::info!(
-            "Setting time offset for source: {offset_ms} ms (original: {original_time}, target: {target_time})"
-        );
-
-        *self
-            .time_offset_ms
+    /// Drive any open calibration window for this source (one per frame).
+    ///
+    /// The `FileState` impl writes the new offset into itself on confirm;
+    /// this method bumps the source version so dependent views invalidate.
+    /// Returns `true` when an offset was applied.
+    pub fn render_file_state(&self, ui: &egui::Ui) -> bool {
+        let changed = self
+            .file_state
             .write()
-            .expect("time_offset_ms lock poisoned") = offset_ms;
-        self.bump_version();
-
-        Ok(())
+            .expect("file_state lock poisoned")
+            .egui_render_file_state(ui);
+        if changed {
+            self.bump_version();
+        }
+        changed
     }
 
     // ========================================================================
@@ -674,8 +678,25 @@ impl LogStore {
         })
     }
 
-    /// Add a source to the store
-    pub fn add_source(self: &Arc<Self>, source_data: &Arc<SourceData>) {
+    /// Rebuild the timestamp-sorted index on every source in the store.
+    ///
+    /// Writes the relevant `file_config` field into each source's config arc before
+    /// rebuilding, so that line ordering reflects the latest settings. Call this
+    /// after mutating any field of `GlobalFileConfig` (e.g. via `render`).
+    pub fn rebuild_all_time_indices(&self, file_config: &GlobalFileConfig) {
+        profiling::scope!("LogStore::rebuild_all_time_indices");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        for source in sources.values() {
+            source.apply_file_config_and_rebuild(file_config);
+        }
+    }
+
+    /// Insert a pre-constructed [`DataSourceVariant`] directly into the store.
+    ///
+    /// Used when the caller already has a `DataSourceVariant` (e.g. from
+    /// [`crate::core::LogFileLoader::load_file`]) and does not need the concrete
+    /// typed `Arc` afterwards.
+    pub fn add_source(self: &Arc<Self>, variant: DataSourceVariant) {
         profiling::scope!("LogStore::sources::write");
         let id = variant.source_id();
         self.sources
@@ -803,47 +824,27 @@ impl LogStore {
             .and_then(|s| s.remove_bookmark(id.line_index))
     }
 
-    /// Resynchronize DLT timestamps to a custom target time (per file, per ECU, per App)
-    #[allow(clippy::significant_drop_tightening)] // sources can't be dropped
-                                                  // early since source is a reference into it
-    pub fn resync_dlt_time_to_target(
-        &self,
-        id: &StoreID,
-        target_time: chrono::DateTime<chrono::Local>,
-        ecu_id: Option<&String>,
-        app_id: Option<&String>,
-    ) -> Result<(), String> {
-        profiling::scope!("LogStore::sources::read");
+    /// Drive all open calibration windows across every source (one per frame).
+    ///
+    /// Returns `true` if any source applied a new offset (caller should set `modified = true`).
+    pub fn render_file_states(&self, ui: &egui::Ui) -> bool {
+        profiling::scope!("LogStore::render_file_states");
         let sources = self.sources.read().expect("sources lock poisoned");
-        let source = sources
-            .get(&id.source_id)
-            .ok_or_else(|| "Source not found".to_string())?;
-        source.resync_dlt_time_to_target(id.line_index, target_time, ecu_id, app_id)
+        sources.values().fold(false, |acc, s| s.render_file_state(ui) || acc)
     }
 
-    /// Set time offset for a source file to synchronize with target time for a specific line
-    /// Used for non-DLT files
-    pub fn set_time_offset_to_target(
-        &self,
-        id: &StoreID,
-        target_time: chrono::DateTime<chrono::Local>,
-    ) -> Result<(), String> {
+    /// Render type-specific context menu items for the line at `id`.
+    ///
+    /// Returns `true` if the source was found. Must be called inside an egui
+    /// `context_menu` closure.
+    pub fn render_typed_context_menu_items(&self, id: &StoreID, ui: &mut egui::Ui) -> bool {
         profiling::scope!("LogStore::sources::read");
-        let source = {
-            let sources = self.sources.read().expect("sources lock poisoned");
-            sources
-                .get(&id.source_id)
-                .ok_or_else(|| "Source not found".to_string())?
-                .clone()
+        let sources = self.sources.read().expect("sources lock poisoned");
+        let Some(variant) = sources.get(&id.source_id) else {
+            return false;
         };
-        source.set_time_offset_to_target(id.line_index, target_time)
-    }
-
-    /// Get time offset for a source
-    pub fn get_time_offset_ms(&self, id: &StoreID) -> Option<i64> {
-        profiling::scope!("LogStore::sources::read");
-        let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(&id.source_id).map(|s| s.get_time_offset_ms())
+        variant.render_context_menu(id.line_index, ui);
+        true
     }
 
     /// Check if a line has a bookmark
@@ -911,7 +912,7 @@ impl LogStore {
     /// Returns `StoreIDs` for matching lines, sorted by timestamp.
     pub fn get_matching_ids<F>(&self, predicate: F) -> Vec<StoreID>
     where
-        F: Fn(&LogLine) -> bool + Sync,
+        F: Fn(&LogLineVariant) -> bool + Sync,
     {
         profiling::scope!("LogStore::get_matching_ids");
         profiling::scope!("LogStore::sources::read");
