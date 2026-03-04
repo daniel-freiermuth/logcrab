@@ -238,8 +238,10 @@ impl Histogram {
             }
         }
 
+        let is_recalculating = !cache.is_valid(&cache_key);
+
         if let Some(data) = cache.data.clone() {
-            // Cache is valid, render it
+            // Cache is valid or stale; render it (spinner overlay shown if stale)
             Self::render_cached(
                 ui,
                 store,
@@ -248,6 +250,7 @@ impl Histogram {
                 selected_line_index,
                 markers,
                 &mut cache.zoom,
+                is_recalculating,
             )
         } else {
             // No stale data available, show loading
@@ -268,6 +271,7 @@ impl Histogram {
         selected_line_index: Option<StoreID>,
         markers: &[HistogramMarker],
         zoom: &mut HistogramZoomState,
+        is_recalculating: bool,
     ) -> Option<HistogramClickEvent> {
         // The data already contains buckets computed for the current view range
         // (either full range or zoomed range, as computed by the worker)
@@ -296,6 +300,7 @@ impl Histogram {
             zoom,
             view_start,
             view_end,
+            is_recalculating,
         );
 
         Self::render_timeline_labels(
@@ -347,6 +352,7 @@ impl Histogram {
         zoom: &mut HistogramZoomState,
         view_start: DateTime<Local>,
         view_end: DateTime<Local>,
+        is_recalculating: bool,
     ) -> Option<HistogramClickEvent> {
         profiling::scope!("Histogram::draw_bars");
         let desired_size = egui::vec2(ui.available_width(), 60.0);
@@ -400,6 +406,40 @@ impl Histogram {
         }
 
         // Handle hover tooltip for markers
+        // Spinner overlay when histogram is being recalculated
+        if is_recalculating {
+            painter.rect_filled(
+                rect,
+                0.0,
+                Color32::from_black_alpha(if dark_mode { 80 } else { 50 }),
+            );
+
+            let center = rect.center();
+            let radius = 8.0_f32;
+            let time = ui.input(|i| i.time);
+            let start_angle = time * std::f64::consts::TAU;
+            let end_angle = std::f64::consts::TAU.mul_add(2.0 / 3.0, start_angle);
+            let n_points = 24;
+            let points: Vec<egui::Pos2> = (0..=n_points)
+                .map(|i| {
+                    let t = f64::from(i) / f64::from(n_points);
+                    let angle = (end_angle - start_angle).mul_add(t, start_angle);
+                    let (sin, cos) = angle.sin_cos();
+                    center + egui::vec2(cos as f32, sin as f32) * radius
+                })
+                .collect();
+            let spinner_color = if dark_mode {
+                Color32::WHITE
+            } else {
+                Color32::from_gray(50)
+            };
+            painter.add(egui::Shape::line(
+                points,
+                egui::Stroke::new(2.0, spinner_color),
+            ));
+            ui.ctx().request_repaint();
+        }
+
         Self::handle_marker_hover(
             ui,
             &response,
