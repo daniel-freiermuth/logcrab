@@ -57,7 +57,7 @@ where
     /// Per-source file state — user-visible state specific to this file (e.g. time offsets, calibration).
     /// Each `FileState` type owns its interior synchronization; no outer `RwLock` is needed.
     /// Wrapped in `Arc` so that types like `DltFileState` can clone the Arc into the background
-    /// loader (e.g. to share the `boot_times` DashMap). For all other types the background
+    /// loader (e.g. to share the `boot_times` `DashMap`). For all other types the background
     /// loader ignores this Arc entirely.
     pub file_state: Arc<<FT::LineType as LineType>::FileState>,
     /// Bookmarks for this source, keyed by line index within this source
@@ -733,7 +733,7 @@ impl LogStore {
             .read()
             .expect("sources lock poisoned")
             .values()
-            .map(|s| s.version())
+            .map(DataSourceVariant::version)
             .sum();
         StoreVersion { sources, lines }
     }
@@ -745,7 +745,7 @@ impl LogStore {
             .read()
             .expect("sources lock poisoned")
             .values()
-            .map(|s| s.len())
+            .map(DataSourceVariant::len)
             .sum()
     }
 

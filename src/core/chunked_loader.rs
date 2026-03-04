@@ -97,7 +97,7 @@ impl ChunkedLoader {
                 chunk_count += 1;
 
                 // Adaptive chunk size growth
-                if chunk_count % self.chunks_before_growth == 0
+                if chunk_count.is_multiple_of(self.chunks_before_growth)
                     && current_chunk_size < self.max_chunk_size
                 {
                     current_chunk_size = (current_chunk_size * 2).min(self.max_chunk_size);

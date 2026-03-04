@@ -17,9 +17,9 @@
 //! ```
 //!
 //! Each entry is `slug: Arm: FileType: LogLine`:
-//! - `slug` — snake_case field name in [`GlobalFileConfig`] and the config key used when
+//! - `slug` — `snake_case` field name in [`GlobalFileConfig`] and the config key used when
 //!   propagating settings to open sources.
-//! - `Arm` — PascalCase variant name in [`DataSourceVariant`].
+//! - `Arm` — `PascalCase` variant name in [`DataSourceVariant`].
 //! - `FileType` — the struct implementing [`BinaryFileType`] or [`TextFileType`].
 //! - `LogLine` — the concrete log-line type stored in [`SourceData`].
 //!
@@ -73,7 +73,7 @@ pub mod const_checks {
     }
 
     /// Returns `true` if any two patterns *within the same slice* are prefix-related.
-    /// Catches degenerate MAGIC_BYTES like `&[b"DLT", b"DLT\x01"]`.
+    /// Catches degenerate `MAGIC_BYTES` like `&[b"DLT", b"DLT\x01"]`.
     pub const fn self_has_prefix_conflict(patterns: &[&[u8]]) -> bool {
         let mut i = 0;
         while i < patterns.len() {

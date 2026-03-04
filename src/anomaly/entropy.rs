@@ -52,7 +52,7 @@ impl AnomalyScorer for EntropyScorer {
         }
 
         let message = line.message.as_str();
-        let entropy = Self::calculate_entropy(&message);
+        let entropy = Self::calculate_entropy(message);
         let length = message.len() as f64;
 
         // Score based on deviation from average
@@ -67,7 +67,7 @@ impl AnomalyScorer for EntropyScorer {
 
     fn update(&mut self, line: &LogLine) {
         let message = line.message.as_str();
-        let entropy = Self::calculate_entropy(&message);
+        let entropy = Self::calculate_entropy(message);
         let length = message.len() as f64;
 
         // Running average

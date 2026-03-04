@@ -41,7 +41,7 @@ pub struct DltLogLine {
 }
 
 impl DltLogLine {
-    pub fn new(
+    pub const fn new(
         dlt_message: dlt_core::dlt::Message,
         storage_time: DateTime<Local>,
         header_timestamp_us: Option<i64>,
@@ -175,7 +175,7 @@ pub struct DltCalibrationState {
 /// - `boot_times`: `Arc<DashMap>` — inline writes from `DltFileType::read()` without locking
 /// - `calibration`: `Mutex<Option<...>>` — UI-thread-only, always uncontended
 pub struct DltFileState {
-    /// Storage-time mode: offset added to every storage_time timestamp.
+    /// Storage-time mode: offset added to every `storage_time` timestamp.
     pub storage_offset_ms: AtomicI64,
     /// Inferred-time mode: corrected boot times per `(ecu_id, app_id)`.
     ///
@@ -288,18 +288,18 @@ impl<'de> serde::Deserialize<'de> for DltFileState {
 
 impl EguiConfig for crate::config::DltTimestampSource {
     fn egui_render(&mut self, ui: &mut Ui) -> bool {
-        use crate::config::DltTimestampSource;
+        
         ui.separator();
         ui.label("DLT Timestamp Source:");
         let mut changed = false;
         ui.horizontal(|ui| {
             changed |= ui
-                .selectable_value(self, DltTimestampSource::StorageTime, "Storage Timestamp")
+                .selectable_value(self, Self::StorageTime, "Storage Timestamp")
                 .changed();
             changed |= ui
                 .selectable_value(
                     self,
-                    DltTimestampSource::InferredMonotonic,
+                    Self::InferredMonotonic,
                     "Infer From Monotonic",
                 )
                 .on_hover_text("More precise in limited timespans")
@@ -630,7 +630,7 @@ pub const fn dlt_header_time_to_timedelta(header_time: u32) -> chrono::TimeDelta
 }
 
 /// Convert a `dlt_core::dlt::Message` to `DltLogLine`.
-pub(crate) fn convert_dlt_message(
+pub fn convert_dlt_message(
     msg: &dlt_core::dlt::Message,
     line_number: usize,
 ) -> Option<DltLogLine> {

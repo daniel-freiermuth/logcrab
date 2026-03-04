@@ -13,7 +13,7 @@ use crate::filetype::{BinaryFileType, InputFileType, LineType};
 // BtsnoopLogLine
 // ============================================================================
 
-/// BTSnoop (Bluetooth HCI log) format log line representing an HCI packet
+/// `BTSnoop` (Bluetooth HCI log) format log line representing an HCI packet
 #[derive(Debug, Clone)]
 pub struct BtsnoopLogLine {
     /// Parsed HCI packet information
@@ -113,7 +113,7 @@ impl LineType for BtsnoopLogLine {
 // BtsnoopFileType (InputFileType + BinaryFileType)
 // ============================================================================
 
-/// Stateful reader for Bluetooth HCI logs in the BTSnoop format.
+/// Stateful reader for Bluetooth HCI logs in the `BTSnoop` format.
 ///
 /// All packets are parsed eagerly at `open()` time (the `btsnoop` crate requires the
 /// full file in memory), then drained in chunks via `read()`.
@@ -134,7 +134,7 @@ impl InputFileType for BtsnoopFileType {
 
     const FILE_EXTENSIONS: &'static [&'static str] = &["log", "btsnoop"];
 
-    /// Open a BTSnoop file for pull-based reading.
+    /// Open a `BTSnoop` file for pull-based reading.
     ///
     /// Reads and parses the entire file immediately so the `btsnoop` crate can operate
     /// on the in-memory byte slice.
@@ -165,7 +165,7 @@ impl InputFileType for BtsnoopFileType {
 }
 
 impl BinaryFileType for BtsnoopFileType {
-    /// BTSnoop file magic: `btsnoop\0` (8 bytes)
+    /// `BTSnoop` file magic: `btsnoop\0` (8 bytes)
     const MAGIC_BYTES: &'static [&'static [u8]] = &[b"btsnoop\0"];
 }
 

@@ -217,7 +217,7 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
 
         let version = value
             .get("version")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(1) as u32;
 
         // v2 and older: use the legacy parser and migrate up.
@@ -229,9 +229,7 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
 
         if version > CRAB_FILE_VERSION {
             log::warn!(
-                ".crab file version {} is newer than supported version {}. Some features may not work correctly.",
-                version,
-                CRAB_FILE_VERSION
+                ".crab file version {version} is newer than supported version {CRAB_FILE_VERSION}. Some features may not work correctly."
             );
         }
 

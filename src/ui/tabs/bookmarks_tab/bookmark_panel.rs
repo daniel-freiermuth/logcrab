@@ -92,7 +92,7 @@ impl BookmarkPanel {
             }
 
             if ui.button("📋 Copy Full Line").clicked() {
-                ui.ctx().copy_text(line.raw.clone());
+                ui.ctx().copy_text(line.raw);
                 ui.close();
             }
         });

@@ -49,7 +49,7 @@ impl AnomalyScorer for RarityScorer {
     }
 
     fn update(&mut self, line: &LogLine) {
-        *self.template_counts.entry(line.template_key.to_owned()).or_insert(0) += 1;
+        *self.template_counts.entry(line.template_key.clone()).or_insert(0) += 1;
         self.total_lines += 1;
     }
 }
