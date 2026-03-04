@@ -222,12 +222,38 @@ impl Clone for DltFileState {
     }
 }
 
+/// Separator used to encode `(ecu_id, app_id)` tuple keys as JSON-safe strings.
+/// ASCII unit-separator (0x1F) is safe: DLT IDs are printable ASCII.
+const BOOT_TIME_KEY_SEP: char = '\x1F';
+
+fn boot_times_to_string_map(
+    bt: &DashMap<(String, String), DateTime<Local>>,
+) -> std::collections::BTreeMap<String, DateTime<Local>> {
+    bt.iter()
+        .map(|e| {
+            let key = format!("{}{BOOT_TIME_KEY_SEP}{}", e.key().0, e.key().1);
+            (key, *e.value())
+        })
+        .collect()
+}
+
+fn string_map_to_boot_times(
+    map: std::collections::BTreeMap<String, DateTime<Local>>,
+) -> DashMap<(String, String), DateTime<Local>> {
+    map.into_iter()
+        .filter_map(|(k, v)| {
+            let (ecu, app) = k.split_once(BOOT_TIME_KEY_SEP)?;
+            Some(((ecu.to_string(), app.to_string()), v))
+        })
+        .collect()
+}
+
 impl serde::Serialize for DltFileState {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let mut state = s.serialize_struct("DltFileState", 2)?;
         state.serialize_field("storage_offset_ms", &self.storage_offset_ms())?;
-        state.serialize_field("boot_times", &*self.boot_times)?;
+        state.serialize_field("boot_times", &boot_times_to_string_map(&self.boot_times))?;
         state.end()
     }
 }
@@ -239,12 +265,12 @@ impl<'de> serde::Deserialize<'de> for DltFileState {
             #[serde(default)]
             storage_offset_ms: i64,
             #[serde(default)]
-            boot_times: DashMap<(String, String), DateTime<Local>>,
+            boot_times: std::collections::BTreeMap<String, DateTime<Local>>,
         }
         let h = Helper::deserialize(d)?;
         Ok(Self {
             storage_offset_ms: AtomicI64::new(h.storage_offset_ms),
-            boot_times: Arc::new(h.boot_times),
+            boot_times: Arc::new(string_map_to_boot_times(h.boot_times)),
             calibration: Mutex::new(None),
         })
     }
