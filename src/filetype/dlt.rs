@@ -419,18 +419,13 @@ impl crate::filetype::LogFileState for DltFileState {
                 let ecu_id = cal.ecu_id.clone();
 
                 if apply_to_all_apps {
-                    if let Some(old_bt_ref) = self.boot_times.get(&key) {
-                        let old_bt = *old_bt_ref;
-                        drop(old_bt_ref);
-                        let delta = new_boot_time.signed_duration_since(old_bt);
-                        for mut entry in self.boot_times.iter_mut() {
-                            if entry.key().0 == ecu_id {
-                                *entry.value_mut() = *entry.value_mut() + delta;
-                            }
+                    for mut entry in self.boot_times.iter_mut() {
+                        if entry.key().0 == ecu_id {
+                            *entry.value_mut() = new_boot_time;
                         }
-                    } else {
-                        self.boot_times.insert(key, new_boot_time);
                     }
+                    // Insert if no entry for this ECU existed yet.
+                    self.boot_times.entry(key).or_insert(new_boot_time);
                 } else {
                     self.boot_times.insert(key, new_boot_time);
                 }
