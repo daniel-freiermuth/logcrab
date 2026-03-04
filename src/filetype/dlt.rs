@@ -157,6 +157,12 @@ pub struct DltCalibrationState {
     pub app_id: String,
     /// Header timestamp of the right-clicked line in microseconds (time since boot).
     pub header_timestamp_us: i64,
+    /// Whether this calibration was opened in inferred-monotonic mode.
+    /// When `false` the result updates `storage_offset_ms` instead of `boot_times`.
+    pub is_inferred: bool,
+    /// Raw storage timestamp of the right-clicked line (before any offset).
+    /// Used to compute the new `storage_offset_ms` in storage-time mode.
+    pub storage_time: chrono::DateTime<chrono::Local>,
     /// The calibration UI window.
     pub window: crate::filetype::CalibrationWindow,
 }
@@ -418,6 +424,8 @@ impl LineType for DltLogLine {
                 ecu_id: self.ecu_id.clone(),
                 app_id: self.app_id.clone(),
                 header_timestamp_us: self.header_timestamp_us.unwrap_or(0),
+                is_inferred,
+                storage_time: self.storage_time,
                 window: crate::filetype::CalibrationWindow::new(
                     current_time,
                     is_inferred,
@@ -439,21 +447,27 @@ impl crate::filetype::LogFileState for DltFileState {
         };
         match cal.window.render(ui) {
             Ok(Some((target_time, apply_to_all_apps))) => {
-                let new_boot_time =
-                    target_time - chrono::TimeDelta::microseconds(cal.header_timestamp_us);
-                let key = (cal.ecu_id.clone(), cal.app_id.clone());
-                let ecu_id = cal.ecu_id.clone();
+                if cal.is_inferred {
+                    let new_boot_time =
+                        target_time - chrono::TimeDelta::microseconds(cal.header_timestamp_us);
+                    let key = (cal.ecu_id.clone(), cal.app_id.clone());
+                    let ecu_id = cal.ecu_id.clone();
 
-                if apply_to_all_apps {
-                    for mut entry in self.boot_times.iter_mut() {
-                        if entry.key().0 == ecu_id {
-                            *entry.value_mut() = new_boot_time;
+                    if apply_to_all_apps {
+                        for mut entry in self.boot_times.iter_mut() {
+                            if entry.key().0 == ecu_id {
+                                *entry.value_mut() = new_boot_time;
+                            }
                         }
+                        // Insert if no entry for this ECU existed yet.
+                        self.boot_times.entry(key).or_insert(new_boot_time);
+                    } else {
+                        self.boot_times.insert(key, new_boot_time);
                     }
-                    // Insert if no entry for this ECU existed yet.
-                    self.boot_times.entry(key).or_insert(new_boot_time);
                 } else {
-                    self.boot_times.insert(key, new_boot_time);
+                    // Storage-time mode: derive the offset from the raw storage timestamp.
+                    let offset_ms = (target_time - cal.storage_time).num_milliseconds();
+                    self.storage_offset_ms.store(offset_ms, std::sync::atomic::Ordering::Relaxed);
                 }
 
                 *cal_guard = None;
