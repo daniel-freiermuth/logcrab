@@ -519,6 +519,11 @@ impl Histogram {
                 }
                 zoom.drag_start = None;
                 zoom.drag_end = None;
+            } else if zoom.drag_start.is_some() && !ui.input(|i| i.pointer.primary_down()) {
+                // Mouse was released outside the window — egui never fired drag_stopped(),
+                // so clear the stale drag state to prevent the selection box freezing.
+                zoom.drag_start = None;
+                zoom.drag_end = None;
             }
 
             // Draw selection rectangle while dragging
