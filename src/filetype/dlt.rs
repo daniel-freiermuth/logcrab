@@ -218,8 +218,11 @@ impl Clone for DltFileState {
     /// Deep-clones `boot_times` into a fresh `Arc<DashMap>`.
     /// Calibration is transient UI state and is not cloned.
     fn clone(&self) -> Self {
-        let bt: DashMap<(String, String), DateTime<Local>> =
-            self.boot_times.iter().map(|e| (e.key().clone(), *e.value())).collect();
+        let bt: DashMap<(String, String), DateTime<Local>> = self
+            .boot_times
+            .iter()
+            .map(|e| (e.key().clone(), *e.value()))
+            .collect();
         Self {
             storage_offset_ms: AtomicI64::new(self.storage_offset_ms()),
             boot_times: Arc::new(bt),
@@ -288,7 +291,6 @@ impl<'de> serde::Deserialize<'de> for DltFileState {
 
 impl EguiConfig for crate::config::DltTimestampSource {
     fn egui_render(&mut self, ui: &mut Ui) -> bool {
-        
         ui.separator();
         ui.label("DLT Timestamp Source:");
         let mut changed = false;
@@ -297,11 +299,7 @@ impl EguiConfig for crate::config::DltTimestampSource {
                 .selectable_value(self, Self::StorageTime, "Storage Timestamp")
                 .changed();
             changed |= ui
-                .selectable_value(
-                    self,
-                    Self::InferredMonotonic,
-                    "Infer From Monotonic",
-                )
+                .selectable_value(self, Self::InferredMonotonic, "Infer From Monotonic")
                 .on_hover_text("More precise in limited timespans")
                 .changed();
         });
@@ -354,7 +352,11 @@ impl LineType for DltLogLine {
         self.format_body()
     }
 
-    fn display_message(&self, config: &crate::config::DltTimestampSource, file_state: &DltFileState) -> String {
+    fn display_message(
+        &self,
+        config: &crate::config::DltTimestampSource,
+        file_state: &DltFileState,
+    ) -> String {
         use crate::config::DltTimestampSource;
         let body = self.format_body();
         match config {
@@ -369,7 +371,10 @@ impl LineType for DltLogLine {
                 // has been applied, consistent with how other file types behave.
                 let offset_ms = file_state.storage_offset_ms();
                 if offset_ms != 0 {
-                    format!("[{}] {body}", format_time_diff(chrono::Duration::milliseconds(offset_ms)))
+                    format!(
+                        "[{}] {body}",
+                        format_time_diff(chrono::Duration::milliseconds(offset_ms))
+                    )
                 } else {
                     body
                 }
@@ -407,7 +412,9 @@ impl LineType for DltLogLine {
 
             // Current display time: inferred if available, otherwise storage.
             let current_time = if is_inferred {
-                let header_us = self.header_timestamp_us.expect("header_timestamp_us is Some when is_inferred");
+                let header_us = self
+                    .header_timestamp_us
+                    .expect("header_timestamp_us is Some when is_inferred");
                 let key = (self.ecu_id.clone(), self.app_id.clone());
                 file_state
                     .boot_times
@@ -416,11 +423,13 @@ impl LineType for DltLogLine {
                         *bt + chrono::TimeDelta::microseconds(header_us)
                     })
             } else {
-                self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms())
+                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms())
             };
 
-            *file_state.calibration.lock().expect("calibration lock poisoned") = Some(DltCalibrationState {
+            *file_state
+                .calibration
+                .lock()
+                .expect("calibration lock poisoned") = Some(DltCalibrationState {
                 ecu_id: self.ecu_id.clone(),
                 app_id: self.app_id.clone(),
                 header_timestamp_us: self.header_timestamp_us.unwrap_or(0),
@@ -436,7 +445,6 @@ impl LineType for DltLogLine {
             ui.close();
         }
     }
-
 }
 
 impl crate::filetype::LogFileState for DltFileState {
@@ -467,7 +475,8 @@ impl crate::filetype::LogFileState for DltFileState {
                 } else {
                     // Storage-time mode: derive the offset from the raw storage timestamp.
                     let offset_ms = (target_time - cal.storage_time).num_milliseconds();
-                    self.storage_offset_ms.store(offset_ms, std::sync::atomic::Ordering::Relaxed);
+                    self.storage_offset_ms
+                        .store(offset_ms, std::sync::atomic::Ordering::Relaxed);
                 }
 
                 *cal_guard = None;
@@ -578,7 +587,7 @@ impl InputFileType for DltFileType {
                         self.line_number += 1;
                     }
                 }
-                Ok(Some(_)) => {} // skip non-Item messages (e.g. skipped bytes)
+                Ok(Some(_)) => {}  // skip non-Item messages (e.g. skipped bytes)
                 Ok(None) => break, // EOF
                 Err(e) => {
                     log::warn!("Failed to parse DLT message: {e:?}");
@@ -617,10 +626,7 @@ pub fn storage_time_to_datetime(
 }
 
 /// Convert a `dlt_core::dlt::Message` to `DltLogLine`.
-pub fn convert_dlt_message(
-    msg: &dlt_core::dlt::Message,
-    line_number: usize,
-) -> Option<DltLogLine> {
+pub fn convert_dlt_message(msg: &dlt_core::dlt::Message, line_number: usize) -> Option<DltLogLine> {
     let storage_time = storage_time_to_datetime(&msg.storage_header.as_ref()?.timestamp)?;
 
     if msg.header.ecu_id.is_none() {

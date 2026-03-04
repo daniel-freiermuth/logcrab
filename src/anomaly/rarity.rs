@@ -25,11 +25,7 @@ impl AnomalyScorer for RarityScorer {
         }
 
         let template_key = &line.template_key;
-        let count = self
-            .template_counts
-            .get(template_key)
-            .copied()
-            .unwrap_or(0);
+        let count = self.template_counts.get(template_key).copied().unwrap_or(0);
 
         if count == 0 {
             // Never seen before - highly anomalous
@@ -49,7 +45,10 @@ impl AnomalyScorer for RarityScorer {
     }
 
     fn update(&mut self, line: &LogLine) {
-        *self.template_counts.entry(line.template_key.clone()).or_insert(0) += 1;
+        *self
+            .template_counts
+            .entry(line.template_key.clone())
+            .or_insert(0) += 1;
         self.total_lines += 1;
     }
 }

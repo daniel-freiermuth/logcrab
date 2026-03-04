@@ -325,7 +325,6 @@ impl FilterView {
                 }
             }
         }
-
     }
 
     /// Move selection within a filtered view (only through matched indices)

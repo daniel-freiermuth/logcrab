@@ -19,7 +19,10 @@
 use std::sync::Arc;
 
 use crate::{
-    core::{log_store::{StoreID, LogLine}, LogStore},
+    core::{
+        log_store::{LogLine, StoreID},
+        LogStore,
+    },
     ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
 use chrono::Local;
@@ -29,12 +32,8 @@ use egui_extras::{Column, TableBuilder};
 /// Events emitted by the log table
 #[derive(Clone)]
 pub enum LogTableEvent {
-    LineClicked {
-        line_index: StoreID,
-    },
-    BookmarkToggled {
-        line_index: StoreID,
-    },
+    LineClicked { line_index: StoreID },
+    BookmarkToggled { line_index: StoreID },
 }
 
 /// Convert anomaly score to color with continuous gradient

@@ -4,8 +4,8 @@ use super::ToastManager;
 use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
-use crate::core::log_store::all_file_extensions;
 use crate::core::histogram_worker::HistogramWorker;
+use crate::core::log_store::all_file_extensions;
 use crate::core::{FilterWorker, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
@@ -421,7 +421,10 @@ impl LogCrabApp {
                     log::error!("Failed to save config: {e}");
                 }
                 if let Some(ref mut session) = self.session {
-                    session.state.store.rebuild_all_time_indices(&self.global_config.file_config);
+                    session
+                        .state
+                        .store
+                        .rebuild_all_time_indices(&self.global_config.file_config);
                 }
             }
         });

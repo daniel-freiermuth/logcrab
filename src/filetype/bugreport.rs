@@ -8,8 +8,8 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::LazyLock;
 
-use crate::filetype::{InputFileType, TextFileType};
 use super::logcat::{parse_logcat_line, LogcatLogLine};
+use crate::filetype::{InputFileType, TextFileType};
 
 // ============================================================================
 // Bugreport parsing utilities
@@ -88,7 +88,11 @@ impl InputFileType for BugreportFileType {
 
     const FILE_EXTENSIONS: &'static [&'static str] = &["txt", "zip"];
 
-    fn open(path: &::std::path::Path, _config: (), _file_state: std::sync::Arc<crate::filetype::logcat::LogcatFileState>) -> Result<Self, String> {
+    fn open(
+        path: &::std::path::Path,
+        _config: (),
+        _file_state: std::sync::Arc<crate::filetype::logcat::LogcatFileState>,
+    ) -> Result<Self, String> {
         Self::open(path)
     }
 
@@ -140,6 +144,9 @@ mod tests {
 
     #[test]
     fn test_detect_year_from_header_missing() {
-        assert_eq!(detect_year_from_header("plain logcat output\n11-20 14:23:45.123 msg"), None);
+        assert_eq!(
+            detect_year_from_header("plain logcat output\n11-20 14:23:45.123 msg"),
+            None
+        );
     }
 }

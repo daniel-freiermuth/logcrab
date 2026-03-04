@@ -54,9 +54,9 @@ impl LogFileLoader {
         file_config: &GlobalFileConfig,
     ) -> Option<DataSourceVariant> {
         let mut crab_lock = crab_lock;
-        crate::core::log_store::try_open_binary(path, toast, &mut crab_lock, file_config).or_else(|| {
-            crate::core::log_store::open_text_source(path, toast, crab_lock, file_config)
-        })
+        crate::core::log_store::try_open_binary(path, toast, &mut crab_lock, file_config).or_else(
+            || crate::core::log_store::open_text_source(path, toast, crab_lock, file_config),
+        )
     }
 
     /// Create a typed [`SourceData<T>`], spawn a background loading thread, and
@@ -71,7 +71,9 @@ impl LogFileLoader {
         toast: &ProgressToastHandle,
         crab_lock: Option<(File, PathBuf)>,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
-        open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> Result<FT, String> + Send + 'static,
+        open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> Result<FT, String>
+            + Send
+            + 'static,
     ) -> Option<Arc<SourceData<FT>>>
     where
         FT: InputFileType + Send + 'static,
@@ -209,7 +211,9 @@ impl LogFileLoader {
             let avg_raw: f64 = raw_scores.iter().sum::<f64>() / raw_scores.len() as f64;
             log::info!(
                 "Score statistics - Raw: min={:.3}, max={:.3}, avg={:.3}, total_lines={}",
-                min_raw, max_raw, avg_raw,
+                min_raw,
+                max_raw,
+                avg_raw,
                 raw_scores.len()
             );
         }
@@ -217,7 +221,10 @@ impl LogFileLoader {
         data_source.set_scores(&normalized_scores);
 
         let score_duration = score_start.elapsed();
-        log::info!("Anomaly scoring took {score_duration:?} for {}", path.display());
+        log::info!(
+            "Anomaly scoring took {score_duration:?} for {}",
+            path.display()
+        );
         log::info!("Total processing time: {:?}", start_time.elapsed());
     }
 }

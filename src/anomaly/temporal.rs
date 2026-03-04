@@ -81,7 +81,8 @@ impl AnomalyScorer for TemporalScorer {
         let current_time = line.timestamp;
 
         // Update last seen time for this template
-        self.last_seen.insert(line.template_key.clone(), current_time);
+        self.last_seen
+            .insert(line.template_key.clone(), current_time);
 
         // Add to recent timestamps
         self.recent_timestamps.push_back(current_time);

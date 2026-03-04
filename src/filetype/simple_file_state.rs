@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 
-use crate::filetype::{CalibrationState, LogFileState, render_calibration};
+use crate::filetype::{render_calibration, CalibrationState, LogFileState};
 
 /// Interior-mutable file state for the four simple time-offset-based formats.
 ///

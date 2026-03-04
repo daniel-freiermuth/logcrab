@@ -222,8 +222,7 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
 
         // v2 and older: use the legacy parser and migrate up.
         if version <= CRAB_FILE_V2 {
-            let v2: CrabFileV2 =
-                serde_json::from_value(value).map_err(SessionError::Parse)?;
+            let v2: CrabFileV2 = serde_json::from_value(value).map_err(SessionError::Parse)?;
             return Ok(Self::migrate_from_v2(v2));
         }
 

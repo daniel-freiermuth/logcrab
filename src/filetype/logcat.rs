@@ -80,7 +80,11 @@ impl LineType for LogcatLogLine {
     fn display_message(&self, _config: &(), file_state: &LogcatFileState) -> String {
         let offset_ms = file_state.time_offset_ms();
         if offset_ms != 0 {
-            format!("[{}] {}", crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)), self.message_text)
+            format!(
+                "[{}] {}",
+                crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)),
+                self.message_text
+            )
         } else {
             self.message_text.clone()
         }
@@ -102,24 +106,26 @@ impl LineType for LogcatLogLine {
         self.anomaly_score = score;
     }
 
-    fn egui_render_context_menu(
-        &self,
-        ui: &mut Ui,
-        _config: &(),
-        file_state: &LogcatFileState,
-    ) {
+    fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &LogcatFileState) {
         if ui.button("⏱ Calibrate Time Here").clicked() {
             let raw_time = self.timestamp;
             let display_time =
                 raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms());
-            *file_state.calibration.lock().expect("calibration lock poisoned") = Some((
+            *file_state
+                .calibration
+                .lock()
+                .expect("calibration lock poisoned") = Some((
                 raw_time,
-                crate::filetype::CalibrationWindow::new(display_time, false, Some(display_time), None),
+                crate::filetype::CalibrationWindow::new(
+                    display_time,
+                    false,
+                    Some(display_time),
+                    None,
+                ),
             ));
             ui.close();
         }
     }
-
 }
 
 // ============================================================================
@@ -145,7 +151,11 @@ impl InputFileType for LogcatFileType {
     /// Open a logcat file for pull-based reading.
     ///
     /// Logcat lines carry no year; the current calendar year is used.
-    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<LogcatFileState>) -> Result<Self, String> {
+    fn open(
+        path: &Path,
+        _config: (),
+        _file_state: std::sync::Arc<LogcatFileState>,
+    ) -> Result<Self, String> {
         let year = chrono::Local::now().year();
         let file =
             File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
@@ -168,11 +178,7 @@ impl InputFileType for LogcatFileType {
                     self.bytes_read += n as u64;
                     self.line_number += 1;
                     let raw = buf.trim_end_matches(['\n', '\r']).to_string();
-                    if let Some(line) = parse_logcat_line(
-                        raw,
-                        self.line_number,
-                        self.year,
-                    ) {
+                    if let Some(line) = parse_logcat_line(raw, self.line_number, self.year) {
                         result.push(line);
                     }
                 }
@@ -247,11 +253,13 @@ mod tests {
 
     #[test]
     fn test_threadtime_format() {
-        let raw =
-            "11-20 14:23:45.123  1234  5678 I ActivityManager: Start proc com.example.app"
-                .to_string();
+        let raw = "11-20 14:23:45.123  1234  5678 I ActivityManager: Start proc com.example.app"
+            .to_string();
         let line = parse_logcat_line(raw, 1, 2024).expect("should parse logcat line");
-        assert_eq!(line.message_text, "1234  5678 I ActivityManager: Start proc com.example.app");
+        assert_eq!(
+            line.message_text,
+            "1234  5678 I ActivityManager: Start proc com.example.app"
+        );
     }
 
     #[test]
@@ -260,7 +268,10 @@ mod tests {
             "01-01 00:00:07.329  root     8     8 I CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf"
                 .to_string();
         let line = parse_logcat_line(raw, 1, 2024).expect("should parse logcat line");
-        assert_eq!(line.message_text, "root     8     8 I CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf");
+        assert_eq!(
+            line.message_text,
+            "root     8     8 I CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf"
+        );
     }
 
     #[test]

@@ -1,14 +1,14 @@
 use egui::Ui;
 
+pub mod btsnoop;
+pub mod bugreport;
 pub mod calibration_window;
-pub mod registry_macro;
-pub mod simple_file_state;
+pub mod dlt;
 pub mod generic;
 pub mod logcat;
-pub mod bugreport;
-pub mod dlt;
 pub mod pcap;
-pub mod btsnoop;
+pub mod registry_macro;
+pub mod simple_file_state;
 
 pub use calibration_window::CalibrationWindow;
 pub use simple_file_state::SimpleFileState;
@@ -98,12 +98,26 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
     /// Per-type global user-controlled settings shared across all sources of this type
     /// (e.g. DLT timestamp source). Shared via `Arc<RwLock<T::Config>>` — a single
     /// instance is held per session and mutating it affects all open files of this type live.
-    type Config: std::fmt::Debug + Default + Clone + Send + Sync + serde::Serialize + for<'de> serde::Deserialize<'de> + EguiConfig;
+    type Config: std::fmt::Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + serde::Serialize
+        + for<'de> serde::Deserialize<'de>
+        + EguiConfig;
 
     /// Per-source persistent state and transient UI state for this file
     /// (e.g. time offset, open calibration window). Persisted to the `.crab` file.
     /// Transient fields (open windows etc.) must be annotated `#[serde(skip)]`.
-    type FileState: LogFileState + std::fmt::Debug + Default + Clone + Send + Sync + serde::Serialize + for<'de> serde::Deserialize<'de>;
+    type FileState: LogFileState
+        + std::fmt::Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + serde::Serialize
+        + for<'de> serde::Deserialize<'de>;
 
     /// Migrate a v2 `.crab` file's `time_offset_ms` field into a `FileState`.
     ///

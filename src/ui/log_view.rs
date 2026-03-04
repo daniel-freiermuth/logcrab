@@ -53,7 +53,6 @@ pub struct CrabSession {
 
     /// Pending tab add request (set by add button callback)
     pending_tab_add: Option<PendingTabAdd>,
-
 }
 
 impl CrabSession {
@@ -119,12 +118,7 @@ impl CrabSession {
 
         log::info!("Adding file to session: {}", path.display());
 
-        let Some(variant) = LogFileLoader::load_file(
-            path,
-            toast,
-            None,
-            file_config,
-        ) else {
+        let Some(variant) = LogFileLoader::load_file(path, toast, None, file_config) else {
             toast.set_error("File is already open in another LogCrab instance".to_string());
             toast.dismiss();
             return;

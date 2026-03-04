@@ -67,7 +67,11 @@ impl LineType for BtsnoopLogLine {
     fn display_message(&self, _config: &(), file_state: &BtsnoopFileState) -> String {
         let offset_ms = file_state.time_offset_ms();
         if offset_ms != 0 {
-            format!("[{}] {}", crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)), self.message())
+            format!(
+                "[{}] {}",
+                crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)),
+                self.message()
+            )
         } else {
             self.hci_info.format_message()
         }
@@ -89,24 +93,26 @@ impl LineType for BtsnoopLogLine {
         self.anomaly_score = score;
     }
 
-    fn egui_render_context_menu(
-        &self,
-        ui: &mut Ui,
-        _config: &(),
-        file_state: &BtsnoopFileState,
-    ) {
+    fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &BtsnoopFileState) {
         if ui.button("⏱ Calibrate Time Here").clicked() {
             let raw_time = self.hci_info.timestamp;
             let display_time =
                 raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms());
-            *file_state.calibration.lock().expect("calibration lock poisoned") = Some((
+            *file_state
+                .calibration
+                .lock()
+                .expect("calibration lock poisoned") = Some((
                 raw_time,
-                crate::filetype::CalibrationWindow::new(display_time, false, Some(display_time), None),
+                crate::filetype::CalibrationWindow::new(
+                    display_time,
+                    false,
+                    Some(display_time),
+                    None,
+                ),
             ));
             ui.close();
         }
     }
-
 }
 
 // ============================================================================
@@ -132,7 +138,11 @@ impl InputFileType for BtsnoopFileType {
     ///
     /// Reads and parses the entire file immediately so the `btsnoop` crate can operate
     /// on the in-memory byte slice.
-    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<BtsnoopFileState>) -> Result<Self, String> {
+    fn open(
+        path: &Path,
+        _config: (),
+        _file_state: std::sync::Arc<BtsnoopFileState>,
+    ) -> Result<Self, String> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let lines = parse_btsnoop_to_lines(path)?;
         Ok(Self {

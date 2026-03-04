@@ -18,11 +18,17 @@
 
 use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
-use crate::filetype::{btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType, generic::GenericFileType, logcat::LogcatFileType, pcap::PcapFileType};
-use crate::filetype::{btsnoop::BtsnoopLogLine, dlt::DltLogLine, generic::GenericLogLine, logcat::LogcatLogLine, pcap::PcapLogLine};
+use crate::filetype::{
+    btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType,
+    generic::GenericFileType, logcat::LogcatFileType, pcap::PcapFileType,
+};
+use crate::filetype::{
+    btsnoop::BtsnoopLogLine, dlt::DltLogLine, generic::GenericLogLine, logcat::LogcatLogLine,
+    pcap::PcapLogLine,
+};
 use crate::filetype::{InputFileType, LineType, LogFileState};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
-use chrono::{Local};
+use chrono::Local;
 use egui;
 use indexmap::IndexMap;
 use rayon::prelude::*;
@@ -96,7 +102,10 @@ where
     /// instances from opening the same file simultaneously.
     ///
     /// Returns `None` if the lock cannot be acquired (file already open in another instance).
-    pub fn new(file_path: PathBuf, config: Arc<RwLock<<FT::LineType as LineType>::Config>>) -> Option<Self> {
+    pub fn new(
+        file_path: PathBuf,
+        config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
+    ) -> Option<Self> {
         assert!(
             file_path.file_name().is_some(),
             "file_path must have a filename component: {}",
@@ -350,7 +359,10 @@ where
         indices.par_sort_by_key(|&idx| lines[idx].timestamp(&config, file_state));
         drop(lines);
         drop(config);
-        *self.by_timestamp.write().expect("by_timestamp lock poisoned") = indices;
+        *self
+            .by_timestamp
+            .write()
+            .expect("by_timestamp lock poisoned") = indices;
         self.bump_version();
     }
 
@@ -493,7 +505,7 @@ where
             raw: line.raw(),
             line_number: line.line_number(),
             anomaly_score: line.anomaly_score(),
-            template_key: crate::parser::normalize_message(&raw_message)
+            template_key: crate::parser::normalize_message(&raw_message),
         })
     }
 
@@ -638,7 +650,10 @@ impl StoreID {
     /// When lines are missing (e.g., during file loading), falls back to
     /// structural ordering to maintain a valid total order.
     pub fn cmp(&self, other: &Self, store: &LogStore) -> Ordering {
-        match (store.adjusted_timestamp(self), store.adjusted_timestamp(other)) {
+        match (
+            store.adjusted_timestamp(self),
+            store.adjusted_timestamp(other),
+        ) {
             (Some(self_time), Some(other_time)) => {
                 // Both lines exist: compare by calibrated timestamp, then structurally for stability
                 self_time
@@ -814,7 +829,9 @@ impl LogStore {
     pub fn render_file_states(&self, ui: &egui::Ui) -> bool {
         profiling::scope!("LogStore::render_file_states");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.values().fold(false, |acc, s| s.render_file_state(ui) || acc)
+        sources
+            .values()
+            .fold(false, |acc, s| s.render_file_state(ui) || acc)
     }
 
     /// Render type-specific context menu items for the line at `id`.
@@ -913,7 +930,10 @@ impl LogStore {
                     source
                         .filter_sorted(&predicate)
                         .into_iter()
-                        .map(|line_index| StoreID { source_id, line_index })
+                        .map(|line_index| StoreID {
+                            source_id,
+                            line_index,
+                        })
                         .collect()
                 })
                 .collect()
@@ -927,10 +947,7 @@ impl LogStore {
     }
 
     /// K-way merge of pre-sorted `StoreID` vectors by timestamp
-    fn merge_sorted_sources(
-        &self,
-        sources: Vec<Vec<StoreID>>,
-    ) -> Vec<StoreID> {
+    fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>) -> Vec<StoreID> {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
@@ -949,9 +966,8 @@ impl LogStore {
         // Initialize heap with first element from each non-empty source
         for (src_idx, iter) in iters.iter_mut().enumerate() {
             if let Some((id, adjusted_time)) =
-                    iter.find_map(|id| self
-                           .adjusted_timestamp(&id)
-                           .map(|time| (id, time))) {
+                iter.find_map(|id| self.adjusted_timestamp(&id).map(|time| (id, time)))
+            {
                 heap.push(Reverse((adjusted_time, src_idx, id)));
             }
         }
@@ -961,9 +977,9 @@ impl LogStore {
             result.push(id);
 
             // Push the next element from this source onto the heap
-            if let Some((next_id, adjusted_time)) = iters[src_idx].find_map(|id| self
-                           .adjusted_timestamp(&id)
-                           .map(|time| (id, time))) {
+            if let Some((next_id, adjusted_time)) =
+                iters[src_idx].find_map(|id| self.adjusted_timestamp(&id).map(|time| (id, time)))
+            {
                 heap.push(Reverse((adjusted_time, src_idx, next_id)));
             }
         }
@@ -1002,7 +1018,8 @@ impl LogStore {
 
         // Binary search to find insertion point
         let idx = filtered_indices.partition_point(|line_idx| {
-            self.adjusted_timestamp(line_idx).is_some_and(|ts| ts < target_time)
+            self.adjusted_timestamp(line_idx)
+                .is_some_and(|ts| ts < target_time)
         });
 
         // Compare neighbors around the insertion point to find the closest

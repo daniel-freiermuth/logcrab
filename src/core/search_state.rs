@@ -223,7 +223,8 @@ impl SearchState {
 
         // Binary search to find the first line with timestamp >= target_time
         let idx = indices.partition_point(|line_idx| {
-            store.adjusted_timestamp(line_idx)
+            store
+                .adjusted_timestamp(line_idx)
                 .is_some_and(|ts| ts < target_time)
         });
 

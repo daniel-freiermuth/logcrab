@@ -123,9 +123,7 @@ impl ChunkedLoader {
 
         let elapsed = start.elapsed();
         let total_lines = data_source.len();
-        log::info!(
-            "ChunkedLoader: {total_lines} lines in {chunk_count} chunks ({elapsed:?})"
-        );
+        log::info!("ChunkedLoader: {total_lines} lines in {chunk_count} chunks ({elapsed:?})");
 
         !data_source.is_empty()
     }
