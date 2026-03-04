@@ -509,7 +509,13 @@ impl Histogram {
                     zoom.drag_end = Some(pos);
                 }
             } else if response.dragged() {
-                if let Some(pos) = response.interact_pointer_pos() {
+                // `interact_pointer_pos()` is widget-scoped and returns None when the pointer
+                // leaves the window. Fall back to the global interact pos so the selection box
+                // keeps tracking the cursor even when dragging outside the widget area.
+                let pos = response
+                    .interact_pointer_pos()
+                    .or_else(|| ui.input(|i| i.pointer.interact_pos()));
+                if let Some(pos) = pos {
                     zoom.drag_end = Some(pos);
                 }
             } else if response.drag_stopped() {
