@@ -77,7 +77,7 @@ impl LineType for GenericLogLine {
         self.message_text.clone()
     }
 
-    fn display_message(&self, file_state: &GenericFileState) -> String {
+    fn display_message(&self, _config: &(), file_state: &GenericFileState) -> String {
         let offset_ms = file_state.time_offset_ms();
         if offset_ms != 0 {
             format!("[{}] {}", crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)), self.message_text)

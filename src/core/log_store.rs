@@ -500,7 +500,7 @@ where
         let raw_message = line.message();
         Some(LogLine {
             timestamp: line.timestamp(&*config, file_state),
-            message: line.display_message(file_state),
+            message: line.display_message(&*config, file_state),
             raw: line.raw(),
             line_number: line.line_number(),
             anomaly_score: line.anomaly_score(),

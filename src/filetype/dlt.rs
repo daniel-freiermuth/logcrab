@@ -65,7 +65,9 @@ impl DltLogLine {
     /// `inferred_time` is the calibrated monotonic timestamp when available
     /// (i.e. when in `InferredMonotonic` mode and a boot-time exists for this
     /// line's `(ecu_id, app_id)`). When `None`, storage-time display is used.
-    fn format_message(&self, inferred_time: Option<DateTime<Local>>) -> String {
+    /// Returns the metadata + payload body: `{ecu} {session} {app} {ctx} {type} {payload}`.
+    /// Used directly by `message()` and as the trailing part of `display_message()`.
+    fn format_body(&self) -> String {
         use dlt_core::dlt::PayloadContent;
 
         let ecu_header = self
@@ -86,12 +88,6 @@ impl DltLogLine {
                 )
             },
         );
-
-        let storage_ecu = self
-            .dlt_message
-            .storage_header
-            .as_ref()
-            .map_or("", |sh| sh.ecu_id.as_str());
 
         let payload = match &self.dlt_message.payload {
             PayloadContent::Verbose(args) => {
@@ -130,30 +126,18 @@ impl DltLogLine {
             }
         };
 
-        let storage_time = self.storage_time;
+        format!("{ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}")
+    }
 
-        if let Some(inferred_t) = inferred_time {
-            let time_diff = storage_time.signed_duration_since(inferred_t);
-            let diff_str = format_time_diff(time_diff);
-            format!(
-                "[{storage_time} ({diff_str}) {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}"
-            )
-        } else {
-            self.dlt_message.header.timestamp.map_or_else(
-                || {
-                    format!(
-                        "[{storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}"
-                    )
-                },
-                |header_ts| {
-                    let monotonic_micros = i64::from(header_ts) * 100;
-                    let monotonic_secs = monotonic_micros as f64 / 1_000_000.0;
-                    format!(
-                        "[{monotonic_secs:.3}s {storage_ecu}] {ecu_header} {session_id} {app_id} {ctx_id} {message_type} {payload}"
-                    )
-                },
-            )
-        }
+    /// Returns the `[<storage_time> (<diff>) <storage_ecu>]` prefix for inferred-monotonic mode.
+    fn format_time_prefix(&self, inferred_time: DateTime<Local>) -> String {
+        let storage_ecu = self
+            .dlt_message
+            .storage_header
+            .as_ref()
+            .map_or("", |sh| sh.ecu_id.as_str());
+        let diff_str = format_time_diff(self.storage_time.signed_duration_since(inferred_time));
+        format!("[{} ({diff_str}) {storage_ecu}]", self.storage_time)
     }
 }
 
@@ -335,21 +319,30 @@ impl LineType for DltLogLine {
     }
 
     fn message(&self) -> String {
-        self.format_message(None)
+        self.format_body()
     }
 
-    fn display_message(&self, file_state: &DltFileState) -> String {
-        // Compute calibrated inferred time from file_state.boot_times, if available.
-        // Shown regardless of the current DltTimestampSource setting so the display
-        // consistently reflects any calibration the user has applied.
-        let inferred_time = self.header_timestamp_us.and_then(|header_us| {
-            let key = (self.ecu_id.clone(), self.app_id.clone());
-            file_state
-                .boot_times
-                .get(&key)
-                .map(|bt| *bt + chrono::TimeDelta::microseconds(header_us))
-        });
-        self.format_message(inferred_time)
+    fn display_message(&self, config: &crate::config::DltTimestampSource, file_state: &DltFileState) -> String {
+        use crate::config::DltTimestampSource;
+        let body = self.format_body();
+        match config {
+            DltTimestampSource::InferredMonotonic => {
+                // In inferred-monotonic mode prepend [<storage_time> (<diff>) <storage_ecu>]
+                // so the user always sees the relationship between storage and monotonic time.
+                let inferred_time = self.timestamp(config, file_state);
+                format!("{} {body}", self.format_time_prefix(inferred_time))
+            }
+            DltTimestampSource::StorageTime => {
+                // In storage-time mode prepend [<offset>] when a calibration offset
+                // has been applied, consistent with how other file types behave.
+                let offset_ms = file_state.storage_offset_ms();
+                if offset_ms != 0 {
+                    format!("[{}] {body}", format_time_diff(chrono::Duration::milliseconds(offset_ms)))
+                } else {
+                    body
+                }
+            }
+        }
     }
 
     fn raw(&self) -> String {

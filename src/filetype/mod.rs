@@ -134,9 +134,10 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
     /// is active for this source, so every view (log table, bookmarks, etc.)
     /// shows consistent decorated output without duplicating the logic.
     ///
-    /// Each linetype implements this explicitly so that type-specific display
-    /// decisions (e.g. DLT embeds calibration differently) can diverge freely.
-    fn display_message(&self, file_state: &Self::FileState) -> String;
+    /// `config` is passed alongside `file_state` so that implementations that
+    /// have multiple timestamp modes (e.g. DLT's `StorageTime` vs
+    /// `InferredMonotonic`) can vary the decoration accordingly.
+    fn display_message(&self, config: &Self::Config, file_state: &Self::FileState) -> String;
 
     /// Get the raw line as it appeared in the source (may be constructed lazily)
     fn raw(&self) -> String;
