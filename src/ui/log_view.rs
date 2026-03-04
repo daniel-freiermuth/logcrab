@@ -32,7 +32,7 @@ use crate::ui::{PaneDirection, ProgressToastHandle, DEFAULT_PALETTE};
 
 use chrono::Local;
 use egui_dock::{DockArea, DockState, Node};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Main log viewing session for an opened file.
@@ -106,12 +106,12 @@ impl CrabSession {
     /// Skips files that are already loaded.
     pub fn add_file(
         &mut self,
-        path: PathBuf,
+        path: &Path,
         toast: &ProgressToastHandle,
         file_config: &crate::core::log_store::GlobalFileConfig,
     ) {
         // Check if the file is already loaded
-        if self.state.store.contains_file(&path) {
+        if self.state.store.contains_file(path) {
             log::info!("Skipping already loaded file: {}", path.display());
             toast.dismiss();
             return;
@@ -121,7 +121,7 @@ impl CrabSession {
 
         let Some(variant) = LogFileLoader::load_file(
             path,
-            toast.clone(),
+            toast,
             None,
             file_config,
         ) else {

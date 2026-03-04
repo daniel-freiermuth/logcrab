@@ -48,7 +48,6 @@ pub struct BugreportFileType {
     year: i32,
     line_number: usize,
     bytes_read: u64,
-    file_size: u64,
 }
 
 impl BugreportFileType {
@@ -57,7 +56,6 @@ impl BugreportFileType {
     /// Reads the first 4 KB to extract the capture year from the dumpstate header.
     /// Falls back to the current calendar year if no header is found.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let mut file =
             File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
 
@@ -80,12 +78,7 @@ impl BugreportFileType {
             year,
             line_number: 0,
             bytes_read: 0,
-            file_size,
         })
-    }
-
-    pub const fn file_size(&self) -> u64 {
-        self.file_size
     }
 }
 

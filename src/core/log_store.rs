@@ -382,7 +382,7 @@ where
 
         profiling::scope!("SourceData::append_lines");
 
-        let config = self.config.read().unwrap();
+        let config = self.config.read().expect("config lock poisoned");
         let file_state = &*self.file_state;
 
         // Append lines and capture the range of new indices atomically
@@ -443,6 +443,7 @@ where
         }
 
         drop(lines_guard);
+        drop(config);
         self.bump_version();
     }
 
@@ -473,24 +474,12 @@ where
         self.lines.read().expect("lines lock poisoned").is_empty()
     }
 
-    /// Get a clone of all lines for iteration
-    /// This clones the entire Vec - use sparingly (e.g., one-time scoring)
-    pub fn clone_lines(&self) -> Vec<FT::LineType> {
-        profiling::scope!("SourceData::clone_lines");
-        self.lines.read().expect("lines lock poisoned").clone()
-    }
-
-    pub fn get_by_id(&self, id: usize) -> Option<FT::LineType> {
-        profiling::scope!("SourceData::lines::read");
-        let guard = self.lines.read().expect("lines lock poisoned");
-        guard.get(id).cloned()
-    }
-
     /// Look up a single line and return it as the display [`LogLine`] DTO.
     ///
     /// Acquires `lines`, `config`, and `file_state` locks exactly once so the
     /// timestamp, message, and all other fields are computed under the same
     /// read epoch.  Returns `None` when `line_index` is out of range.
+    #[allow(clippy::significant_drop_tightening)]
     pub fn get_as_log_line(&self, line_index: usize) -> Option<LogLine> {
         profiling::scope!("SourceData::get_as_log_line");
         let lines = self.lines.read().expect("lines lock poisoned");
@@ -832,6 +821,7 @@ impl LogStore {
     ///
     /// Returns `true` if the source was found. Must be called inside an egui
     /// `context_menu` closure.
+    #[allow(clippy::significant_drop_tightening)]
     pub fn render_typed_context_menu_items(&self, id: &StoreID, ui: &mut egui::Ui) -> bool {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");

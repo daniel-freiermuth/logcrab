@@ -135,13 +135,6 @@ pub struct LogcatFileType {
     year: i32,
     line_number: usize,
     bytes_read: u64,
-    file_size: u64,
-}
-
-impl LogcatFileType {
-    pub const fn file_size(&self) -> u64 {
-        self.file_size
-    }
 }
 
 impl InputFileType for LogcatFileType {
@@ -153,7 +146,6 @@ impl InputFileType for LogcatFileType {
     ///
     /// Logcat lines carry no year; the current calendar year is used.
     fn open(path: &Path, _config: (), _file_state: std::sync::Arc<LogcatFileState>) -> Result<Self, String> {
-        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let year = chrono::Local::now().year();
         let file =
             File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
@@ -162,7 +154,6 @@ impl InputFileType for LogcatFileType {
             year,
             line_number: 0,
             bytes_read: 0,
-            file_size,
         })
     }
 

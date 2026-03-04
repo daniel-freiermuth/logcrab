@@ -123,12 +123,6 @@ pub struct BtsnoopFileType {
     file_size: u64,
 }
 
-impl BtsnoopFileType {
-    pub const fn file_size(&self) -> u64 {
-        self.file_size
-    }
-}
-
 impl InputFileType for BtsnoopFileType {
     type LineType = BtsnoopLogLine;
 

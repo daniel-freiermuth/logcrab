@@ -126,12 +126,6 @@ pub struct PcapFileType {
     file_size: u64,
 }
 
-impl PcapFileType {
-    pub const fn file_size(&self) -> u64 {
-        self.file_size
-    }
-}
-
 impl InputFileType for PcapFileType {
     type LineType = PcapLogLine;
 
@@ -354,7 +348,7 @@ impl TcpFlowTracker {
         if flow_state.is_out_of_order(tcp.seq, tcp.payload_len) { anomaly_reasons.push("Out-of-Order".to_string()); packet.is_abnormal = true; }
         if flow_state.dup_ack_count >= 2 && tcp.flags & 0x10 != 0 { anomaly_reasons.push(format!("Dup ACK #{}", flow_state.dup_ack_count + 1)); packet.is_abnormal = true; }
         if tcp.window == 0 && tcp.flags & 0x10 != 0 { anomaly_reasons.push("ZeroWindow".to_string()); packet.is_abnormal = true; }
-        if !anomaly_reasons.is_empty() { packet.info = format!("{}{}", packet.info, format!(" [{}]", anomaly_reasons.join(", "))); }
+        if !anomaly_reasons.is_empty() { packet.info = format!("{} [{}]", packet.info, anomaly_reasons.join(", ")); }
         flow_state.update(tcp.seq, tcp.ack, tcp.payload_len, tcp.flags & 0x10 != 0);
         if tcp.flags & 0x05 != 0 { self.flows.remove(&flow_key); self.flows.remove(&flow_key.reverse()); }
     }

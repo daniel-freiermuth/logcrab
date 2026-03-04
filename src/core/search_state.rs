@@ -255,18 +255,22 @@ impl SearchState {
         let mut pos = range_start;
         while pos < indices.len() {
             if let Some(ts) = store.adjusted_timestamp(&indices[pos]) {
-                if ts == target_time {
-                    if indices[pos] == target {
-                        return Some(pos);
+                match ts.cmp(&target_time) {
+                    std::cmp::Ordering::Equal => {
+                        if indices[pos] == target {
+                            return Some(pos);
+                        }
+                        pos += 1;
                     }
-                    pos += 1;
-                } else if ts > target_time {
-                    // We've gone past target_time without finding exact match
-                    // Return closest position (before the overshoot)
-                    return Some(pos.saturating_sub(1).max(range_start));
-                } else {
-                    // ts < target_time, shouldn't happen after partition_point
-                    pos += 1;
+                    std::cmp::Ordering::Greater => {
+                        // We've gone past target_time without finding exact match
+                        // Return closest position (before the overshoot)
+                        return Some(pos.saturating_sub(1).max(range_start));
+                    }
+                    std::cmp::Ordering::Less => {
+                        // ts < target_time, shouldn't happen after partition_point
+                        pos += 1;
+                    }
                 }
             } else {
                 break;

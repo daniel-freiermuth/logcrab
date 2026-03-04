@@ -48,14 +48,14 @@ impl LogFileLoader {
     ///
     /// Returns `None` if the `.crab` session file is already locked by another instance.
     pub fn load_file(
-        path: PathBuf,
-        toast: ProgressToastHandle,
+        path: &Path,
+        toast: &ProgressToastHandle,
         crab_lock: Option<(File, PathBuf)>,
         file_config: &GlobalFileConfig,
     ) -> Option<DataSourceVariant> {
         let mut crab_lock = crab_lock;
-        crate::core::log_store::try_open_binary(&path, &toast, &mut crab_lock, file_config).or_else(|| {
-            crate::core::log_store::open_text_source(&path, &toast, crab_lock, file_config)
+        crate::core::log_store::try_open_binary(path, toast, &mut crab_lock, file_config).or_else(|| {
+            crate::core::log_store::open_text_source(path, toast, crab_lock, file_config)
         })
     }
 
@@ -90,23 +90,23 @@ impl LogFileLoader {
         let source_clone = Arc::clone(&data_source);
         let toast_clone = toast.clone();
         thread::spawn(move || {
-            Self::background_load(path, source_clone, toast_clone, open_fn);
+            Self::background_load(path.as_path(), &source_clone, &toast_clone, open_fn);
         });
         Some(data_source)
     }
 
     /// Open the file via `open_fn`, drive [`ChunkedLoader`], score, and dismiss the toast.
     fn background_load<FT>(
-        path: PathBuf,
-        data_source: Arc<SourceData<FT>>,
-        toast: ProgressToastHandle,
+        path: &Path,
+        data_source: &Arc<SourceData<FT>>,
+        toast: &ProgressToastHandle,
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> Result<FT, String>,
     ) where
         FT: InputFileType,
         FT::LineType: Clone,
     {
         let start_time = std::time::Instant::now();
-        let file_size = std::fs::metadata(&path).map_or(0, |m| m.len());
+        let file_size = std::fs::metadata(path).map_or(0, |m| m.len());
         let file_name = path
             .file_name()
             .unwrap_or(path.as_os_str())
@@ -114,7 +114,7 @@ impl LogFileLoader {
             .into_owned();
 
         log::debug!("background_load: opening {}", path.display());
-        let mut file_type = match open_fn(&path, Arc::clone(&data_source.file_state)) {
+        let mut file_type = match open_fn(path, Arc::clone(&data_source.file_state)) {
             Ok(ft) => ft,
             Err(e) => {
                 log::error!("Failed to open {}: {e}", path.display());
@@ -130,10 +130,10 @@ impl LogFileLoader {
             chunks_before_growth: CHUNKS_BEFORE_GROWTH,
         };
 
-        let loaded = loader.run(&mut file_type, &data_source, &file_name, file_size, &toast);
+        let load_complete = loader.run(&mut file_type, data_source, &file_name, file_size, toast);
 
-        if loaded && !data_source.is_empty() {
-            Self::score_lines(&data_source, &path, &toast, start_time);
+        if load_complete && !data_source.is_empty() {
+            Self::score_lines(data_source, path, toast, start_time);
         } else if data_source.is_empty() {
             toast.set_error("No log lines found in file");
         }

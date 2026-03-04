@@ -407,7 +407,7 @@ impl LineType for DltLogLine {
 
             // Current display time: inferred if available, otherwise storage.
             let current_time = if is_inferred {
-                let header_us = self.header_timestamp_us.unwrap();
+                let header_us = self.header_timestamp_us.expect("header_timestamp_us is Some when is_inferred");
                 let key = (self.ecu_id.clone(), self.app_id.clone());
                 file_state
                     .boot_times
@@ -523,14 +523,7 @@ pub struct DltFileType {
     /// Shared boot-time map — same `Arc` as `DltFileState::boot_times`.
     boot_times: Arc<DashMap<(String, String), DateTime<Local>>>,
     bytes_read_rc: Arc<AtomicU64>,
-    file_size: u64,
     line_number: usize,
-}
-
-impl DltFileType {
-    pub const fn file_size(&self) -> u64 {
-        self.file_size
-    }
 }
 
 impl InputFileType for DltFileType {
@@ -547,7 +540,6 @@ impl InputFileType for DltFileType {
         // Clone the boot_times Arc so read() can write into it without
         // ever touching the outer Arc<DltFileState>.
         let boot_times = Arc::clone(&file_state.boot_times);
-        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let file =
             File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
         let inner = ByteCountReader::new(BufReader::new(file));
@@ -557,7 +549,6 @@ impl InputFileType for DltFileType {
             reader,
             boot_times,
             bytes_read_rc,
-            file_size,
             line_number: 1,
         })
     }
@@ -623,10 +614,6 @@ pub fn storage_time_to_datetime(
             storage_time.microseconds * 1000,
         )
         .single()
-}
-
-pub const fn dlt_header_time_to_timedelta(header_time: u32) -> chrono::TimeDelta {
-    chrono::TimeDelta::microseconds(header_time as i64 * 100)
 }
 
 /// Convert a `dlt_core::dlt::Message` to `DltLogLine`.
