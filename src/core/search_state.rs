@@ -223,8 +223,8 @@ impl SearchState {
 
         // Binary search to find the first line with timestamp >= target_time
         let idx = indices.partition_point(|line_idx| {
-            store.get_by_id(line_idx)
-                .is_some_and(|line| store.get_adjusted_timestamp(line_idx, &line) < target_time)
+            store.adjusted_timestamp(line_idx)
+                .is_some_and(|ts| ts < target_time)
         });
 
         // Quick check: did we find the exact target at the partition point?
@@ -237,8 +237,7 @@ impl SearchState {
         let mut range_start = idx;
         while range_start > 0 {
             let prev_idx = range_start - 1;
-            if let Some(line) = store.get_by_id(&indices[prev_idx]) {
-                let ts = store.get_adjusted_timestamp(&indices[prev_idx], &line);
+            if let Some(ts) = store.adjusted_timestamp(&indices[prev_idx]) {
                 if ts == target_time {
                     range_start = prev_idx;
                     if indices[prev_idx] == target {
@@ -255,8 +254,7 @@ impl SearchState {
         // Scan forwards to find exact target or determine the range end
         let mut pos = range_start;
         while pos < indices.len() {
-            if let Some(line) = store.get_by_id(&indices[pos]) {
-                let ts = store.get_adjusted_timestamp(&indices[pos], &line);
+            if let Some(ts) = store.adjusted_timestamp(&indices[pos]) {
                 if ts == target_time {
                     if indices[pos] == target {
                         return Some(pos);
