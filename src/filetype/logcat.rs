@@ -168,7 +168,7 @@ impl InputFileType for LogcatFileType {
     /// Open a logcat file for pull-based reading.
     ///
     /// Logcat lines carry no year; the current calendar year is used.
-    fn open(path: &Path, _config: ()) -> Result<Self, String> {
+    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<std::sync::RwLock<LogcatFileState>>) -> Result<Self, String> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let year = chrono::Local::now().year();
         let file =

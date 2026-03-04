@@ -154,7 +154,7 @@ impl InputFileType for PcapFileType {
     const FILE_EXTENSIONS: &'static [&'static str] = &["pcap", "pcapng", "cap"];
 
     /// Open a pcap/pcapng file for pull-based reading.
-    fn open(path: &Path, _config: ()) -> Result<Self, String> {
+    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<std::sync::RwLock<PcapFileState>>) -> Result<Self, String> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let lines = parse_pcap_to_lines(path)?;
         Ok(Self {

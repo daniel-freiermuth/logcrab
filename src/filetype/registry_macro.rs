@@ -237,7 +237,7 @@ macro_rules! register_filetypes {
                         toast,
                         crab_lock.take(),
                         arc_config,
-                        move |p| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val),
+                        move |p, fs| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
                     )
                     .map(::std::convert::Into::into);
                 }
@@ -284,7 +284,7 @@ macro_rules! register_filetypes {
                         toast,
                         crab_lock,
                         arc_config,
-                        move |p| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val),
+                        move |p, fs| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
                     )
                     .map(::std::convert::Into::into);
                 }

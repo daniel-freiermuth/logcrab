@@ -154,7 +154,7 @@ impl InputFileType for BtsnoopFileType {
     ///
     /// Reads and parses the entire file immediately so the `btsnoop` crate can operate
     /// on the in-memory byte slice.
-    fn open(path: &Path, _config: ()) -> Result<Self, String> {
+    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<std::sync::RwLock<BtsnoopFileState>>) -> Result<Self, String> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let lines = parse_btsnoop_to_lines(path)?;
         Ok(Self {

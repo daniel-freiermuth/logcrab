@@ -55,8 +55,8 @@ where
     /// Wrapped in `Arc<RwLock>` so a single instance is shared and can be mutated from the UI.
     pub config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
     /// Per-source file state — user-visible state specific to this file (e.g. time offsets, calibration).
-    /// Wrapped in `RwLock` for interior mutability without duplication.
-    pub file_state: RwLock<<FT::LineType as LineType>::FileState>,
+    /// Wrapped in `Arc<RwLock>` so that the file-type parser can hold a clone during background loading.
+    pub file_state: Arc<RwLock<<FT::LineType as LineType>::FileState>>,
     /// Bookmarks for this source, keyed by line index within this source
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
     /// Locked .crab file handle and path to prevent multiple instances from opening the same session.
@@ -130,7 +130,7 @@ where
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
             config,
-            file_state: RwLock::new(Default::default()),
+            file_state: Arc::new(RwLock::new(Default::default())),
             bookmarks: RwLock::new(HashMap::new()),
             crab_lock: Mutex::new((crab_lock, crab_path)),
             version: AtomicU64::new(1),

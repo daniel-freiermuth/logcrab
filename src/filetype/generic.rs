@@ -165,7 +165,7 @@ impl InputFileType for GenericFileType {
     const FILE_EXTENSIONS: &'static [&'static str] = &["txt", "log"];
 
     /// Open a generic text log file for pull-based reading.
-    fn open(path: &Path, _config: ()) -> Result<Self, String> {
+    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<std::sync::RwLock<GenericFileState>>) -> Result<Self, String> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let file =
             File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;

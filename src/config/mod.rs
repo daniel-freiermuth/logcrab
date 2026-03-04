@@ -28,8 +28,8 @@ pub enum DltTimestampSource {
     /// Use storage header timestamp (wall-clock time)
     #[default]
     StorageTime,
-    /// Use calibrated monotonic clock (boot time + header timestamp, more precise in limited timespans)
-    CalibratedMonotonic,
+    /// Use inferred monotonic clock (boot time + header timestamp, more precise in limited timespans)
+    InferredMonotonic,
 }
 
 /// Global user configuration stored in config directory

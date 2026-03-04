@@ -177,13 +177,13 @@ pub trait InputFileType: HasSlug {
 
     /// Open the file for pull-based reading, consuming the type-specific config value.
     ///
-    /// Called by the registry to open any registered file type without knowing its
-    /// concrete type. The `config` argument carries format-specific settings taken
-    /// from [`GlobalFileConfig`] (e.g. DLT timestamp source). Types whose `Config`
-    /// is `()` may ignore the argument.
+    /// `file_state` is the `Arc<RwLock<FileState>>` for this source — types that
+    /// populate state during `read()` (e.g. DLT boot-time discovery) should store
+    /// this arc and write into it from `read()`. All other types may ignore it via `_file_state`.
     fn open(
         path: &::std::path::Path,
         config: <Self::LineType as LineType>::Config,
+        file_state: ::std::sync::Arc<::std::sync::RwLock<<Self::LineType as LineType>::FileState>>,
     ) -> Result<Self, String>
     where
         Self: Sized;
