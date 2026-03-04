@@ -95,7 +95,7 @@ impl InputFileType for BugreportFileType {
 
     const FILE_EXTENSIONS: &'static [&'static str] = &["txt", "zip"];
 
-    fn open(path: &::std::path::Path, _config: (), _file_state: std::sync::Arc<std::sync::RwLock<crate::filetype::logcat::LogcatFileState>>) -> Result<Self, String> {
+    fn open(path: &::std::path::Path, _config: (), _file_state: std::sync::Arc<crate::filetype::logcat::LogcatFileState>) -> Result<Self, String> {
         BugreportFileType::open(path)
     }
 

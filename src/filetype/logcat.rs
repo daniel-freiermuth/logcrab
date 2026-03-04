@@ -51,16 +51,9 @@ impl LogcatLogLine {
 // LogcatFileState
 // ============================================================================
 
-/// Per-source persistent state for Android Logcat log sources.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct LogcatFileState {
-    /// Per-source time calibration offset applied on top of parsed timestamps.
-    #[serde(default)]
-    pub time_offset_ms: i64,
-    /// Open calibration window (created by `egui_render_context_menu`).
-    #[serde(skip)]
-    pub calibration: Option<crate::filetype::CalibrationState>,
-}
+/// Type alias kept for compatibility; the shared [`crate::filetype::SimpleFileState`]
+/// provides all interior-mutable time-offset and calibration state.
+pub type LogcatFileState = crate::filetype::SimpleFileState;
 
 // ============================================================================
 // LineType implementation
@@ -71,11 +64,13 @@ impl LineType for LogcatLogLine {
     type FileState = LogcatFileState;
 
     fn file_state_from_v2(time_offset_ms: i64) -> LogcatFileState {
-        LogcatFileState { time_offset_ms, ..Default::default() }
+        let s = LogcatFileState::default();
+        s.set_time_offset_ms(time_offset_ms);
+        s
     }
 
     fn timestamp(&self, _config: &(), file_state: &LogcatFileState) -> DateTime<Local> {
-        self.timestamp + chrono::Duration::milliseconds(file_state.time_offset_ms)
+        self.timestamp + chrono::Duration::milliseconds(file_state.time_offset_ms())
     }
 
     fn message(&self) -> String {
@@ -83,7 +78,7 @@ impl LineType for LogcatLogLine {
     }
 
     fn display_message(&self, file_state: &LogcatFileState) -> String {
-        let offset_ms = file_state.time_offset_ms;
+        let offset_ms = file_state.time_offset_ms();
         if offset_ms != 0 {
             format!("[{}] {}", crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)), self.message_text)
         } else {
@@ -111,13 +106,13 @@ impl LineType for LogcatLogLine {
         &self,
         ui: &mut Ui,
         _config: &(),
-        file_state: &mut LogcatFileState,
+        file_state: &LogcatFileState,
     ) {
-        if ui.button("\u{23F1} Calibrate Time Here").clicked() {
+        if ui.button("⏱ Calibrate Time Here").clicked() {
             let raw_time = self.timestamp;
             let display_time =
-                raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms);
-            file_state.calibration = Some((
+                raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms());
+            *file_state.calibration.lock().expect("calibration lock poisoned") = Some((
                 raw_time,
                 crate::filetype::CalibrationWindow::new(display_time, false, Some(display_time), None),
             ));
@@ -125,17 +120,6 @@ impl LineType for LogcatLogLine {
         }
     }
 
-}
-
-impl crate::filetype::LogFileState for LogcatFileState {
-    fn egui_render_file_state(&mut self, ui: &egui::Ui) -> bool {
-        if let Some(offset_ms) = crate::filetype::render_calibration(ui, &mut self.calibration) {
-            self.time_offset_ms = offset_ms;
-            true
-        } else {
-            false
-        }
-    }
 }
 
 // ============================================================================
@@ -168,7 +152,7 @@ impl InputFileType for LogcatFileType {
     /// Open a logcat file for pull-based reading.
     ///
     /// Logcat lines carry no year; the current calendar year is used.
-    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<std::sync::RwLock<LogcatFileState>>) -> Result<Self, String> {
+    fn open(path: &Path, _config: (), _file_state: std::sync::Arc<LogcatFileState>) -> Result<Self, String> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let year = chrono::Local::now().year();
         let file =

@@ -430,14 +430,14 @@ macro_rules! register_filetypes {
                     $( Self::$b_arm(s) => {
                         let lines = s.lines.read().expect("lines lock poisoned");
                         let config = s.config.read().expect("config lock poisoned");
-                        let file_state = s.file_state.read().expect("file_state lock poisoned");
-                        lines.get(line_index).map(|l| l.timestamp(&*config, &*file_state))
+                        let file_state = &*s.file_state;
+                        lines.get(line_index).map(|l| l.timestamp(&*config, file_state))
                     } )*
                     $( Self::$t_arm(s) => {
                         let lines = s.lines.read().expect("lines lock poisoned");
                         let config = s.config.read().expect("config lock poisoned");
-                        let file_state = s.file_state.read().expect("file_state lock poisoned");
-                        lines.get(line_index).map(|l| l.timestamp(&*config, &*file_state))
+                        let file_state = &*s.file_state;
+                        lines.get(line_index).map(|l| l.timestamp(&*config, file_state))
                     } )*
                 }
             }

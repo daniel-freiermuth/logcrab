@@ -2,6 +2,7 @@ use egui::Ui;
 
 pub mod calibration_window;
 pub mod registry_macro;
+pub mod simple_file_state;
 pub mod generic;
 pub mod logcat;
 pub mod bugreport;
@@ -10,6 +11,7 @@ pub mod pcap;
 pub mod btsnoop;
 
 pub use calibration_window::CalibrationWindow;
+pub use simple_file_state::SimpleFileState;
 
 // ============================================================================
 // CalibrationState — typed alias used by every FileState
@@ -51,16 +53,17 @@ pub fn render_calibration(
 /// Trait that every per-source `FileState` type must implement.
 ///
 /// Provides a frame-driven hook for UI state that lives inside the `FileState`
-/// (e.g. an open calibration window).  The default implementation is a no-op so
-/// that simple types like `()` satisfy the bound without any boilerplate.
-pub trait LogFileState {
+/// (e.g. an open calibration window). The `FileState` is stored in an `Arc` with
+/// no outer lock; each type is responsible for its own interior mutability.
+/// The default implementation is a no-op so that `()` satisfies the bound.
+pub trait LogFileState: Send + Sync {
     /// Drive any open UI window stored in this state.
     ///
     /// Called once per source per frame from `SourceData::render_file_state`.
     /// Returns `true` when the user confirms a new calibration time (the offset has
     /// already been written into `self`); the caller then bumps the source version.
     /// Default: no-op returning `false`.
-    fn egui_render_file_state(&mut self, _ui: &egui::Ui) -> bool {
+    fn egui_render_file_state(&self, _ui: &egui::Ui) -> bool {
         false
     }
 }
@@ -150,13 +153,14 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
     /// Render format-specific context menu items for a single log line.
     ///
     /// Called inside an egui context menu. Implementations write into
-    /// `file_state.calibration` to open the calibration window for that source.
-    /// Generic items (bookmark, copy) are handled by the table, not here.
+    /// `file_state.calibration` (via interior mutability) to open the calibration
+    /// window for that source. Generic items (bookmark, copy) are handled by the
+    /// table, not here.
     fn egui_render_context_menu(
         &self,
         ui: &mut Ui,
         config: &Self::Config,
-        file_state: &mut Self::FileState,
+        file_state: &Self::FileState,
     );
 }
 
@@ -175,15 +179,16 @@ pub trait InputFileType: HasSlug {
     /// for detection; multiple types may share extensions).
     const FILE_EXTENSIONS: &'static [&'static str];
 
-    /// Open the file for pull-based reading, consuming the type-specific config value.
+    /// Open the file for pull-based reading.
     ///
-    /// `file_state` is the `Arc<RwLock<FileState>>` for this source — types that
-    /// populate state during `read()` (e.g. DLT boot-time discovery) should store
-    /// this arc and write into it from `read()`. All other types may ignore it via `_file_state`.
+    /// `file_state` is the `Arc<FileState>` for this source — types that populate
+    /// state during `read()` (e.g. DLT boot-time discovery) store this arc and
+    /// write into it from `read()` via interior mutability. All other types may
+    /// ignore it via `_file_state`.
     fn open(
         path: &::std::path::Path,
         config: <Self::LineType as LineType>::Config,
-        file_state: ::std::sync::Arc<::std::sync::RwLock<<Self::LineType as LineType>::FileState>>,
+        file_state: ::std::sync::Arc<<Self::LineType as LineType>::FileState>,
     ) -> Result<Self, String>
     where
         Self: Sized;

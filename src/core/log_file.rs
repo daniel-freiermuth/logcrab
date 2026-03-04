@@ -71,7 +71,7 @@ impl LogFileLoader {
         toast: &ProgressToastHandle,
         crab_lock: Option<(File, PathBuf)>,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
-        open_fn: impl FnOnce(&Path, Arc<RwLock<<FT::LineType as LineType>::FileState>>) -> Result<FT, String> + Send + 'static,
+        open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> Result<FT, String> + Send + 'static,
     ) -> Option<Arc<SourceData<FT>>>
     where
         FT: InputFileType + Send + 'static,
@@ -100,7 +100,7 @@ impl LogFileLoader {
         path: PathBuf,
         data_source: Arc<SourceData<FT>>,
         toast: ProgressToastHandle,
-        open_fn: impl FnOnce(&Path, Arc<RwLock<<FT::LineType as LineType>::FileState>>) -> Result<FT, String>,
+        open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> Result<FT, String>,
     ) where
         FT: InputFileType,
         FT::LineType: Clone,

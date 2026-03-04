@@ -55,8 +55,11 @@ where
     /// Wrapped in `Arc<RwLock>` so a single instance is shared and can be mutated from the UI.
     pub config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
     /// Per-source file state — user-visible state specific to this file (e.g. time offsets, calibration).
-    /// Wrapped in `Arc<RwLock>` so that the file-type parser can hold a clone during background loading.
-    pub file_state: Arc<RwLock<<FT::LineType as LineType>::FileState>>,
+    /// Each `FileState` type owns its interior synchronization; no outer `RwLock` is needed.
+    /// Wrapped in `Arc` so that types like `DltFileState` can clone the Arc into the background
+    /// loader (e.g. to share the `boot_times` DashMap). For all other types the background
+    /// loader ignores this Arc entirely.
+    pub file_state: Arc<<FT::LineType as LineType>::FileState>,
     /// Bookmarks for this source, keyed by line index within this source
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
     /// Locked .crab file handle and path to prevent multiple instances from opening the same session.
@@ -124,13 +127,13 @@ where
             file_path.display()
         );
 
-        let sd = Self {
+        let mut sd = Self {
             source_id: SOURCE_ID_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
             file_path,
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
             config,
-            file_state: Arc::new(RwLock::new(Default::default())),
+            file_state: Arc::new(Default::default()),
             bookmarks: RwLock::new(HashMap::new()),
             crab_lock: Mutex::new((crab_lock, crab_path)),
             version: AtomicU64::new(1),
@@ -273,7 +276,7 @@ where
     }
 
     /// Load bookmarks from this source's .crab file
-    fn load_bookmarks(&self) {
+    fn load_bookmarks(&mut self) {
         let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match CrabFile::<FT>::load_from_file(file) {
             Ok(crab_data) => {
@@ -290,10 +293,7 @@ where
                     }
                 }
 
-                *self
-                    .file_state
-                    .write()
-                    .expect("file_state lock poisoned") = crab_data.file_state;
+                self.file_state = Arc::new(crab_data.file_state);
             }
             Err(crate::core::SessionError::Io(ref e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
@@ -317,7 +317,7 @@ where
             bookmarks: self.get_bookmarks(),
             filters: filters.to_vec(),
             highlights: highlights.to_vec(),
-            file_state: self.file_state.read().expect("file_state lock poisoned").clone(),
+            file_state: (*self.file_state).clone(),
         };
 
         // Use the locked file handle for writing to avoid conflicts
@@ -345,12 +345,11 @@ where
     pub fn rebuild_time_index(&self) {
         let lines = self.lines.read().expect("lines lock poisoned");
         let config = self.config.read().expect("config lock poisoned");
-        let file_state = self.file_state.read().expect("file_state lock poisoned");
+        let file_state = &*self.file_state;
         let mut indices: Vec<usize> = (0..lines.len()).collect();
-        indices.par_sort_by_key(|&idx| lines[idx].timestamp(&config, &file_state));
-        drop(file_state);
-        drop(config);
+        indices.par_sort_by_key(|&idx| lines[idx].timestamp(&config, file_state));
         drop(lines);
+        drop(config);
         *self.by_timestamp.write().expect("by_timestamp lock poisoned") = indices;
         self.bump_version();
     }
@@ -361,11 +360,7 @@ where
     /// this method bumps the source version so dependent views invalidate.
     /// Returns `true` when an offset was applied.
     pub fn render_file_state(&self, ui: &egui::Ui) -> bool {
-        let changed = self
-            .file_state
-            .write()
-            .expect("file_state lock poisoned")
-            .egui_render_file_state(ui);
+        let changed = self.file_state.egui_render_file_state(ui);
         if changed {
             self.bump_version();
         }
@@ -388,7 +383,7 @@ where
         profiling::scope!("SourceData::append_lines");
 
         let config = self.config.read().unwrap();
-        let file_state = self.file_state.read().unwrap();
+        let file_state = &*self.file_state;
 
         // Append lines and capture the range of new indices atomically
         let new_start_idx = {
@@ -410,7 +405,7 @@ where
             let lines_read = self.lines.read().expect("lines lock poisoned");
             profiling::scope!("sort_new_indices");
             let mut indices: Vec<usize> = (new_start_idx..lines_read.len()).collect();
-            indices.par_sort_by_key(|&idx| lines_read[idx].timestamp(&*config, &*file_state));
+            indices.par_sort_by_key(|&idx| lines_read[idx].timestamp(&*config, file_state));
             (lines_read, indices)
         };
 
@@ -429,8 +424,8 @@ where
             let mut j_new = 0;
 
             while i_exist < existing_len && j_new < new_by_ts.len() {
-                let ts_exist = lines_guard[by_ts_guard[i_exist]].timestamp(&*config, &*file_state);
-                let ts_new = lines_guard[new_by_ts[j_new]].timestamp(&*config, &*file_state);
+                let ts_exist = lines_guard[by_ts_guard[i_exist]].timestamp(&*config, file_state);
+                let ts_new = lines_guard[new_by_ts[j_new]].timestamp(&*config, file_state);
                 if ts_exist <= ts_new {
                     merged.push(by_ts_guard[i_exist]);
                     i_exist += 1;
@@ -500,12 +495,12 @@ where
         profiling::scope!("SourceData::get_as_log_line");
         let lines = self.lines.read().expect("lines lock poisoned");
         let config = self.config.read().expect("config lock poisoned");
-        let file_state = self.file_state.read().expect("file_state lock poisoned");
+        let file_state = &*self.file_state;
         let line = lines.get(line_index)?;
         let raw_message = line.message();
         Some(LogLine {
-            timestamp: line.timestamp(&*config, &*file_state),
-            message: line.display_message(&*file_state),
+            timestamp: line.timestamp(&*config, file_state),
+            message: line.display_message(file_state),
             raw: line.raw(),
             line_number: line.line_number(),
             anomaly_score: line.anomaly_score(),
@@ -538,9 +533,9 @@ where
     pub fn render_line_context_menu(&self, line_index: usize, ui: &mut egui::Ui) {
         let lines = self.lines.read().expect("lines lock poisoned");
         let config = self.config.read().expect("config lock poisoned");
-        let mut file_state = self.file_state.write().expect("file_state lock poisoned");
+        let file_state = &*self.file_state;
         if let Some(line) = lines.get(line_index) {
-            line.egui_render_context_menu(ui, &*config, &mut *file_state);
+            line.egui_render_context_menu(ui, &*config, file_state);
         }
     }
 

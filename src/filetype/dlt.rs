@@ -2,15 +2,15 @@
 // Copyright (C) 2026 Daniel Freiermuth
 
 use chrono::{DateTime, Local};
+use dashmap::DashMap;
 use dlt_core::read::{read_message, DltMessageReader};
 use egui::Ui;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc, RwLock,
+    atomic::{AtomicI64, AtomicU64, Ordering},
+    Arc, Mutex,
 };
 
 use crate::filetype::{BinaryFileType, EguiConfig, InputFileType, LineType};
@@ -178,24 +178,92 @@ pub struct DltCalibrationState {
 }
 
 /// Per-source persistent state for DLT log sources.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+///
+/// Owns its interior synchronization so it can live in a bare `Arc` with no
+/// outer `RwLock`:
+/// - `storage_offset_ms`: `AtomicI64` — lock-free reads from rayon worker threads
+/// - `boot_times`: `Arc<DashMap>` — inline writes from `DltFileType::read()` without locking
+/// - `calibration`: `Mutex<Option<...>>` — UI-thread-only, always uncontended
 pub struct DltFileState {
     /// Storage-time mode: offset added to every storage_time timestamp.
-    #[serde(default)]
-    pub storage_offset_ms: i64,
-
+    pub storage_offset_ms: AtomicI64,
     /// Inferred-time mode: corrected boot times per `(ecu_id, app_id)`.
     ///
-    /// Seeded during file loading (first-seen storage heuristic). User
+    /// Seeded inline during file loading (first-seen storage heuristic). User
     /// calibration writes into this map and the values are persisted to
     /// `.crab`. On re-open, persisted values take precedence over the
     /// freshly computed defaults, preserving calibration across sessions.
-    #[serde(default)]
-    pub boot_times: HashMap<(String, String), DateTime<Local>>,
-
+    pub boot_times: Arc<DashMap<(String, String), DateTime<Local>>>,
     /// Open calibration window, if any. Not persisted.
-    #[serde(skip)]
-    pub calibration: Option<DltCalibrationState>,
+    pub calibration: Mutex<Option<DltCalibrationState>>,
+}
+
+impl DltFileState {
+    #[inline]
+    pub fn storage_offset_ms(&self) -> i64 {
+        self.storage_offset_ms.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for DltFileState {
+    fn default() -> Self {
+        Self {
+            storage_offset_ms: AtomicI64::new(0),
+            boot_times: Arc::new(DashMap::new()),
+            calibration: Mutex::new(None),
+        }
+    }
+}
+
+impl std::fmt::Debug for DltFileState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DltFileState")
+            .field("storage_offset_ms", &self.storage_offset_ms())
+            .field("boot_times_count", &self.boot_times.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Clone for DltFileState {
+    /// Deep-clones `boot_times` into a fresh `Arc<DashMap>`.
+    /// Calibration is transient UI state and is not cloned.
+    fn clone(&self) -> Self {
+        let bt: DashMap<(String, String), DateTime<Local>> =
+            self.boot_times.iter().map(|e| (e.key().clone(), *e.value())).collect();
+        Self {
+            storage_offset_ms: AtomicI64::new(self.storage_offset_ms()),
+            boot_times: Arc::new(bt),
+            calibration: Mutex::new(None),
+        }
+    }
+}
+
+impl serde::Serialize for DltFileState {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = s.serialize_struct("DltFileState", 2)?;
+        state.serialize_field("storage_offset_ms", &self.storage_offset_ms())?;
+        state.serialize_field("boot_times", &*self.boot_times)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DltFileState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            #[serde(default)]
+            storage_offset_ms: i64,
+            #[serde(default)]
+            boot_times: DashMap<(String, String), DateTime<Local>>,
+        }
+        let h = Helper::deserialize(d)?;
+        Ok(Self {
+            storage_offset_ms: AtomicI64::new(h.storage_offset_ms),
+            boot_times: Arc::new(h.boot_times),
+            calibration: Mutex::new(None),
+        })
+    }
 }
 
 // ============================================================================
@@ -238,7 +306,7 @@ impl LineType for DltLogLine {
 
     fn file_state_from_v2(time_offset_ms: i64) -> DltFileState {
         DltFileState {
-            storage_offset_ms: time_offset_ms,
+            storage_offset_ms: std::sync::atomic::AtomicI64::new(time_offset_ms),
             ..Default::default()
         }
     }
@@ -253,15 +321,15 @@ impl LineType for DltLogLine {
             DltTimestampSource::InferredMonotonic => {
                 if let Some(header_us) = self.header_timestamp_us {
                     let key = (self.ecu_id.clone(), self.app_id.clone());
-                    if let Some(&boot_time) = file_state.boot_times.get(&key) {
-                        return boot_time + chrono::TimeDelta::microseconds(header_us);
+                    if let Some(boot_time) = file_state.boot_times.get(&key) {
+                        return *boot_time + chrono::TimeDelta::microseconds(header_us);
                     }
                 }
                 // Fallback: no boot_time for this app yet
-                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms)
+                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms())
             }
             DltTimestampSource::StorageTime => {
-                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms)
+                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms())
             }
         }
     }
@@ -279,7 +347,7 @@ impl LineType for DltLogLine {
             file_state
                 .boot_times
                 .get(&key)
-                .map(|&bt| bt + chrono::TimeDelta::microseconds(header_us))
+                .map(|bt| *bt + chrono::TimeDelta::microseconds(header_us))
         });
         self.format_message(inferred_time)
     }
@@ -304,7 +372,7 @@ impl LineType for DltLogLine {
         &self,
         ui: &mut Ui,
         config: &crate::config::DltTimestampSource,
-        file_state: &mut DltFileState,
+        file_state: &DltFileState,
     ) {
         if ui.button("\u{23F1} Calibrate Time Here").clicked() {
             use crate::config::DltTimestampSource;
@@ -319,15 +387,15 @@ impl LineType for DltLogLine {
                 file_state
                     .boot_times
                     .get(&key)
-                    .map_or(self.storage_time, |&bt| {
-                        bt + chrono::TimeDelta::microseconds(header_us)
+                    .map_or(self.storage_time, |bt| {
+                        *bt + chrono::TimeDelta::microseconds(header_us)
                     })
             } else {
                 self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms)
+                    + chrono::Duration::milliseconds(file_state.storage_offset_ms())
             };
 
-            file_state.calibration = Some(DltCalibrationState {
+            *file_state.calibration.lock().expect("calibration lock poisoned") = Some(DltCalibrationState {
                 ecu_id: self.ecu_id.clone(),
                 app_id: self.app_id.clone(),
                 header_timestamp_us: self.header_timestamp_us.unwrap_or(0),
@@ -345,41 +413,41 @@ impl LineType for DltLogLine {
 }
 
 impl crate::filetype::LogFileState for DltFileState {
-    fn egui_render_file_state(&mut self, ui: &egui::Ui) -> bool {
-        let Some(cal) = self.calibration.as_mut() else {
+    fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
+        let mut cal_guard = self.calibration.lock().expect("calibration lock poisoned");
+        let Some(cal) = cal_guard.as_mut() else {
             return false;
         };
         match cal.window.render(ui) {
             Ok(Some((target_time, apply_to_all_apps))) => {
-                // new boot_time for the right-clicked (ecu, app)
                 let new_boot_time =
                     target_time - chrono::TimeDelta::microseconds(cal.header_timestamp_us);
                 let key = (cal.ecu_id.clone(), cal.app_id.clone());
                 let ecu_id = cal.ecu_id.clone();
 
                 if apply_to_all_apps {
-                    // Shift all apps in this ECU by the same delta.
-                    if let Some(&old_bt) = self.boot_times.get(&key) {
+                    if let Some(old_bt_ref) = self.boot_times.get(&key) {
+                        let old_bt = *old_bt_ref;
+                        drop(old_bt_ref);
                         let delta = new_boot_time.signed_duration_since(old_bt);
-                        for ((ecu, _), bt) in &mut self.boot_times {
-                            if *ecu == ecu_id {
-                                *bt = *bt + delta;
+                        for mut entry in self.boot_times.iter_mut() {
+                            if entry.key().0 == ecu_id {
+                                *entry.value_mut() = *entry.value_mut() + delta;
                             }
                         }
                     } else {
-                        // No prior entry: set this app only.
                         self.boot_times.insert(key, new_boot_time);
                     }
                 } else {
                     self.boot_times.insert(key, new_boot_time);
                 }
 
-                self.calibration = None;
+                *cal_guard = None;
                 true
             }
             Ok(None) => false,
             Err(()) => {
-                self.calibration = None;
+                *cal_guard = None;
                 false
             }
         }
@@ -419,17 +487,16 @@ impl<R: Read> Read for ByteCountReader<R> {
 
 /// Stateful streaming reader for AUTOSAR Diagnostic Log and Trace (`.dlt`) files.
 ///
-/// Each `read(n)` call drives `DltMessageReader` to parse up to `n` DLT messages,
-/// writing newly discovered `(ECU, App)` boot-times into `file_state` for
-/// `InferredMonotonic` mode (persisted calibration values are never overwritten).
+/// Holds a clone of the `Arc<DashMap>` from [`DltFileState::boot_times`] so that
+/// each `read(n)` call can write newly discovered `(ECU, App)` boot-times directly
+/// into the shared map — no lock acquisition, no end-of-chunk batch flush.
 pub struct DltFileType {
     reader: DltMessageReader<ByteCountReader<BufReader<File>>>,
-    timestamp_source: crate::config::DltTimestampSource,
+    /// Shared boot-time map — same `Arc` as `DltFileState::boot_times`.
+    boot_times: Arc<DashMap<(String, String), DateTime<Local>>>,
     bytes_read_rc: Arc<AtomicU64>,
     file_size: u64,
     line_number: usize,
-    /// Shared file state — DltFileType writes boot-times here during `read()`.
-    file_state: Arc<RwLock<DltFileState>>,
 }
 
 impl DltFileType {
@@ -446,9 +513,12 @@ impl InputFileType for DltFileType {
     /// Open a DLT file for pull-based reading.
     fn open(
         path: &Path,
-        config: crate::config::DltTimestampSource,
-        file_state: Arc<RwLock<DltFileState>>,
+        _config: crate::config::DltTimestampSource,
+        file_state: Arc<DltFileState>,
     ) -> Result<Self, String> {
+        // Clone the boot_times Arc so read() can write into it without
+        // ever touching the outer Arc<DltFileState>.
+        let boot_times = Arc::clone(&file_state.boot_times);
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let file =
             File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
@@ -457,24 +527,15 @@ impl InputFileType for DltFileType {
         let reader = DltMessageReader::new(inner, true);
         Ok(Self {
             reader,
-            timestamp_source: config,
+            boot_times,
             bytes_read_rc,
             file_size,
             line_number: 1,
-            file_state,
         })
     }
 
     fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
-        use crate::config::DltTimestampSource;
-
-        let use_inferred =
-            matches!(self.timestamp_source, DltTimestampSource::InferredMonotonic);
         let mut result = Vec::with_capacity(lines_to_read);
-
-        // Collect newly discovered (ecu, app) → boot_time pairs locally;
-        // merged into file_state in a single lock at the end of the chunk.
-        let mut new_boot_times: HashMap<(String, String), DateTime<Local>> = HashMap::new();
 
         // Safety cap: avoid spinning on files with many un-parseable messages.
         let attempt_limit = lines_to_read * 10 + 64;
@@ -485,15 +546,14 @@ impl InputFileType for DltFileType {
             match read_message(&mut self.reader, None) {
                 Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
                     if let Some(line) = convert_dlt_message(&msg, self.line_number) {
-                        if use_inferred {
-                            if let Some(header_us) = line.header_timestamp_us {
-                                let key = (line.ecu_id.clone(), line.app_id.clone());
-                                // First-seen wins (persisted calibration will also win via or_insert below)
-                                new_boot_times.entry(key).or_insert_with(|| {
-                                    line.storage_time
-                                        - chrono::TimeDelta::microseconds(header_us)
-                                });
-                            }
+                        if let Some(header_us) = line.header_timestamp_us {
+                            let key = (line.ecu_id.clone(), line.app_id.clone());
+                            // Write directly into the shared DashMap — no lock, no buffering.
+                            // First-seen wins; persisted calibration loaded at open time is
+                            // already present and or_insert_with leaves it untouched.
+                            self.boot_times.entry(key).or_insert_with(|| {
+                                line.storage_time - chrono::TimeDelta::microseconds(header_us)
+                            });
                         }
                         result.push(line);
                         self.line_number += 1;
@@ -505,15 +565,6 @@ impl InputFileType for DltFileType {
                     log::warn!("Failed to parse DLT message: {e:?}");
                     // continue — DLT files sometimes have minor corruption
                 }
-            }
-        }
-
-        // Merge discovered boot_times into file_state.
-        // Existing entries (persisted calibration) are never overwritten.
-        if use_inferred && !new_boot_times.is_empty() {
-            let mut state = self.file_state.write().expect("file_state lock poisoned");
-            for (key, bt) in new_boot_times {
-                state.boot_times.entry(key).or_insert(bt);
             }
         }
 
