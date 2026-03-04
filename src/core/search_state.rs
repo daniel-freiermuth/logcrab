@@ -222,7 +222,61 @@ impl SearchState {
         let target_line = store.get_by_id(&target)?;
         let target_time = store.get_adjusted_timestamp(&target, &target_line);
 
-        // Use shared helper to find closest line by timestamp
+        // Binary search to find the first line with timestamp >= target_time
+        let idx = indices.partition_point(|line_idx| {
+            store.get_by_id(line_idx)
+                .is_some_and(|line| store.get_adjusted_timestamp(line_idx, &line) < target_time)
+        });
+
+        // Quick check: did we find the exact target at the partition point?
+        if idx < indices.len() && indices[idx] == target {
+            return Some(idx);
+        }
+
+        // Find the range of indices with target_time
+        // Scan backwards to find the first line with target_time
+        let mut range_start = idx;
+        while range_start > 0 {
+            let prev_idx = range_start - 1;
+            if let Some(line) = store.get_by_id(&indices[prev_idx]) {
+                let ts = store.get_adjusted_timestamp(&indices[prev_idx], &line);
+                if ts == target_time {
+                    range_start = prev_idx;
+                    if indices[prev_idx] == target {
+                        return Some(prev_idx);
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Scan forwards to find exact target or determine the range end
+        let mut pos = range_start;
+        while pos < indices.len() {
+            if let Some(line) = store.get_by_id(&indices[pos]) {
+                let ts = store.get_adjusted_timestamp(&indices[pos], &line);
+                if ts == target_time {
+                    if indices[pos] == target {
+                        return Some(pos);
+                    }
+                    pos += 1;
+                } else if ts > target_time {
+                    // We've gone past target_time without finding exact match
+                    // Return closest position (before the overshoot)
+                    return Some(pos.saturating_sub(1).max(range_start));
+                } else {
+                    // ts < target_time, shouldn't happen after partition_point
+                    pos += 1;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Target not found in filtered results, return closest position by timestamp
         store.find_closest_line_position_by_time(&indices, target_time)
     }
 }
