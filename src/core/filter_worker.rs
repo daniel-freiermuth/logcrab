@@ -151,10 +151,10 @@ impl FilterWorker {
                     profiling::scope!("filter_lines");
 
                     // Parallel filtering with rayon
-                    request.store.get_matching_ids(|line| {
+                    request.store.get_matching_ids(|display_msg, raw| {
                         let matches_include =
-                            request.regex.is_match(&line.message()).unwrap_or(false)
-                                || request.regex.is_match(&line.raw()).unwrap_or(false);
+                            request.regex.is_match(display_msg).unwrap_or(false)
+                                || request.regex.is_match(raw).unwrap_or(false);
 
                         if !matches_include {
                             return false;
@@ -163,8 +163,8 @@ impl FilterWorker {
                         // If there's an exclude pattern, check if the line matches it
                         request.exclude_regex.as_ref().is_none_or(|exclude_regex| {
                             let matches_exclude =
-                                exclude_regex.is_match(&line.message()).unwrap_or(false)
-                                    || exclude_regex.is_match(&line.raw()).unwrap_or(false);
+                                exclude_regex.is_match(display_msg).unwrap_or(false)
+                                    || exclude_regex.is_match(raw).unwrap_or(false);
                             // Return true only if it doesn't match the exclusion pattern
                             !matches_exclude
                         })

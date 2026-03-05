@@ -509,22 +509,30 @@ where
         })
     }
 
-    /// Filter lines by mapping each `FT::LineType` to a different type `U` before applying the predicate.
+    /// Filter lines by their *display message* and *raw* string, in timestamp order.
     ///
-    /// Used by `DataSourceVariant::Dlt` to present `DltLogLine` lines as `LogLineVariant` to
-    /// predicates that expect the display type.
-    pub fn filter_sorted_mapped<U, F, Map>(&self, map: &Map, predicate: &F) -> Vec<usize>
+    /// Unlike `filter_sorted_mapped`, the predicate receives the display message produced
+    /// by `display_message(config, file_state)` — which includes any active overlays such
+    /// as SOME/IP SD decoded entries — and the raw string.  All config and file-state locks
+    /// are acquired once for the whole scan.
+    pub fn filter_sorted_by_search<F>(&self, predicate: &F) -> Vec<usize>
     where
-        Map: Fn(&FT::LineType) -> U + Sync,
-        F: Fn(&U) -> bool + Sync,
+        F: Fn(&str, &str) -> bool + Sync,
     {
-        profiling::scope!("SourceData::filter_sorted_mapped");
+        profiling::scope!("SourceData::filter_sorted_by_search");
         let lines = self.lines.read().expect("lines lock poisoned");
+        let config = self.config.read().expect("config lock poisoned");
+        let file_state = &*self.file_state;
         self.by_timestamp
             .read()
             .expect("by_timestamp lock poisoned")
             .par_iter()
-            .filter_map(|&idx| predicate(&map(&lines[idx])).then_some(idx))
+            .filter_map(|&idx| {
+                let line = &lines[idx];
+                let display_msg = line.display_message(&*config, file_state);
+                let raw = line.raw();
+                predicate(&display_msg, &raw).then_some(idx)
+            })
             .collect()
     }
 
@@ -914,7 +922,7 @@ impl LogStore {
     /// Returns `StoreIDs` for matching lines, sorted by timestamp.
     pub fn get_matching_ids<F>(&self, predicate: F) -> Vec<StoreID>
     where
-        F: Fn(&LogLineVariant) -> bool + Sync,
+        F: Fn(&str, &str) -> bool + Sync,
     {
         profiling::scope!("LogStore::get_matching_ids");
         profiling::scope!("LogStore::sources::read");
@@ -928,7 +936,7 @@ impl LogStore {
                 .map(|source| {
                     let source_id = source.source_id();
                     source
-                        .filter_sorted(&predicate)
+                        .filter_sorted_by_search(&predicate)
                         .into_iter()
                         .map(|line_index| StoreID {
                             source_id,

@@ -453,20 +453,17 @@ macro_rules! register_filetypes {
                 }
             }
 
-            /// Filter lines in timestamp order, returning matching line indices.
-            pub fn filter_sorted<F>(&self, predicate: &F) -> Vec<usize>
+            /// Filter lines by display-message and raw text in timestamp order.
+            ///
+            /// Predicate receives `(display_message, raw)` — the display message includes
+            /// any active per-source overlays (e.g. SOME/IP SD decoding for PCAP).
+            pub fn filter_sorted_by_search<F>(&self, predicate: &F) -> Vec<usize>
             where
-                F: Fn(&LogLineVariant) -> bool + Sync,
+                F: Fn(&str, &str) -> bool + Sync,
             {
                 match self {
-                    $( Self::$b_arm(s) => s.filter_sorted_mapped(
-                        &|l| LogLineVariant::$b_arm(l.clone()),
-                        predicate,
-                    ), )*
-                    $( Self::$t_arm(s) => s.filter_sorted_mapped(
-                        &|l| LogLineVariant::$t_arm(l.clone()),
-                        predicate,
-                    ), )*
+                    $( Self::$b_arm(s) => s.filter_sorted_by_search(predicate), )*
+                    $( Self::$t_arm(s) => s.filter_sorted_by_search(predicate), )*
                 }
             }
         }
@@ -486,34 +483,6 @@ macro_rules! register_filetypes {
                 }
             }
         )*
-
-        // ── LogLineVariant ────────────────────────────────────────────────────────────
-
-        /// Mixed-source display enum — one variant per registered file type.
-        ///
-        /// Returned by [`DataSourceVariant`] display methods (`get_by_id`, `clone_lines`,
-        /// `filter_sorted`) so callers can work with lines from heterogeneous sources uniformly.
-        #[derive(Debug, Clone)]
-        pub enum LogLineVariant {
-            $( $b_arm($b_logline), )*
-            $( $t_arm($t_logline), )*
-        }
-
-        impl LogLineVariant {
-            pub fn message(&self) -> String {
-                match self {
-                    $( Self::$b_arm(l) => l.message(), )*
-                    $( Self::$t_arm(l) => l.message(), )*
-                }
-            }
-
-            pub fn raw(&self) -> String {
-                match self {
-                    $( Self::$b_arm(l) => l.raw(), )*
-                    $( Self::$t_arm(l) => l.raw(), )*
-                }
-            }
-        }
     };
 }
 
