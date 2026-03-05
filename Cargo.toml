@@ -53,6 +53,7 @@ env_logger = "0.11.9"
 dlt-core = "0.20"
 pcap-parser = "0.17.0"
 btsnoop = "0.2.1"
+someip_parse = "0.6.2"
 rayon = "1.10"
 egui-toast = "0.19"
 dashmap = { version = "6", features = ["serde"] }

@@ -2224,6 +2224,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "someip_parse",
  "tokio",
  "tracy-client",
 ]
@@ -3580,6 +3581,12 @@ checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "someip_parse"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a94f38e4fe9cb47efc4f8f72f9cb8a249c25d686856fbf33e62b460fb4ccce1"
 
 [[package]]
 name = "spirv"

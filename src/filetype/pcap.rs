@@ -5,7 +5,7 @@ use chrono::{DateTime, Local, TimeZone};
 use egui::Ui;
 use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::{LegacyPcapReader, PcapBlockOwned, PcapError, PcapNGReader};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -41,9 +41,117 @@ impl PcapLogLine {
 // PcapFileState
 // ============================================================================
 
-/// Type alias kept for compatibility; the shared [`crate::filetype::SimpleFileState`]
-/// provides all interior-mutable time-offset and calibration state.
-pub type PcapFileState = crate::filetype::SimpleFileState;
+/// File state for PCAP files, including time offset and SOME/IP SD decoding state
+#[derive(Debug)]
+pub struct PcapFileState {
+    /// Shared time-offset and calibration state
+    inner: crate::filetype::SimpleFileState,
+    /// Set of multicast address:port combinations that should decode SOME/IP SD
+    someip_sd_decodings: std::sync::Mutex<HashSet<String>>,
+}
+
+impl PcapFileState {
+    /// Read the current time offset in milliseconds.
+    #[inline]
+    pub fn time_offset_ms(&self) -> i64 {
+        self.inner.time_offset_ms()
+    }
+
+    /// Set the time offset in milliseconds.
+    #[inline]
+    pub fn set_time_offset_ms(&self, v: i64) {
+        self.inner.set_time_offset_ms(v);
+    }
+
+    /// Check if SOME/IP SD decoding is active for a multicast key
+    pub fn is_someip_sd_active(&self, key: &str) -> bool {
+        self.someip_sd_decodings
+            .lock()
+            .expect("someip_sd_decodings lock poisoned")
+            .contains(key)
+    }
+
+    /// Toggle SOME/IP SD decoding for a multicast key
+    pub fn toggle_someip_sd(&self, key: String) -> bool {
+        let mut decodings = self
+            .someip_sd_decodings
+            .lock()
+            .expect("someip_sd_decodings lock poisoned");
+        if decodings.contains(&key) {
+            decodings.remove(&key);
+            false
+        } else {
+            decodings.insert(key);
+            true
+        }
+    }
+}
+
+impl Default for PcapFileState {
+    fn default() -> Self {
+        Self {
+            inner: crate::filetype::SimpleFileState::default(),
+            someip_sd_decodings: std::sync::Mutex::new(HashSet::new()),
+        }
+    }
+}
+
+impl Clone for PcapFileState {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            someip_sd_decodings: std::sync::Mutex::new(
+                self.someip_sd_decodings
+                    .lock()
+                    .expect("someip_sd_decodings lock poisoned")
+                    .clone(),
+            ),
+        }
+    }
+}
+
+impl serde::Serialize for PcapFileState {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = s.serialize_struct("PcapFileState", 2)?;
+        state.serialize_field("time_offset_ms", &self.time_offset_ms())?;
+        let decodings: Vec<String> = self
+            .someip_sd_decodings
+            .lock()
+            .expect("someip_sd_decodings lock poisoned")
+            .iter()
+            .cloned()
+            .collect();
+        state.serialize_field("someip_sd_decodings", &decodings)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PcapFileState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            #[serde(default)]
+            time_offset_ms: i64,
+            #[serde(default)]
+            someip_sd_decodings: Vec<String>,
+        }
+        let h = Helper::deserialize(d)?;
+        Ok(Self {
+            inner: crate::filetype::SimpleFileState {
+                time_offset_ms: std::sync::atomic::AtomicI64::new(h.time_offset_ms),
+                calibration: std::sync::Mutex::new(None),
+            },
+            someip_sd_decodings: std::sync::Mutex::new(h.someip_sd_decodings.into_iter().collect()),
+        })
+    }
+}
+
+impl crate::filetype::LogFileState for PcapFileState {
+    fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
+        self.inner.egui_render_file_state(ui)
+    }
+}
 
 // ============================================================================
 // LineType implementation
@@ -69,7 +177,7 @@ impl LineType for PcapLogLine {
 
     fn display_message(&self, _config: &(), file_state: &PcapFileState) -> String {
         let offset_ms = file_state.time_offset_ms();
-        if offset_ms != 0 {
+        let base_msg = if offset_ms != 0 {
             format!(
                 "[{}] {}",
                 crate::parser::format_time_diff(chrono::Duration::milliseconds(offset_ms)),
@@ -77,7 +185,25 @@ impl LineType for PcapLogLine {
             )
         } else {
             self.packet_info.format_message()
+        };
+
+        // Add SOME/IP SD decoding if active for this multicast address:port
+        if let Some(key) = self.packet_info.multicast_key() {
+            if file_state.is_someip_sd_active(&key) {
+                if let Some(ref payload) = self.packet_info.udp_payload {
+                    if let Some(sd_info) = decode_someip_sd(payload) {
+                        let entries_str = if sd_info.entries.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" {}", sd_info.entries.join(", "))
+                        };
+                        return format!("{} [SOME/IP-SD {}{}]", base_msg, sd_info.message_type, entries_str);
+                    }
+                }
+            }
         }
+
+        base_msg
     }
 
     fn raw(&self) -> String {
@@ -102,6 +228,7 @@ impl LineType for PcapLogLine {
             let display_time =
                 raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms());
             *file_state
+                .inner
                 .calibration
                 .lock()
                 .expect("calibration lock poisoned") = Some((
@@ -114,6 +241,21 @@ impl LineType for PcapLogLine {
                 ),
             ));
             ui.close();
+        }
+
+        // SOME/IP SD decoding toggle for multicast packets
+        if let Some(key) = self.packet_info.multicast_key() {
+            ui.separator();
+            let is_active = file_state.is_someip_sd_active(&key);
+            let label = if is_active {
+                format!("🔓 Disable SOME/IP SD decoding for {}", key)
+            } else {
+                format!("🔒 Enable SOME/IP SD decoding for {}", key)
+            };
+            if ui.button(label).clicked() {
+                file_state.toggle_someip_sd(key);
+                ui.close();
+            }
         }
     }
 }
@@ -197,6 +339,7 @@ pub struct PacketInfo {
     pub info: String,
     pub tcp_details: Option<TcpDetails>,
     pub is_abnormal: bool,
+    pub udp_payload: Option<Vec<u8>>,
 }
 
 /// TCP-specific packet details
@@ -210,6 +353,21 @@ pub struct TcpDetails {
 }
 
 impl PacketInfo {
+    /// Check if the destination address is multicast
+    pub fn is_multicast(&self) -> bool {
+        is_multicast_address(&self.dst_addr)
+    }
+
+    /// Get the multicast key for tracking SOME/IP SD decodings
+    pub fn multicast_key(&self) -> Option<String> {
+        if self.is_multicast() && self.protocol == "UDP" {
+            self.dst_port
+                .map(|port| format!("{}:{}", self.dst_addr, port))
+        } else {
+            None
+        }
+    }
+
     /// Format as a display message
     pub fn format_message(&self) -> String {
         let src = self.src_port.map_or_else(
@@ -516,6 +674,184 @@ impl TcpFlowTracker {
 }
 
 // ============================================================================
+// Multicast Detection
+// ============================================================================
+
+/// Check if an IP address is multicast
+fn is_multicast_address(addr: &str) -> bool {
+    if let Ok(ip) = addr.parse::<std::net::IpAddr>() {
+        return ip.is_multicast();
+    }
+    false
+}
+
+// ============================================================================
+// SOME/IP SD Decoder
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct SomeIpSdInfo {
+    pub message_type: String,
+    pub entries: Vec<String>,
+}
+
+/// Decode SOME/IP SD (Service Discovery) payload using someip_parse library
+fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
+    use someip_parse::{SdEntry, SdOption, SomeipMsgSlice};
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    // Parse SOME/IP message
+    let msg = match SomeipMsgSlice::from_slice(payload) {
+        Ok(msg) => msg,
+        Err(_) => return None,
+    };
+
+    // Check if this is a SOME/IP-SD message
+    if !msg.is_someip_sd() {
+        return None;
+    }
+
+    let someip_payload = msg.payload();
+
+    // Parse SD header using the library
+    let mut cursor = std::io::Cursor::new(someip_payload);
+    let sd_header = match someip_parse::SdHeader::read(&mut cursor) {
+        Ok(header) => header,
+        Err(_) => return None,
+    };
+
+    /// Format a slice of `SdOption` entries as compact endpoint strings.
+    fn format_endpoints(opts: &[SdOption]) -> Vec<String> {
+        opts.iter()
+            .filter_map(|opt| match opt {
+                SdOption::Ipv4Endpoint(e) => Some(format!(
+                    "{}/{}:{}",
+                    Ipv4Addr::from(e.ipv4_address),
+                    proto_str(e.transport_protocol),
+                    e.port,
+                )),
+                SdOption::Ipv6Endpoint(e) => Some(format!(
+                    "[{}]/{}:{}",
+                    Ipv6Addr::from(e.ipv6_address),
+                    proto_str(e.transport_protocol),
+                    e.port,
+                )),
+                SdOption::Ipv4Multicast(e) => Some(format!(
+                    "mcast:{}/{}:{}",
+                    Ipv4Addr::from(e.ipv4_address),
+                    proto_str(e.transport_protocol),
+                    e.port,
+                )),
+                SdOption::Ipv6Multicast(e) => Some(format!(
+                    "mcast:[{}]/{}:{}",
+                    Ipv6Addr::from(e.ipv6_address),
+                    proto_str(e.transport_protocol),
+                    e.port,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn proto_str(p: someip_parse::TransportProtocol) -> &'static str {
+        match p {
+            someip_parse::TransportProtocol::Tcp => "TCP",
+            someip_parse::TransportProtocol::Udp => "UDP",
+            someip_parse::TransportProtocol::Generic(_) => "?",
+        }
+    }
+
+    /// Collect endpoint options for an entry's two option runs.
+    fn entry_endpoints(
+        opts: &[SdOption],
+        idx1: u8,
+        num1: u8,
+        idx2: u8,
+        num2: u8,
+    ) -> String {
+        let run1_start = idx1 as usize;
+        let run1_end = (run1_start + num1 as usize).min(opts.len());
+        let run2_start = idx2 as usize;
+        let run2_end = (run2_start + num2 as usize).min(opts.len());
+
+        let mut endpoints = format_endpoints(&opts[run1_start..run1_end]);
+        endpoints.extend(format_endpoints(&opts[run2_start..run2_end]));
+
+        if endpoints.is_empty() {
+            String::new()
+        } else {
+            format!(" @ {}", endpoints.join(", "))
+        }
+    }
+
+    // Format entries for display
+    let entries = sd_header
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            SdEntry::Service(s) => {
+                let entry_type = match s._type {
+                    someip_parse::SdServiceEntryType::FindService => "FindService",
+                    someip_parse::SdServiceEntryType::OfferService => "OfferService",
+                };
+                let endpoints = entry_endpoints(
+                    &sd_header.options,
+                    s.index_first_option_run,
+                    s.number_of_options_1,
+                    s.index_second_option_run,
+                    s.number_of_options_2,
+                );
+                format!(
+                    "{}(0x{:04x}:0x{:04x} v{}.{} TTL={}{})",
+                    entry_type,
+                    s.service_id,
+                    s.instance_id,
+                    s.major_version,
+                    s.minor_version,
+                    s.ttl,
+                    endpoints,
+                )
+            }
+            SdEntry::Eventgroup(e) => {
+                let entry_type = match e._type {
+                    someip_parse::SdEventGroupEntryType::Subscribe => "Subscribe",
+                    someip_parse::SdEventGroupEntryType::SubscribeAck => "SubscribeAck",
+                };
+                let endpoints = entry_endpoints(
+                    &sd_header.options,
+                    e.index_first_option_run,
+                    e.number_of_options_1,
+                    e.index_second_option_run,
+                    e.number_of_options_2,
+                );
+                format!(
+                    "{}(0x{:04x}:0x{:04x} eg=0x{:04x} TTL={}{})",
+                    entry_type,
+                    e.service_id,
+                    e.instance_id,
+                    e.eventgroup_id,
+                    e.ttl,
+                    endpoints,
+                )
+            }
+        })
+        .collect();
+
+    let msg_type = match msg.message_type() {
+        someip_parse::MessageType::Request => "REQUEST",
+        someip_parse::MessageType::RequestNoReturn => "REQUEST_NO_RETURN",
+        someip_parse::MessageType::Notification => "NOTIFICATION",
+        someip_parse::MessageType::Response => "RESPONSE",
+        someip_parse::MessageType::Error => "ERROR",
+    };
+
+    Some(SomeIpSdInfo {
+        message_type: msg_type.to_string(),
+        entries,
+    })
+}
+
+// ============================================================================
 // Packet parsing helpers
 // ============================================================================
 
@@ -549,6 +885,7 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
             info: "ARP Request/Reply".to_string(),
             tcp_details: None,
             is_abnormal: false,
+            udp_payload: None,
         }),
         _ => Some(PacketInfo {
             timestamp,
@@ -562,6 +899,7 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
             info: String::new(),
             tcp_details: None,
             is_abnormal: false,
+            udp_payload: None,
         }),
     }
 }
@@ -595,11 +933,14 @@ fn parse_ipv4_packet(
     let dst_ip = format!("{}.{}.{}.{}", data[16], data[17], data[18], data[19]);
     let total_len = u16::from_be_bytes([data[2], data[3]]);
     let transport_data = &data[ihl..];
-    let (proto_name, src_port, dst_port, info, tcp_details) = match protocol {
-        6 => parse_tcp_info(transport_data),
+    let (proto_name, src_port, dst_port, info, tcp_details, udp_payload) = match protocol {
+        6 => {
+            let (p, sp, dp, i, td) = parse_tcp_info(transport_data);
+            (p, sp, dp, i, td, None)
+        }
         17 => {
-            let (p, sp, dp, i) = parse_udp_info(transport_data);
-            (p, sp, dp, i, None)
+            let (p, sp, dp, i, payload) = parse_udp_info(transport_data);
+            (p, sp, dp, i, None, payload)
         }
         1 => (
             "ICMP".to_string(),
@@ -607,8 +948,9 @@ fn parse_ipv4_packet(
             None,
             parse_icmp_info(transport_data),
             None,
+            None,
         ),
-        _ => (format!("IP/{protocol}"), None, None, String::new(), None),
+        _ => (format!("IP/{protocol}"), None, None, String::new(), None, None),
     };
     let is_abnormal = tcp_details
         .as_ref()
@@ -625,6 +967,7 @@ fn parse_ipv4_packet(
         info,
         tcp_details,
         is_abnormal,
+        udp_payload,
     })
 }
 
@@ -642,18 +985,22 @@ fn parse_ipv6_packet(
     let src_ip = format_ipv6(&data[8..24]);
     let dst_ip = format_ipv6(&data[24..40]);
     let transport_data = &data[40..];
-    let (proto_name, src_port, dst_port, info, tcp_details) = match next_header {
-        6 => parse_tcp_info(transport_data),
-        17 => {
-            let (p, sp, dp, i) = parse_udp_info(transport_data);
-            (p, sp, dp, i, None)
+    let (proto_name, src_port, dst_port, info, tcp_details, udp_payload) = match next_header {
+        6 => {
+            let (p, sp, dp, i, td) = parse_tcp_info(transport_data);
+            (p, sp, dp, i, td, None)
         }
-        58 => ("ICMPv6".to_string(), None, None, String::new(), None),
+        17 => {
+            let (p, sp, dp, i, payload) = parse_udp_info(transport_data);
+            (p, sp, dp, i, None, payload)
+        }
+        58 => ("ICMPv6".to_string(), None, None, String::new(), None, None),
         _ => (
             format!("IPv6/{next_header}"),
             None,
             None,
             String::new(),
+            None,
             None,
         ),
     };
@@ -672,6 +1019,7 @@ fn parse_ipv6_packet(
         info,
         tcp_details,
         is_abnormal,
+        udp_payload,
     })
 }
 
@@ -721,17 +1069,23 @@ fn parse_tcp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String, Opt
     )
 }
 
-fn parse_udp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String) {
+fn parse_udp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String, Option<Vec<u8>>) {
     if data.len() < 8 {
-        return ("UDP".to_string(), None, None, String::new());
+        return ("UDP".to_string(), None, None, String::new(), None);
     }
     let src_port = u16::from_be_bytes([data[0], data[1]]);
     let dst_port = u16::from_be_bytes([data[2], data[3]]);
+    let payload = if data.len() > 8 {
+        Some(data[8..].to_vec())
+    } else {
+        None
+    };
     (
         "UDP".to_string(),
         Some(src_port),
         Some(dst_port),
         String::new(),
+        payload,
     )
 }
 
