@@ -7,6 +7,7 @@ use opentelemetry_proto::tonic::{common::v1::any_value::Value as OTelValue, logs
 use std::fs::{metadata, File};
 use std::io::Read;
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 use crate::filetype::{InputFileType, LineType, TextFileType};
 
@@ -175,9 +176,10 @@ impl InputFileType for OtelFileType {
                         Utc.timestamp_opt(secs, subsec_nanos)
                             .single()
                             .map(|dt| dt.with_timezone(&Local))
-                            .unwrap_or_else(Local::now)
+                            .unwrap_or_else(|| UNIX_EPOCH.into())
                     } else {
-                        Local::now()
+                        // Into local time
+                        UNIX_EPOCH.into()
                     };
 
                     let body = log_record.body.as_ref().map_or_else(String::new, |v| {
