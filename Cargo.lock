@@ -2225,6 +2225,7 @@ dependencies = [
  "serde",
  "serde_json",
  "someip_parse",
+ "tempfile",
  "tokio",
  "tracy-client",
 ]

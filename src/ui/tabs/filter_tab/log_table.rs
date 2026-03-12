@@ -747,7 +747,7 @@ impl LogTable {
             }
 
             let job = FilterHighlight::highlight_text_with_filters(
-                &line.message,
+                &line.message.replace('\n', " ↵ "),
                 bg_color,
                 all_filter_highlights,
                 dark_mode,
@@ -757,7 +757,7 @@ impl LogTable {
             let available_width = ui.available_width();
             let galley = ui.painter().layout_job(job.clone());
             let text_width = galley.size().x;
-            let is_clipped = text_width > available_width;
+            let is_clipped = text_width > available_width || line.message.contains('\n');
 
             let label_response = ui.add(egui::Label::new(job).selectable(true).extend());
 

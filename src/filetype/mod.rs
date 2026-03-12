@@ -4,6 +4,7 @@ pub mod btsnoop;
 pub mod bugreport;
 pub mod calibration_window;
 pub mod dlt;
+pub mod dmesg;
 pub mod generic;
 pub mod logcat;
 pub mod pcap;

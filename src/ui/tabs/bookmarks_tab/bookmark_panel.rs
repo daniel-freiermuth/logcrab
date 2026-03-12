@@ -498,13 +498,17 @@ impl BookmarkPanel {
             Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
             let job = FilterHighlight::highlight_text_with_filters(
-                &line.message,
+                &line.message.replace('\n', " ↵ "),
                 color,
                 all_filter_highlights,
                 dark_mode,
             );
 
             let response = ui.add(egui::Label::new(job).selectable(true).extend());
+
+            if line.message.contains('\n') {
+                response.clone().on_hover_text(line.raw.clone());
+            }
 
             if response.clicked() {
                 *row_clicked = true;
