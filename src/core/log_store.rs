@@ -20,11 +20,12 @@ use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
 use crate::filetype::{
     btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType,
-    dmesg::DmesgFileType, generic::GenericFileType, logcat::LogcatFileType, pcap::PcapFileType,
+    dmesg::DmesgFileType, generic::GenericFileType, logcat::LogcatFileType, otel::OtelFileType,
+    pcap::PcapFileType,
 };
 use crate::filetype::{
     btsnoop::BtsnoopLogLine, dlt::DltLogLine, dmesg::DmesgLogLine, generic::GenericLogLine,
-    logcat::LogcatLogLine, pcap::PcapLogLine,
+    logcat::LogcatLogLine, otel::OtelLogLine, pcap::PcapLogLine,
 };
 use crate::filetype::{InputFileType, LineType, LogFileState};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
@@ -581,6 +582,7 @@ crate::register_filetypes! {
         bugreport: Bugreport: BugreportFileType: LogcatLogLine,
         logcat:    Logcat:   LogcatFileType:    LogcatLogLine,
         dmesg:     Dmesg:    DmesgFileType:     DmesgLogLine,
+        otel:      Otel:     OtelFileType:      OtelLogLine,
         generic:   Generic:  GenericFileType:   GenericLogLine,
     }
 }
