@@ -7,6 +7,7 @@ pub mod dlt;
 pub mod dmesg;
 pub mod generic;
 pub mod logcat;
+pub mod otel;
 pub mod pcap;
 pub mod registry_macro;
 pub mod simple_file_state;
