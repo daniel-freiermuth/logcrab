@@ -220,8 +220,12 @@ impl FilterView {
                         store_id: line_index,
                     });
                 }
-                // SetTimeZero and ClearTimeZero are consumed inside LogTable::render
-                LogTableEvent::SetTimeZero { .. } | LogTableEvent::ClearTimeZero => {}
+                LogTableEvent::SetTimeZero { line_index } => {
+                    self.state.time_zero_store_id = Some(line_index);
+                }
+                LogTableEvent::ClearTimeZero => {
+                    self.state.time_zero_store_id = None;
+                }
             }
         }
 

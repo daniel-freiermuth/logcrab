@@ -332,24 +332,6 @@ impl LogTable {
                 );
             });
 
-        // Apply events that affect FilterState directly (SetTimeZero, ClearTimeZero)
-        let mut i = 0;
-        while i < events.len() {
-            match &events[i] {
-                LogTableEvent::SetTimeZero { line_index } => {
-                    filter.time_zero_store_id = Some(*line_index);
-                    events.remove(i);
-                }
-                LogTableEvent::ClearTimeZero => {
-                    filter.time_zero_store_id = None;
-                    events.remove(i);
-                }
-                _ => {
-                    i += 1;
-                }
-            }
-        }
-
         events
     }
 
