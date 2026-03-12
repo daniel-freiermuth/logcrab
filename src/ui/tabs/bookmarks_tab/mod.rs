@@ -30,6 +30,9 @@ use crate::{
     },
 };
 use egui::Ui;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 
 /// Orchestrates the bookmarks view UI using the `BookmarkPanel` component
 #[derive(Default)]
@@ -172,6 +175,30 @@ impl BookmarksView {
         }
     }
 
+    /// Export all bookmarks (sorted by timestamp) to a text file
+    fn export_bookmarks(data_state: &SessionState, path: &Path) -> Result<(), String> {
+        let mut bookmarks = data_state.get_all_bookmarks();
+        bookmarks.sort_by(|b1, b2| b1.store_id.cmp(&b2.store_id, &data_state.store));
+
+        let file = File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
+        let mut writer = BufWriter::new(file);
+
+        for bookmark in &bookmarks {
+            if let Some(line) = data_state.store.get_by_id(&bookmark.store_id) {
+                let ts = line.timestamp.to_rfc3339();
+                let msg = &line.message;
+                let name = &bookmark.name;
+                if name.is_empty() {
+                    writeln!(writer, "{ts}\t{msg}")
+                } else {
+                    writeln!(writer, "{ts}\t{msg}\t[{name}]")
+                }
+                .map_err(|e| format!("Write error: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Move selection in bookmarks view
     pub fn move_selection_in_bookmarks(delta: i32, data_state: &mut SessionState) {
         let mut bookmarks = data_state.get_all_bookmarks();
@@ -257,7 +284,7 @@ impl LogCrabTab for BookmarksView {
         all_filter_highlights: &[FilterHighlight],
         _histogram_markers: &[HistogramMarker],
     ) {
-        // Add timeline toggle button at the top
+        // Add timeline toggle button and export button at the top
         ui.horizontal(|ui| {
             if ui
                 .toggle_value(&mut global_config.show_bookmarks_in_timeline, "📊")
@@ -270,6 +297,27 @@ impl LogCrabTab for BookmarksView {
                 }
             }
             ui.label("Show in Timeline");
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("Export…")
+                    .on_hover_text("Export all bookmarks to file")
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Export Bookmarks")
+                        .add_filter("Text", &["txt"])
+                        .set_file_name("bookmarks.txt")
+                        .save_file()
+                    {
+                        if let Err(e) = Self::export_bookmarks(data_state, &path) {
+                            log::error!("Failed to export bookmarks: {e}");
+                        } else {
+                            log::info!("Bookmarks exported to {}", path.display());
+                        }
+                    }
+                }
+            });
         });
 
         ui.separator();
