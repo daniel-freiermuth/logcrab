@@ -44,10 +44,6 @@ pub struct FilterState {
 
     /// How the timestamp column displays time (absolute or delta).
     pub timestamp_mode: TimestampMode,
-
-    /// Optional reference row for delta-time mode.
-    /// When set, all delta values are relative to this row's timestamp.
-    pub time_zero_store_id: Option<StoreID>,
 }
 
 impl FilterState {
@@ -61,7 +57,6 @@ impl FilterState {
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
             timestamp_mode: TimestampMode::default(),
-            time_zero_store_id: None,
         }
     }
 
@@ -104,7 +99,6 @@ impl From<&SavedFilter> for FilterState {
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
             timestamp_mode: TimestampMode::default(),
-            time_zero_store_id: None,
         }
     }
 }

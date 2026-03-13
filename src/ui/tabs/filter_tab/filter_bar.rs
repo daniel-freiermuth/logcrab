@@ -16,14 +16,15 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::Arc;
+
 use egui::{Color32, Ui};
 
 use crate::{
-    config::GlobalConfig,
-    ui::{
+    config::GlobalConfig, core::LogStore, ui::{
         session_state::SessionState,
         tabs::filter_tab::{filter_state::FilterState, log_table::TimestampMode},
-    },
+    }
 };
 
 /// Events emitted by the filter bar that need to bubble up to the parent.
@@ -105,7 +106,7 @@ impl FilterBar {
             Self::render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
-            Self::render_timestamp_mode_dropdown(ui, filter);
+            Self::render_timestamp_mode_dropdown(ui, filter, log_view_state.store.clone());
 
             // Export button for filtered results
             if ui
@@ -447,12 +448,15 @@ impl FilterBar {
         }
     }
 
-    fn render_timestamp_mode_dropdown(ui: &mut Ui, filter: &mut FilterState) {
+    fn render_timestamp_mode_dropdown(ui: &mut Ui, filter: &mut FilterState, store: Arc<LogStore>) {
+        let filtered_indices = filter.search.get_filtered_indices_cached();
+        let first_timestamp = filtered_indices
+            .first()
+            .and_then(|idx| store.adjusted_timestamp(idx));
         let selected_text = match filter.timestamp_mode {
             TimestampMode::Absolute => "🕐 Absolute",
             TimestampMode::Delta => "Δ Delta",
-            TimestampMode::Relative if filter.time_zero_store_id.is_some() => "⏱ Relative (marker)",
-            TimestampMode::Relative => "⏱ Relative",
+            TimestampMode::Relative(_) => "⏱ Relative",
         };
 
         egui::ComboBox::from_id_salt("timestamp_mode_combo")
@@ -469,21 +473,13 @@ impl FilterBar {
                     TimestampMode::Delta,
                     "Δ Delta time",
                 );
-                ui.selectable_value(
-                    &mut filter.timestamp_mode,
-                    TimestampMode::Relative,
-                    "⏱ Relative time",
-                );
+                if let Some(first_ts) = first_timestamp {
+                    ui.selectable_value(
+                        &mut filter.timestamp_mode,
+                        TimestampMode::Relative(first_ts),
+                        "⏱ Relative time",
+                    );
+                }
             });
-
-        if filter.time_zero_store_id.is_some() {
-            if ui
-                .small_button("✖")
-                .on_hover_text("Clear time zero marker")
-                .clicked()
-            {
-                filter.time_zero_store_id = None;
-            }
-        }
     }
 }

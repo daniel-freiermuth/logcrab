@@ -40,7 +40,7 @@ pub enum TimestampMode {
     /// Show the elapsed time from a fixed time-zero reference.
     /// Defaults to the oldest visible message when no marker is pinned.
     /// Example: `120243.423s`
-    Relative,
+    Relative(DateTime<Local>),
 }
 
 /// Events emitted by the log table
@@ -317,7 +317,6 @@ impl LogTable {
                     dark_mode,
                     &mut filter.column_widths,
                     filter.timestamp_mode,
-                    filter.time_zero_store_id,
                 );
             });
 
@@ -381,26 +380,10 @@ impl LogTable {
         dark_mode: bool,
         column_widths: &mut ColumnWidths,
         timestamp_mode: TimestampMode,
-        time_zero_store_id: Option<StoreID>,
     ) {
-        // Resolve the time-zero reference timestamp for Relative mode.
-        // Priority: explicit user-pinned row > oldest visible message.
-        let time_zero_timestamp = if timestamp_mode == TimestampMode::Relative {
-            if let Some(id) = time_zero_store_id {
-                store.adjusted_timestamp(&id)
-            } else {
-                // Default: oldest visible message.
-                filtered_indices.first().and_then(|id| {
-                    store.adjusted_timestamp(id)
-                })
-            }
-        } else {
-            None
-        };
-
         table
             .header(20.0, |mut header| {
-                Self::render_header(&mut header, column_widths, timestamp_mode, time_zero_store_id);
+                Self::render_header(&mut header, column_widths, timestamp_mode);
             })
             .body(|body| {
                 profiling::scope!("LogTable::body");
@@ -416,7 +399,6 @@ impl LogTable {
                     events,
                     dark_mode,
                     timestamp_mode,
-                    time_zero_timestamp,
                 );
             });
     }
@@ -425,7 +407,6 @@ impl LogTable {
         header: &mut egui_extras::TableRow,
         column_widths: &mut ColumnWidths,
         timestamp_mode: TimestampMode,
-        time_zero_store_id: Option<StoreID>,
     ) {
         header.col(|ui| {
             column_widths.source = ui.available_width();
@@ -444,8 +425,7 @@ impl LogTable {
                     format!("Timestamp (UTC{offset})")
                 }
                 TimestampMode::Delta => "Δ Time".to_string(),
-                TimestampMode::Relative if time_zero_store_id.is_some() => "⏱ Relative (marker)".to_string(),
-                TimestampMode::Relative => "⏱ Relative".to_string(),
+                TimestampMode::Relative(_) => "⏱ Relative".to_string(),
             };
             ui.strong(label);
         });
@@ -472,7 +452,6 @@ impl LogTable {
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
         timestamp_mode: TimestampMode,
-        time_zero_timestamp: Option<DateTime<Local>>,
     ) {
         let visible_lines = filtered_indices.len();
 
@@ -506,7 +485,6 @@ impl LogTable {
                 dark_mode,
                 timestamp_mode,
                 prev_row_timestamp,
-                time_zero_timestamp,
             );
 
             if let Some(ts) = store.adjusted_timestamp(&filtered_indices[row_index]) {
@@ -540,7 +518,6 @@ impl LogTable {
         dark_mode: bool,
         timestamp_mode: TimestampMode,
         prev_row_timestamp: Option<DateTime<Local>>,
-        time_zero_timestamp: Option<DateTime<Local>>,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
         let line_idx = filtered_indices[row_index];
@@ -580,7 +557,6 @@ impl LogTable {
             dark_mode,
             timestamp_mode,
             prev_row_timestamp,
-            time_zero_timestamp,
         );
 
         // Row-level interaction handling (union column and row responses)
@@ -620,7 +596,6 @@ impl LogTable {
         dark_mode: bool,
         timestamp_mode: TimestampMode,
         prev_row_timestamp: Option<DateTime<Local>>,
-        time_zero_timestamp: Option<DateTime<Local>>,
     ) -> egui::Response {
         let responses = [
             Self::render_source_column(
@@ -655,7 +630,6 @@ impl LogTable {
                 dark_mode,
                 timestamp_mode,
                 prev_row_timestamp,
-                time_zero_timestamp,
             ),
             Self::render_message_column(
                 row,
@@ -789,7 +763,6 @@ impl LogTable {
         dark_mode: bool,
         timestamp_mode: TimestampMode,
         prev_row_timestamp: Option<DateTime<Local>>,
-        time_zero_timestamp: Option<DateTime<Local>>,
     ) -> egui::Response {
         let mut response: Option<egui::Response> = None;
         let (_, col_response) = row.col(|ui| {
@@ -817,13 +790,10 @@ impl LogTable {
                     None => "0.000s".to_string(),
                     Some(prev) => format_time_diff(display_time.signed_duration_since(prev)),
                 },
-                TimestampMode::Relative => match time_zero_timestamp {
-                    None => "0.000s".to_string(),
-                    Some(t0) => {
-                        let secs = display_time.signed_duration_since(t0).as_seconds_f64();
+                TimestampMode::Relative(reference) => {
+                        let secs = display_time.signed_duration_since(reference).as_seconds_f64();
                         format!("{secs:.3}s")
-                    },
-                },
+                }
             };
 
             let text = RichText::new(timestamp_str).color(color);
