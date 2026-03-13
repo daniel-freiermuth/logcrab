@@ -20,7 +20,10 @@ use egui::{Color32, Ui};
 
 use crate::{
     config::GlobalConfig,
-    ui::{session_state::SessionState, tabs::filter_tab::filter_state::FilterState},
+    ui::{
+        session_state::SessionState,
+        tabs::filter_tab::{filter_state::FilterState, log_table::TimestampMode},
+    },
 };
 
 /// Events emitted by the filter bar that need to bubble up to the parent.
@@ -102,6 +105,7 @@ impl FilterBar {
             Self::render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
+            Self::render_timestamp_mode_dropdown(ui, filter);
 
             // Export button for filtered results
             if ui
@@ -440,6 +444,46 @@ impl FilterBar {
             .clicked()
         {
             events.push(FilterInternalEvent::ConvertToHighlight);
+        }
+    }
+
+    fn render_timestamp_mode_dropdown(ui: &mut Ui, filter: &mut FilterState) {
+        let selected_text = match filter.timestamp_mode {
+            TimestampMode::Absolute => "🕐 Absolute",
+            TimestampMode::Delta => "Δ Delta",
+            TimestampMode::Relative if filter.time_zero_store_id.is_some() => "⏱ Relative (marker)",
+            TimestampMode::Relative => "⏱ Relative",
+        };
+
+        egui::ComboBox::from_id_salt("timestamp_mode_combo")
+            .selected_text(selected_text)
+            .width(140.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut filter.timestamp_mode,
+                    TimestampMode::Absolute,
+                    "🕐 Absolute time",
+                );
+                ui.selectable_value(
+                    &mut filter.timestamp_mode,
+                    TimestampMode::Delta,
+                    "Δ Delta time",
+                );
+                ui.selectable_value(
+                    &mut filter.timestamp_mode,
+                    TimestampMode::Relative,
+                    "⏱ Relative time",
+                );
+            });
+
+        if filter.time_zero_store_id.is_some() {
+            if ui
+                .small_button("✖")
+                .on_hover_text("Clear time zero marker")
+                .clicked()
+            {
+                filter.time_zero_store_id = None;
+            }
         }
     }
 }

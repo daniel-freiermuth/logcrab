@@ -223,9 +223,6 @@ impl FilterView {
                 LogTableEvent::SetTimeZero { line_index } => {
                     self.state.time_zero_store_id = Some(line_index);
                 }
-                LogTableEvent::ClearTimeZero => {
-                    self.state.time_zero_store_id = None;
-                }
             }
         }
 

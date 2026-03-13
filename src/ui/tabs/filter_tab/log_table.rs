@@ -65,8 +65,6 @@ pub enum LogTableEvent {
     SetTimeZero {
         line_index: StoreID,
     },
-    /// User cleared the time-zero reference from the header context menu.
-    ClearTimeZero,
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -327,7 +325,7 @@ impl LogTable {
                     &mut events,
                     dark_mode,
                     &mut filter.column_widths,
-                    &mut filter.timestamp_mode,
+                    filter.timestamp_mode,
                     filter.time_zero_store_id,
                 );
             });
@@ -391,12 +389,12 @@ impl LogTable {
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
         column_widths: &mut ColumnWidths,
-        timestamp_mode: &mut TimestampMode,
+        timestamp_mode: TimestampMode,
         time_zero_store_id: Option<StoreID>,
     ) {
         // Resolve the time-zero reference timestamp for Relative mode.
         // Priority: explicit user-pinned row > oldest visible message.
-        let time_zero_timestamp = if *timestamp_mode == TimestampMode::Relative {
+        let time_zero_timestamp = if timestamp_mode == TimestampMode::Relative {
             if let Some(id) = time_zero_store_id {
                 store.adjusted_timestamp(&id)
             } else {
@@ -411,7 +409,7 @@ impl LogTable {
 
         table
             .header(20.0, |mut header| {
-                Self::render_header(&mut header, column_widths, timestamp_mode, time_zero_store_id, events);
+                Self::render_header(&mut header, column_widths, timestamp_mode, time_zero_store_id);
             })
             .body(|body| {
                 profiling::scope!("LogTable::body");
@@ -426,7 +424,7 @@ impl LogTable {
                     all_filter_highlights,
                     events,
                     dark_mode,
-                    *timestamp_mode,
+                    timestamp_mode,
                     time_zero_timestamp,
                 );
             });
@@ -435,9 +433,8 @@ impl LogTable {
     fn render_header(
         header: &mut egui_extras::TableRow,
         column_widths: &mut ColumnWidths,
-        timestamp_mode: &mut TimestampMode,
+        timestamp_mode: TimestampMode,
         time_zero_store_id: Option<StoreID>,
-        events: &mut Vec<LogTableEvent>,
     ) {
         header.col(|ui| {
             column_widths.source = ui.available_width();
@@ -449,7 +446,7 @@ impl LogTable {
         });
         header.col(|ui| {
             column_widths.timestamp = ui.available_width();
-            let label = match *timestamp_mode {
+            let label = match timestamp_mode {
                 TimestampMode::Absolute => {
                     let now = Local::now();
                     let offset = now.offset();
@@ -459,39 +456,7 @@ impl LogTable {
                 TimestampMode::Relative if time_zero_store_id.is_some() => "⏱ Relative (marker)".to_string(),
                 TimestampMode::Relative => "⏱ Relative".to_string(),
             };
-            let response = ui.strong(label);
-            response.context_menu(|ui| {
-                ui.label("Timestamp display:");
-                ui.separator();
-                if ui
-                    .selectable_label(*timestamp_mode == TimestampMode::Absolute, "🕐 Absolute time")
-                    .clicked()
-                {
-                    *timestamp_mode = TimestampMode::Absolute;
-                    ui.close();
-                }
-                if ui
-                    .selectable_label(*timestamp_mode == TimestampMode::Delta, "Δ Delta time")
-                    .clicked()
-                {
-                    *timestamp_mode = TimestampMode::Delta;
-                    ui.close();
-                }
-                if ui
-                    .selectable_label(*timestamp_mode == TimestampMode::Relative, "⏱ Relative time")
-                    .clicked()
-                {
-                    *timestamp_mode = TimestampMode::Relative;
-                    ui.close();
-                }
-                if time_zero_store_id.is_some() {
-                    ui.separator();
-                    if ui.button("✖ Clear time zero marker").clicked() {
-                        events.push(LogTableEvent::ClearTimeZero);
-                        ui.close();
-                    }
-                }
-            });
+            ui.strong(label);
         });
         header.col(|ui| {
             column_widths.message = ui.available_width();
