@@ -20,15 +20,18 @@ use std::sync::Arc;
 
 use crate::{
     core::{
-        LogStore, log_store::{LogLine, StoreID}
-    }, parser::format_time_diff, ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState}
+        log_store::{LogLine, StoreID},
+        LogStore,
+    },
+    parser::format_time_diff,
+    ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
 use chrono::{DateTime, Local};
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
 /// Controls how the timestamp column displays time values.
-#[derive(Default, Clone, Copy, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampMode {
     /// Show the absolute wall-clock time for each log line (default).
     /// Example: `2026-02-11 13:45:49.663`
@@ -783,16 +786,16 @@ impl LogTable {
             };
 
             let timestamp_str = match timestamp_mode {
-                TimestampMode::Absolute => {
-                    display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
-                }
-                TimestampMode::Delta => match prev_row_timestamp {
-                    None => "0.000s".to_string(),
-                    Some(prev) => format_time_diff(display_time.signed_duration_since(prev)),
-                },
+                TimestampMode::Absolute => display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+                TimestampMode::Delta => prev_row_timestamp.map_or_else(
+                    || "0.000s".to_string(),
+                    |prev| format_time_diff(display_time.signed_duration_since(prev)),
+                ),
                 TimestampMode::Relative(reference) => {
-                        let secs = display_time.signed_duration_since(reference).as_seconds_f64();
-                        format!("{secs:.3}s")
+                    let secs = display_time
+                        .signed_duration_since(reference)
+                        .as_seconds_f64();
+                    format!("{secs:.3}s")
                 }
             };
 
