@@ -264,7 +264,10 @@ pub fn parse_dmesg_line(raw: String, line_number: usize) -> Option<DmesgLogLine>
     let message = caps[3].to_string();
     let total_micros = secs * 1_000_000 + micros;
     let timestamp = Utc
-        .timestamp_opt(total_micros / 1_000_000, ((total_micros % 1_000_000) * 1_000) as u32)
+        .timestamp_opt(
+            total_micros / 1_000_000,
+            ((total_micros % 1_000_000) * 1_000) as u32,
+        )
         .single()?
         .with_timezone(&Local);
     Some(DmesgLogLine::new(raw, timestamp, message, line_number))
@@ -286,10 +289,7 @@ mod tests {
     fn test_parse_large_timestamp() {
         let raw = "[42798.603585] init: service 'foo' requested start".to_string();
         let line = parse_dmesg_line(raw, 2).expect("should parse dmesg line");
-        assert_eq!(
-            line.message_text,
-            "init: service 'foo' requested start"
-        );
+        assert_eq!(line.message_text, "init: service 'foo' requested start");
         // 42798 seconds + 603585 microseconds
         assert_eq!(
             line.timestamp.timestamp_micros(),
@@ -335,8 +335,14 @@ mod tests {
         let mut ft = make_reader(content);
         let lines = ft.read(100).expect("read");
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].message_text, "First line\ncontinuation one\ncontinuation two");
-        assert_eq!(lines[0].raw_line, "[   1.000000] First line\ncontinuation one\ncontinuation two");
+        assert_eq!(
+            lines[0].message_text,
+            "First line\ncontinuation one\ncontinuation two"
+        );
+        assert_eq!(
+            lines[0].raw_line,
+            "[   1.000000] First line\ncontinuation one\ncontinuation two"
+        );
         assert_eq!(lines[1].message_text, "Second entry");
     }
 

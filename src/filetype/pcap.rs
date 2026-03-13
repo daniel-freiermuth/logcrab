@@ -197,7 +197,10 @@ impl LineType for PcapLogLine {
                         } else {
                             format!(" {}", sd_info.entries.join(", "))
                         };
-                        return format!("{} [SOME/IP-SD {}{}]", base_msg, sd_info.message_type, entries_str);
+                        return format!(
+                            "{} [SOME/IP-SD {}{}]",
+                            base_msg, sd_info.message_type, entries_str
+                        );
                     }
                 }
             }
@@ -248,9 +251,9 @@ impl LineType for PcapLogLine {
             ui.separator();
             let is_active = file_state.is_someip_sd_active(&key);
             let label = if is_active {
-                format!("🔓 Disable SOME/IP SD decoding for {}", key)
+                format!("🔓 Disable SOME/IP SD decoding for {key}")
             } else {
-                format!("🔒 Enable SOME/IP SD decoding for {}", key)
+                format!("🔒 Enable SOME/IP SD decoding for {key}")
             };
             if ui.button(label).clicked() {
                 file_state.toggle_someip_sd(key);
@@ -695,30 +698,10 @@ pub struct SomeIpSdInfo {
     pub entries: Vec<String>,
 }
 
-/// Decode SOME/IP SD (Service Discovery) payload using someip_parse library
+/// Decode SOME/IP SD (Service Discovery) payload using `someip_parse` library
 fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
     use someip_parse::{SdEntry, SdOption, SomeipMsgSlice};
     use std::net::{Ipv4Addr, Ipv6Addr};
-
-    // Parse SOME/IP message
-    let msg = match SomeipMsgSlice::from_slice(payload) {
-        Ok(msg) => msg,
-        Err(_) => return None,
-    };
-
-    // Check if this is a SOME/IP-SD message
-    if !msg.is_someip_sd() {
-        return None;
-    }
-
-    let someip_payload = msg.payload();
-
-    // Parse SD header using the library
-    let mut cursor = std::io::Cursor::new(someip_payload);
-    let sd_header = match someip_parse::SdHeader::read(&mut cursor) {
-        Ok(header) => header,
-        Err(_) => return None,
-    };
 
     /// Format a slice of `SdOption` entries as compact endpoint strings.
     fn format_endpoints(opts: &[SdOption]) -> Vec<String> {
@@ -748,12 +731,16 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
                     proto_str(e.transport_protocol),
                     e.port,
                 )),
-                _ => None,
+                SdOption::Configuration(_)
+                | SdOption::LoadBalancing(_)
+                | SdOption::Ipv4SdEndpoint(_)
+                | SdOption::Ipv6SdEndpoint(_)
+                | SdOption::UnknownDiscardable(_) => None,
             })
             .collect()
     }
 
-    fn proto_str(p: someip_parse::TransportProtocol) -> &'static str {
+    const fn proto_str(p: someip_parse::TransportProtocol) -> &'static str {
         match p {
             someip_parse::TransportProtocol::Tcp => "TCP",
             someip_parse::TransportProtocol::Udp => "UDP",
@@ -762,13 +749,7 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
     }
 
     /// Collect endpoint options for an entry's two option runs.
-    fn entry_endpoints(
-        opts: &[SdOption],
-        idx1: u8,
-        num1: u8,
-        idx2: u8,
-        num2: u8,
-    ) -> String {
+    fn entry_endpoints(opts: &[SdOption], idx1: u8, num1: u8, idx2: u8, num2: u8) -> String {
         let run1_start = idx1 as usize;
         let run1_end = (run1_start + num1 as usize).min(opts.len());
         let run2_start = idx2 as usize;
@@ -783,6 +764,24 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
             format!(" @ {}", endpoints.join(", "))
         }
     }
+
+    // Parse SOME/IP message
+    let Ok(msg) = SomeipMsgSlice::from_slice(payload) else {
+        return None;
+    };
+
+    // Check if this is a SOME/IP-SD message
+    if !msg.is_someip_sd() {
+        return None;
+    }
+
+    let someip_payload = msg.payload();
+
+    // Parse SD header using the library
+    let mut cursor = std::io::Cursor::new(someip_payload);
+    let Ok(sd_header) = someip_parse::SdHeader::read(&mut cursor) else {
+        return None;
+    };
 
     // Format entries for display
     let entries = sd_header
@@ -826,12 +825,7 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
                 );
                 format!(
                     "{}(0x{:04x}:0x{:04x} eg=0x{:04x} TTL={}{})",
-                    entry_type,
-                    e.service_id,
-                    e.instance_id,
-                    e.eventgroup_id,
-                    e.ttl,
-                    endpoints,
+                    entry_type, e.service_id, e.instance_id, e.eventgroup_id, e.ttl, endpoints,
                 )
             }
         })
@@ -950,7 +944,14 @@ fn parse_ipv4_packet(
             None,
             None,
         ),
-        _ => (format!("IP/{protocol}"), None, None, String::new(), None, None),
+        _ => (
+            format!("IP/{protocol}"),
+            None,
+            None,
+            String::new(),
+            None,
+            None,
+        ),
     };
     let is_abnormal = tcp_details
         .as_ref()

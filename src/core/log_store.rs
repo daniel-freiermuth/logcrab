@@ -19,8 +19,8 @@
 use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
 use crate::filetype::{
-    btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType,
-    dmesg::DmesgFileType, generic::GenericFileType, logcat::LogcatFileType, pcap::PcapFileType,
+    btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType, dmesg::DmesgFileType,
+    generic::GenericFileType, logcat::LogcatFileType, pcap::PcapFileType,
 };
 use crate::filetype::{
     btsnoop::BtsnoopLogLine, dlt::DltLogLine, dmesg::DmesgLogLine, generic::GenericLogLine,

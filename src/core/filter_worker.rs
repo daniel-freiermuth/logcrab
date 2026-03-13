@@ -152,9 +152,8 @@ impl FilterWorker {
 
                     // Parallel filtering with rayon
                     request.store.get_matching_ids(|display_msg, raw| {
-                        let matches_include =
-                            request.regex.is_match(display_msg).unwrap_or(false)
-                                || request.regex.is_match(raw).unwrap_or(false);
+                        let matches_include = request.regex.is_match(display_msg).unwrap_or(false)
+                            || request.regex.is_match(raw).unwrap_or(false);
 
                         if !matches_include {
                             return false;
