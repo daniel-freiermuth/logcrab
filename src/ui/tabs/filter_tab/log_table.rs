@@ -20,10 +20,8 @@ use std::sync::Arc;
 
 use crate::{
     core::{
-        log_store::{LogLine, StoreID},
-        LogStore,
-    },
-    ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
+        LogStore, log_store::{LogLine, StoreID}
+    }, parser::format_time_diff, ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState}
 };
 use chrono::{DateTime, Local};
 use egui::{Color32, RichText, Ui};
@@ -43,13 +41,6 @@ pub enum TimestampMode {
     /// Defaults to the oldest visible message when no marker is pinned.
     /// Example: `120243.423s`
     Relative,
-}
-
-/// Format a duration as seconds with 3 decimal places.
-/// Negative durations include a leading `-`; positive ones have no sign prefix.
-fn format_seconds(diff: chrono::Duration) -> String {
-    let secs = diff.num_milliseconds() as f64 / 1000.0;
-    format!("{secs:.3}s")
 }
 
 /// Events emitted by the log table
@@ -824,11 +815,14 @@ impl LogTable {
                 }
                 TimestampMode::Delta => match prev_row_timestamp {
                     None => "0.000s".to_string(),
-                    Some(prev) => format_seconds(display_time.signed_duration_since(prev)),
+                    Some(prev) => format_time_diff(display_time.signed_duration_since(prev)),
                 },
                 TimestampMode::Relative => match time_zero_timestamp {
                     None => "0.000s".to_string(),
-                    Some(t0) => format_seconds(display_time.signed_duration_since(t0)),
+                    Some(t0) => {
+                        let secs = display_time.signed_duration_since(t0).as_seconds_f64();
+                        format!("{secs:.3}s")
+                    },
                 },
             };
 
