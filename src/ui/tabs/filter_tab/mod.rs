@@ -32,6 +32,7 @@ use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::{FilterToHighlightData, SessionState};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
+use crate::ui::tabs::filter_tab::log_table::TimestampMode;
 use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
 use egui::Ui;
@@ -219,6 +220,15 @@ impl FilterView {
                     events.push(FilterViewEvent::BookmarkToggled {
                         store_id: line_index,
                     });
+                }
+                LogTableEvent::SetTimeZero { line_index } => {
+                    self.state.timestamp_mode = store.adjusted_timestamp(&line_index).map_or_else(
+                        || {
+                            log::warn!("Failed to set time zero for line index {line_index:?}");
+                            TimestampMode::Absolute
+                        },
+                        TimestampMode::Relative,
+                    );
                 }
             }
         }

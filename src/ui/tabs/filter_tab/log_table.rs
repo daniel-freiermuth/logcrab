@@ -23,17 +23,42 @@ use crate::{
         log_store::{LogLine, StoreID},
         LogStore,
     },
+    parser::format_time_diff,
     ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},
 };
-use chrono::Local;
+use chrono::{DateTime, Local};
 use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
+
+/// Controls how the timestamp column displays time values.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum TimestampMode {
+    /// Show the absolute wall-clock time for each log line (default).
+    /// Example: `2026-02-11 13:45:49.663`
+    #[default]
+    Absolute,
+    /// Show the elapsed time since the previous visible log line.
+    /// First visible row shows `0.000s`. Example: `-0.532s`
+    Delta,
+    /// Show the elapsed time from a fixed time-zero reference.
+    /// Defaults to the oldest visible message when no marker is pinned.
+    /// Example: `120243.423s`
+    Relative(DateTime<Local>),
+}
 
 /// Events emitted by the log table
 #[derive(Clone)]
 pub enum LogTableEvent {
-    LineClicked { line_index: StoreID },
-    BookmarkToggled { line_index: StoreID },
+    LineClicked {
+        line_index: StoreID,
+    },
+    BookmarkToggled {
+        line_index: StoreID,
+    },
+    /// User requested this line to be the delta-time reference (time zero).
+    SetTimeZero {
+        line_index: StoreID,
+    },
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -202,6 +227,14 @@ impl LogTable {
             // Type-specific context menu items (DLT calibration for typed sources).
             store.render_typed_context_menu_items(&line_idx, ui);
 
+            // Delta time zero marker
+            if ui.button("⏱ Set as time zero").clicked() {
+                events.push(LogTableEvent::SetTimeZero {
+                    line_index: line_idx,
+                });
+                ui.close();
+            }
+
             ui.separator();
 
             if ui.button("📋 Copy Message").clicked() {
@@ -286,6 +319,7 @@ impl LogTable {
                     &mut events,
                     dark_mode,
                     &mut filter.column_widths,
+                    filter.timestamp_mode,
                 );
             });
 
@@ -348,10 +382,11 @@ impl LogTable {
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
         column_widths: &mut ColumnWidths,
+        timestamp_mode: TimestampMode,
     ) {
         table
             .header(20.0, |mut header| {
-                Self::render_header(&mut header, column_widths);
+                Self::render_header(&mut header, column_widths, timestamp_mode);
             })
             .body(|body| {
                 profiling::scope!("LogTable::body");
@@ -366,11 +401,16 @@ impl LogTable {
                     all_filter_highlights,
                     events,
                     dark_mode,
+                    timestamp_mode,
                 );
             });
     }
 
-    fn render_header(header: &mut egui_extras::TableRow, column_widths: &mut ColumnWidths) {
+    fn render_header(
+        header: &mut egui_extras::TableRow,
+        column_widths: &mut ColumnWidths,
+        timestamp_mode: TimestampMode,
+    ) {
         header.col(|ui| {
             column_widths.source = ui.available_width();
             ui.strong("Source");
@@ -381,9 +421,16 @@ impl LogTable {
         });
         header.col(|ui| {
             column_widths.timestamp = ui.available_width();
-            let now = Local::now();
-            let offset = now.offset();
-            ui.strong(format!("Timestamp (UTC{offset})"));
+            let label = match timestamp_mode {
+                TimestampMode::Absolute => {
+                    let now = Local::now();
+                    let offset = now.offset();
+                    format!("Timestamp (UTC{offset})")
+                }
+                TimestampMode::Delta => "Δ Time".to_string(),
+                TimestampMode::Relative(_) => "⏱ Relative".to_string(),
+            };
+            ui.strong(label);
         });
         header.col(|ui| {
             column_widths.message = ui.available_width();
@@ -407,6 +454,7 @@ impl LogTable {
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
+        timestamp_mode: TimestampMode,
     ) {
         let visible_lines = filtered_indices.len();
 
@@ -416,6 +464,9 @@ impl LogTable {
             ctx.data(|d| d.get_temp(hover_storage_id)).flatten();
 
         let mut current_hovered_row: Option<usize> = None;
+
+        // Track the previous row's display time for Delta mode (consecutive-line differences).
+        let mut prev_row_timestamp: Option<DateTime<Local>> = None;
 
         body.rows(18.0, visible_lines, |mut row| {
             let row_index = row.index();
@@ -435,7 +486,11 @@ impl LogTable {
                 all_filter_highlights,
                 events,
                 dark_mode,
+                timestamp_mode,
+                prev_row_timestamp,
             );
+
+            prev_row_timestamp = store.adjusted_timestamp(&filtered_indices[row_index]);
 
             // Check if pointer is over this row for next frame
             if row.response().contains_pointer() {
@@ -462,6 +517,8 @@ impl LogTable {
         all_filter_highlights: &[FilterHighlight],
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
+        timestamp_mode: TimestampMode,
+        prev_row_timestamp: Option<DateTime<Local>>,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
         let line_idx = filtered_indices[row_index];
@@ -499,6 +556,8 @@ impl LogTable {
             bookmarked_lines,
             all_filter_highlights,
             dark_mode,
+            timestamp_mode,
+            prev_row_timestamp,
         );
 
         // Row-level interaction handling (union column and row responses)
@@ -536,6 +595,8 @@ impl LogTable {
         bookmarked_lines: &std::collections::HashMap<StoreID, String>,
         all_filter_highlights: &[FilterHighlight],
         dark_mode: bool,
+        timestamp_mode: TimestampMode,
+        prev_row_timestamp: Option<DateTime<Local>>,
     ) -> egui::Response {
         let responses = [
             Self::render_source_column(
@@ -568,6 +629,8 @@ impl LogTable {
                 is_bookmarked,
                 color,
                 dark_mode,
+                timestamp_mode,
+                prev_row_timestamp,
             ),
             Self::render_message_column(
                 row,
@@ -688,6 +751,8 @@ impl LogTable {
     }
 
     #[allow(clippy::fn_params_excessive_bools)]
+    #[allow(clippy::too_many_arguments)]
+    /// Returns `(column response, display timestamp of this row)`.
     fn render_timestamp_column(
         row: &mut egui_extras::TableRow,
         store: &LogStore,
@@ -697,6 +762,8 @@ impl LogTable {
         is_bookmarked: bool,
         color: Color32,
         dark_mode: bool,
+        timestamp_mode: TimestampMode,
+        prev_row_timestamp: Option<DateTime<Local>>,
     ) -> egui::Response {
         let mut response: Option<egui::Response> = None;
         let (_, col_response) = row.col(|ui| {
@@ -716,7 +783,20 @@ impl LogTable {
                 return;
             };
 
-            let timestamp_str = display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            let timestamp_str = match timestamp_mode {
+                TimestampMode::Absolute => display_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+                TimestampMode::Delta => prev_row_timestamp.map_or_else(
+                    || "0.000s".to_string(),
+                    |prev| format_time_diff(display_time.signed_duration_since(prev)),
+                ),
+                TimestampMode::Relative(reference) => {
+                    let secs = display_time
+                        .signed_duration_since(reference)
+                        .as_seconds_f64();
+                    format!("{secs:.3}s")
+                }
+            };
+
             let text = RichText::new(timestamp_str).color(color);
             response = Some(ui.add(egui::Label::new(text).sense(egui::Sense::click())));
         });

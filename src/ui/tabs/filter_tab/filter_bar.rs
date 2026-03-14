@@ -16,11 +16,17 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::Arc;
+
 use egui::{Color32, Ui};
 
 use crate::{
     config::GlobalConfig,
-    ui::{session_state::SessionState, tabs::filter_tab::filter_state::FilterState},
+    core::LogStore,
+    ui::{
+        session_state::SessionState,
+        tabs::filter_tab::{filter_state::FilterState, log_table::TimestampMode},
+    },
 };
 
 /// Events emitted by the filter bar that need to bubble up to the parent.
@@ -102,6 +108,7 @@ impl FilterBar {
             Self::render_case_checkbox(ui, filter, log_view_state);
             Self::render_validation_status(ui, filter);
             Self::render_convert_to_highlight_button(ui, &mut events);
+            Self::render_timestamp_mode_dropdown(ui, filter, &log_view_state.store);
 
             // Export button for filtered results
             if ui
@@ -441,5 +448,44 @@ impl FilterBar {
         {
             events.push(FilterInternalEvent::ConvertToHighlight);
         }
+    }
+
+    fn render_timestamp_mode_dropdown(
+        ui: &mut Ui,
+        filter: &mut FilterState,
+        store: &Arc<LogStore>,
+    ) {
+        let filtered_indices = filter.search.get_filtered_indices_cached();
+        let first_timestamp = filtered_indices
+            .first()
+            .and_then(|idx| store.adjusted_timestamp(idx));
+        let selected_text = match filter.timestamp_mode {
+            TimestampMode::Absolute => "🕐 Absolute",
+            TimestampMode::Delta => "Δ Delta",
+            TimestampMode::Relative(_) => "⏱ Relative",
+        };
+
+        egui::ComboBox::from_id_salt("timestamp_mode_combo")
+            .selected_text(selected_text)
+            .width(140.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut filter.timestamp_mode,
+                    TimestampMode::Absolute,
+                    "🕐 Absolute time",
+                );
+                ui.selectable_value(
+                    &mut filter.timestamp_mode,
+                    TimestampMode::Delta,
+                    "Δ Delta time",
+                );
+                if let Some(first_ts) = first_timestamp {
+                    ui.selectable_value(
+                        &mut filter.timestamp_mode,
+                        TimestampMode::Relative(first_ts),
+                        "⏱ Relative time",
+                    );
+                }
+            });
     }
 }
