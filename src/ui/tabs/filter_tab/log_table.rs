@@ -490,9 +490,7 @@ impl LogTable {
                 prev_row_timestamp,
             );
 
-            if let Some(ts) = store.adjusted_timestamp(&filtered_indices[row_index]) {
-                prev_row_timestamp = Some(ts);
-            }
+            prev_row_timestamp = store.adjusted_timestamp(&filtered_indices[row_index]);
 
             // Check if pointer is over this row for next frame
             if row.response().contains_pointer() {
