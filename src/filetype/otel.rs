@@ -1,7 +1,7 @@
 // LogCrab - GPL-3.0-or-later
 // Copyright (C) 2026 Daniel Freiermuth
 
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Local};
 use egui::Ui;
 use opentelemetry_proto::tonic::{common::v1::any_value::Value as OTelValue, logs::v1::LogsData};
 use std::fs::{metadata, File};
@@ -171,11 +171,13 @@ impl InputFileType for OtelFileType {
                     };
 
                     let timestamp = if nanos > 0 {
-                        let secs = (nanos / 1_000_000_000) as i64;
+                        // not completely correct, but a data 200 years in the future is a bug
+                        // TODO: error variants to surface this
+                        let secs = i64::try_from(nanos / 1_000_000_000).unwrap_or(i64::MAX);
                         let subsec_nanos = (nanos % 1_000_000_000) as u32;
-                        Utc.timestamp_opt(secs, subsec_nanos)
-                            .single()
-                            .map_or_else(|| UNIX_EPOCH.into(), |dt| dt.with_timezone(&Local))
+                        DateTime::from_timestamp(secs, subsec_nanos)
+                            .map(|dt| dt.with_timezone(&Local))
+                            .unwrap_or_else(|| UNIX_EPOCH.into())
                     } else {
                         // Into local time
                         UNIX_EPOCH.into()
