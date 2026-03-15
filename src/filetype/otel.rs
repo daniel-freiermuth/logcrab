@@ -175,8 +175,7 @@ impl InputFileType for OtelFileType {
                         let subsec_nanos = (nanos % 1_000_000_000) as u32;
                         Utc.timestamp_opt(secs, subsec_nanos)
                             .single()
-                            .map(|dt| dt.with_timezone(&Local))
-                            .unwrap_or_else(|| UNIX_EPOCH.into())
+                            .map_or_else(|| UNIX_EPOCH.into(), |dt| dt.with_timezone(&Local))
                     } else {
                         // Into local time
                         UNIX_EPOCH.into()
