@@ -171,8 +171,7 @@ impl InputFileType for LogcatFileType {
     fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
         let mut buf = String::new();
-        let mut lines_read = 0;
-        while lines_read < lines_to_read {
+        while result.len() < lines_to_read {
             buf.clear();
             match self.reader.read_line(&mut buf) {
                 Ok(0) => break,
@@ -182,7 +181,6 @@ impl InputFileType for LogcatFileType {
                     let raw = buf.trim_end_matches(['\n', '\r']).to_string();
                     if let Some(line) = parse_logcat_line(raw, self.line_number, self.year) {
                         result.push(line);
-                        lines_read += 1;
                     } else {
                         tracing::warn!(
                             "Failed to parse line {}: '{}'",

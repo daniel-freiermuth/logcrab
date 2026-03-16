@@ -175,7 +175,7 @@ impl InputFileType for DmesgFileType {
         let mut result = Vec::with_capacity(lines_to_read);
         let mut buf = String::new();
         let mut eof = false;
-        for _ in 0..lines_to_read {
+        while result.len() < lines_to_read {
             buf.clear();
             match self.reader.read_line(&mut buf) {
                 Ok(0) => {

@@ -166,7 +166,7 @@ impl InputFileType for GenericFileType {
     fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
         let mut buf = Vec::new();
-        for _ in 0..lines_to_read {
+        while result.len() < lines_to_read {
             buf.clear();
             match self.reader.read_until(b'\n', &mut buf) {
                 Ok(0) => break, // EOF
