@@ -287,7 +287,7 @@ impl InputFileType for PcapFileType {
         path: &Path,
         _config: (),
         _file_state: std::sync::Arc<PcapFileState>,
-    ) -> Result<Self, String> {
+    ) -> anyhow::Result<Self> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let lines = parse_pcap_to_lines(path)?;
         Ok(Self {
@@ -297,7 +297,7 @@ impl InputFileType for PcapFileType {
         })
     }
 
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let end = (self.cursor + lines_to_read).min(self.lines.len());
         let batch = self.lines[self.cursor..end].to_vec();
         self.cursor = end;
@@ -1115,24 +1115,25 @@ enum PcapFormat {
     PcapNG,
 }
 
-fn detect_pcap_format(path: &Path) -> Result<PcapFormat, String> {
+fn detect_pcap_format(path: &Path) -> anyhow::Result<PcapFormat> {
+    use anyhow::Context as _;
     use std::io::Read;
-    let mut file = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let mut file = File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic)
-        .map_err(|e| format!("Failed to read magic: {e}"))?;
+        .context("Failed to read magic")?;
     match &magic {
         [0xd4, 0xc3, 0xb2, 0xa1] => Ok(PcapFormat::Legacy),
         [0xa1, 0xb2, 0xc3, 0xd4] => Ok(PcapFormat::Legacy),
         [0x4d, 0x3c, 0xb2, 0xa1] => Ok(PcapFormat::Legacy),
         [0xa1, 0xb2, 0x3c, 0x4d] => Ok(PcapFormat::Legacy),
         [0x0a, 0x0d, 0x0d, 0x0a] => Ok(PcapFormat::PcapNG),
-        _ => Err("Unknown pcap format".to_string()),
+        _ => Err(anyhow::anyhow!("Unknown pcap format")),
     }
 }
 
 /// Parse all packets from a pcap/pcapng file and return them as typed log lines.
-pub fn parse_pcap_to_lines<P: AsRef<Path>>(path: P) -> Result<Vec<PcapLogLine>, String> {
+pub fn parse_pcap_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PcapLogLine>> {
     let path = path.as_ref();
     let format = detect_pcap_format(path)?;
     let lines = match format {
@@ -1140,18 +1141,19 @@ pub fn parse_pcap_to_lines<P: AsRef<Path>>(path: P) -> Result<Vec<PcapLogLine>, 
         PcapFormat::PcapNG => parse_pcapng_to_lines(path),
     }?;
     if lines.is_empty() {
-        return Err("No valid packets found in pcap file".to_string());
+        return Err(anyhow::anyhow!("No valid packets found in pcap file"));
     }
     Ok(lines)
 }
 
-fn parse_legacy_pcap_to_lines(path: &Path) -> Result<Vec<PcapLogLine>, String> {
+fn parse_legacy_pcap_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     profiling::scope!("parse_legacy_pcap_to_lines");
+    use anyhow::Context as _;
     log::info!("Starting legacy pcap parsing: {}", path.display());
-    let file = File::open(path).map_err(|e| format!("Failed to open pcap file: {e}"))?;
+    let file = File::open(path).with_context(|| format!("Failed to open pcap file: {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut pcap_reader = LegacyPcapReader::new(65536, reader)
-        .map_err(|e| format!("Failed to create pcap reader: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create pcap reader: {e:?}"))?;
     let mut lines = Vec::new();
     let mut line_number = 1usize;
     let mut flow_tracker = TcpFlowTracker::new();
@@ -1176,7 +1178,7 @@ fn parse_legacy_pcap_to_lines(path: &Path) -> Result<Vec<PcapLogLine>, String> {
             Err(PcapError::Incomplete(_)) => {
                 pcap_reader
                     .refill()
-                    .map_err(|e| format!("Read error: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("Read error: {e}"))?;
             }
             Err(e) => {
                 log::warn!("Pcap parse error: {e:?}");
@@ -1188,13 +1190,14 @@ fn parse_legacy_pcap_to_lines(path: &Path) -> Result<Vec<PcapLogLine>, String> {
     Ok(lines)
 }
 
-fn parse_pcapng_to_lines(path: &Path) -> Result<Vec<PcapLogLine>, String> {
+fn parse_pcapng_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     profiling::scope!("parse_pcapng_to_lines");
+    use anyhow::Context as _;
     log::info!("Starting pcapng parsing: {}", path.display());
-    let file = File::open(path).map_err(|e| format!("Failed to open pcapng file: {e}"))?;
+    let file = File::open(path).with_context(|| format!("Failed to open pcapng file: {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut pcap_reader = PcapNGReader::new(65536, reader)
-        .map_err(|e| format!("Failed to create pcapng reader: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create pcapng reader: {e:?}"))?;
     let mut lines = Vec::new();
     let mut line_number = 1usize;
     let mut if_tsresol: u64 = 1_000_000;
@@ -1250,7 +1253,7 @@ fn parse_pcapng_to_lines(path: &Path) -> Result<Vec<PcapLogLine>, String> {
             Err(PcapError::Incomplete(_)) => {
                 pcap_reader
                     .refill()
-                    .map_err(|e| format!("Read error: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("Read error: {e}"))?;
             }
             Err(e) => {
                 log::warn!("Pcapng parse error: {e:?}");

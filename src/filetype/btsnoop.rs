@@ -142,7 +142,7 @@ impl InputFileType for BtsnoopFileType {
         path: &Path,
         _config: (),
         _file_state: std::sync::Arc<BtsnoopFileState>,
-    ) -> Result<Self, String> {
+    ) -> anyhow::Result<Self> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let lines = parse_btsnoop_to_lines(path)?;
         Ok(Self {
@@ -152,7 +152,7 @@ impl InputFileType for BtsnoopFileType {
         })
     }
 
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let end = (self.cursor + lines_to_read).min(self.lines.len());
         let batch = self.lines[self.cursor..end].to_vec();
         self.cursor = end;
@@ -695,18 +695,20 @@ const fn get_l2cap_signaling_code(code: u8) -> &'static str {
 ///
 /// All packets are parsed eagerly since the `btsnoop` crate requires the entire file to be
 /// in memory.
-fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> Result<Vec<BtsnoopLogLine>, String> {
+fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<BtsnoopLogLine>> {
     profiling::scope!("parse_btsnoop_to_lines");
+    use anyhow::Context as _;
     let path = path.as_ref();
     log::info!("Starting btsnoop parsing: {}", path.display());
 
-    let mut file = File::open(path).map_err(|e| format!("Failed to open btsnoop file: {e}"))?;
+    let mut file = File::open(path)
+        .with_context(|| format!("Failed to open btsnoop file: {}", path.display()))?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)
-        .map_err(|e| format!("Failed to read btsnoop file: {e}"))?;
+        .with_context(|| format!("Failed to read btsnoop file: {}", path.display()))?;
 
     let btsnoop_file = btsnoop::parse_btsnoop_file(&buffer)
-        .map_err(|e| format!("Failed to parse btsnoop file: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to parse btsnoop file: {e:?}"))?;
 
     let mut lines = Vec::with_capacity(btsnoop_file.packets.len());
     let mut line_number = 1usize;

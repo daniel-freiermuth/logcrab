@@ -55,9 +55,10 @@ impl BugreportFileType {
     ///
     /// Reads the first 4 KB to extract the capture year from the dumpstate header.
     /// Falls back to the current calendar year if no header is found.
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let mut file =
-            File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+    pub fn open(path: &Path) -> anyhow::Result<Self> {
+        use anyhow::Context as _;
+        let mut file = File::open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
 
         let mut preview_buf = [0u8; 4096];
         let preview_n = file.read(&mut preview_buf).unwrap_or(0);
@@ -71,7 +72,7 @@ impl BugreportFileType {
         });
 
         file.seek(SeekFrom::Start(0))
-            .map_err(|e| format!("Failed to seek {}: {e}", path.display()))?;
+            .with_context(|| format!("Failed to seek {}", path.display()))?;
 
         Ok(Self {
             reader: BufReader::new(file),
@@ -92,11 +93,11 @@ impl InputFileType for BugreportFileType {
         path: &::std::path::Path,
         _config: (),
         _file_state: std::sync::Arc<crate::filetype::logcat::LogcatFileState>,
-    ) -> Result<Self, String> {
+    ) -> anyhow::Result<Self> {
         Self::open(path)
     }
 
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
         let mut buf = String::new();
         for _ in 0..lines_to_read {
@@ -111,7 +112,7 @@ impl InputFileType for BugreportFileType {
                         result.push(line);
                     }
                 }
-                Err(e) => return Err(format!("Read error: {e}")),
+                Err(e) => return Err(anyhow::anyhow!("Read error: {e}")),
             }
         }
         Ok(result)

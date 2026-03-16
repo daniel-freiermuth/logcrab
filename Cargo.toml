@@ -58,6 +58,7 @@ rayon = "1.10"
 egui-toast = "0.19"
 dashmap = { version = "6", features = ["serde"] }
 dhat = { version = "0.3", optional = true }
+anyhow = "1"
 profiling = { version = "1.0", default-features = false }
 tracy-client = { version = "0.18.4", optional = true }
 tokio = { version = "1.49.0", features = ["sync"] }

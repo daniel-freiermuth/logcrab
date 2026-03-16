@@ -155,10 +155,11 @@ impl InputFileType for LogcatFileType {
         path: &Path,
         _config: (),
         _file_state: std::sync::Arc<LogcatFileState>,
-    ) -> Result<Self, String> {
+    ) -> anyhow::Result<Self> {
+        use anyhow::Context as _;
         let year = chrono::Local::now().year();
-        let file =
-            File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+        let file = File::open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
         Ok(Self {
             reader: BufReader::new(file),
             year,
@@ -167,7 +168,7 @@ impl InputFileType for LogcatFileType {
         })
     }
 
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
         let mut buf = String::new();
         let mut lines_read = 0;
@@ -190,7 +191,7 @@ impl InputFileType for LogcatFileType {
                         );
                     }
                 }
-                Err(e) => return Err(format!("Read error: {e}")),
+                Err(e) => return Err(anyhow::anyhow!("Read error: {e}")),
             }
         }
         Ok(result)

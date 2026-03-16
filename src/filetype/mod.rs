@@ -205,7 +205,7 @@ pub trait InputFileType: HasSlug {
         path: &::std::path::Path,
         config: <Self::LineType as LineType>::Config,
         file_state: ::std::sync::Arc<<Self::LineType as LineType>::FileState>,
-    ) -> Result<Self, String>
+    ) -> anyhow::Result<Self>
     where
         Self: Sized;
 
@@ -214,7 +214,7 @@ pub trait InputFileType: HasSlug {
     /// Raw parsing only — no progress reporting, no chunk management.
     /// `ChunkedLoader` drives this method with adaptive chunk sizing and progress.
     /// Returns fewer than `lines_to_read` items (including zero) to signal EOF.
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String>;
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>>;
 
     /// Bytes consumed from the source file so far.
     ///

@@ -545,12 +545,13 @@ impl InputFileType for DltFileType {
         path: &Path,
         _config: crate::config::DltTimestampSource,
         file_state: Arc<DltFileState>,
-    ) -> Result<Self, String> {
+    ) -> anyhow::Result<Self> {
+        use anyhow::Context as _;
         // Clone the boot_times Arc so read() can write into it without
         // ever touching the outer Arc<DltFileState>.
         let boot_times = Arc::clone(&file_state.boot_times);
-        let file =
-            File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+        let file = File::open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
         let inner = ByteCountReader::new(BufReader::new(file));
         let bytes_read_rc = inner.bytes_read_arc();
         let reader = DltMessageReader::new(inner, true);
@@ -562,7 +563,7 @@ impl InputFileType for DltFileType {
         })
     }
 
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
 
         // Safety cap: avoid spinning on files with many un-parseable messages.

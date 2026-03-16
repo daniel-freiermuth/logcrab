@@ -152,9 +152,10 @@ impl InputFileType for GenericFileType {
         path: &Path,
         _config: (),
         _file_state: std::sync::Arc<GenericFileState>,
-    ) -> Result<Self, String> {
-        let file =
-            File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+    ) -> anyhow::Result<Self> {
+        use anyhow::Context as _;
+        let file = File::open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
         Ok(Self {
             reader: BufReader::new(file),
             line_number: 0,
@@ -162,7 +163,7 @@ impl InputFileType for GenericFileType {
         })
     }
 
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
         let mut buf = Vec::new();
         for _ in 0..lines_to_read {
@@ -185,7 +186,7 @@ impl InputFileType for GenericFileType {
                         result.push(line);
                     }
                 }
-                Err(e) => return Err(format!("Read error: {e}")),
+                Err(e) => return Err(anyhow::anyhow!("Read error: {e}")),
             }
         }
         Ok(result)
