@@ -164,11 +164,12 @@ impl BookmarkPanel {
             .min_scrolled_height(body_height)
             .drag_to_scroll(false)
             .max_scroll_height(body_height)
-            .column(Column::initial(150.0).resizable(true).clip(true))
-            .column(Column::initial(175.0).resizable(true).clip(true))
-            .column(Column::initial(200.0).resizable(true).clip(true))
-            .column(Column::remainder().resizable(true).clip(true))
-            .column(Column::initial(40.0).resizable(false).clip(true));
+            .column(Column::initial(150.0).resizable(true).clip(true))  // Annotation
+            .column(Column::initial(140.0).resizable(true).clip(true))  // Source
+            .column(Column::initial(175.0).resizable(true).clip(true))  // Line
+            .column(Column::initial(200.0).resizable(true).clip(true))  // Timestamp
+            .column(Column::remainder().resizable(true).clip(true))     // Message
+            .column(Column::initial(40.0).resizable(false).clip(true)); // Delete
 
         if let Some(row_idx) = scroll_to_row {
             table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
@@ -178,6 +179,9 @@ impl BookmarkPanel {
             .header(header_height, |mut header| {
                 header.col(|ui| {
                     ui.strong("Annotation");
+                });
+                header.col(|ui| {
+                    ui.strong("Source");
                 });
                 header.col(|ui| {
                     ui.strong("Line");
@@ -243,6 +247,7 @@ impl BookmarkPanel {
             row.col(|_| {});
             row.col(|_| {});
             row.col(|_| {});
+            row.col(|_| {});
             return;
         };
 
@@ -261,6 +266,18 @@ impl BookmarkPanel {
             editing_bookmark,
             bookmark_name_input,
             events,
+            &mut row_clicked,
+            dark_mode,
+        );
+
+        // Source column
+        Self::render_source_column(
+            row,
+            &log_view_state.store,
+            store_id,
+            is_selected,
+            is_closest,
+            color,
             &mut row_clicked,
             dark_mode,
         );
@@ -314,6 +331,35 @@ impl BookmarkPanel {
                 store_id: *store_id,
             });
         }
+    }
+
+    fn render_source_column(
+        row: &mut egui_extras::TableRow<'_, '_>,
+        store: &LogStore,
+        store_id: &StoreID,
+        is_selected: bool,
+        is_closest: bool,
+        color: Color32,
+        row_clicked: &mut bool,
+        dark_mode: bool,
+    ) {
+        row.col(|ui| {
+            Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
+
+            let name = store
+                .get_source_name(store_id)
+                .unwrap_or_default();
+            ui.label(RichText::new(name).color(color));
+
+            let response = ui.interact(
+                ui.max_rect(),
+                ui.id().with(store_id).with("bm_source"),
+                egui::Sense::click(),
+            );
+            if response.clicked() {
+                *row_clicked = true;
+            }
+        });
     }
 
     fn render_line_column(
