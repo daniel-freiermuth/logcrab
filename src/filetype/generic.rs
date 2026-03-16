@@ -231,6 +231,10 @@ static SLASH_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
 });
 static TIME_ONLY_TIMESTAMP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)").expect("valid regex literal"));
+static BRACKETED_CTIME_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\[([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\]")
+        .expect("valid regex literal")
+});
 
 /// Parse a single line and return the concrete `GenericLogLine` if it has a recognised timestamp.
 pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogLine> {
@@ -302,6 +306,12 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S")
         {
+            timestamp = Local.from_local_datetime(&naive).single();
+            remaining = remaining[caps[0].len()..].trim_start();
+        }
+    } else if let Ok(Some(caps)) = BRACKETED_CTIME_TIMESTAMP.captures(remaining) {
+        // e.g. [Sat Mar  7 11:53:27 2026]
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%a %b %e %H:%M:%S %Y") {
             timestamp = Local.from_local_datetime(&naive).single();
             remaining = remaining[caps[0].len()..].trim_start();
         }
@@ -425,6 +435,20 @@ mod tests {
         assert_eq!(
             line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-20 14:23:45"
+        );
+    }
+
+    #[test]
+    fn test_bracketed_ctime_timestamp() {
+        let raw = "[Sat Mar  7 11:53:27 2026] kernel: usb 1-1: new high-speed USB device".to_string();
+        let line = parse_generic_line(raw, 1).expect("should parse bracketed ctime timestamp");
+        assert_eq!(
+            line.message_text,
+            "kernel: usb 1-1: new high-speed USB device"
+        );
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-03-07 11:53:27"
         );
     }
 
