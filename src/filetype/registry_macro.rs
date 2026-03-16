@@ -277,6 +277,7 @@ macro_rules! register_filetypes {
                 if <$t_ftype as $crate::filetype::TextFileType>::looks_like(
                     &mut ::std::io::Cursor::new(&sample),
                 ) {
+                    log::info!("Opening {} with detected format {}", path.display(), stringify!($t_ftype));
                     let config_val = file_config.$t_slug.clone();
                     let arc_config = ::std::sync::Arc::new(::std::sync::RwLock::new(config_val.clone()));
                     return $crate::core::log_file::LogFileLoader::load_typed(

@@ -90,9 +90,9 @@ impl ChunkedLoader {
                 }
             };
 
-            let eof = chunk.len() < current_chunk_size;
-
-            if !chunk.is_empty() {
+            if chunk.is_empty() {
+                break;
+            } else {
                 data_source.append_lines(chunk);
                 chunk_count += 1;
 
@@ -114,10 +114,6 @@ impl ChunkedLoader {
                     progress,
                     format!("Loading {}… ({} lines)", file_name, data_source.len()),
                 );
-            }
-
-            if eof {
-                break;
             }
         }
 
