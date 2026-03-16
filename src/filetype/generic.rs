@@ -217,13 +217,31 @@ static BRACKETED_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
 static LOGCAT_TIMESTAMP_GENERIC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})").expect("valid regex literal")
 });
+static SLASH_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)").expect("valid regex literal")
+});
+static TIME_ONLY_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)").expect("valid regex literal")
+});
 
 /// Parse a single line and return the concrete `GenericLogLine` if it has a recognised timestamp.
 pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogLine> {
     let mut timestamp = None;
     let mut remaining = raw.as_str();
 
-    if let Ok(Some(caps)) = HYPHENATED_TIMESTAMP.captures(remaining) {
+    if let Ok(Some(caps)) = SLASH_TIMESTAMP.captures(remaining) {
+        if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y/%m/%d %H:%M:%S%.f")
+        {
+            timestamp = Local.from_local_datetime(&naive).single();
+            remaining = remaining[caps[0].len()..].trim_start();
+        } else if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y/%m/%d %H:%M:%S")
+        {
+            timestamp = Local.from_local_datetime(&naive).single();
+            remaining = remaining[caps[0].len()..].trim_start();
+        }
+    } else if let Ok(Some(caps)) = HYPHENATED_TIMESTAMP.captures(remaining) {
         let date_part = &caps[1][..10];
         let time_part = &caps[1][11..];
         let normalized = format!("{date_part} {time_part}");
@@ -298,6 +316,19 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S")
+        {
+            timestamp = Local.from_local_datetime(&naive).single();
+            remaining = remaining[caps[0].len()..].trim_start();
+        }
+    } else if let Ok(Some(caps)) = TIME_ONLY_TIMESTAMP.captures(remaining) {
+        let ts_str = format!("1970-01-01 {}", &caps[1]);
+        if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S%.f")
+        {
+            timestamp = Local.from_local_datetime(&naive).single();
+            remaining = remaining[caps[0].len()..].trim_start();
+        } else if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S")
         {
             timestamp = Local.from_local_datetime(&naive).single();
             remaining = remaining[caps[0].len()..].trim_start();
@@ -455,5 +486,43 @@ mod tests {
         let line = parse_generic_line(raw, 1)
             .expect("Should parse ISO timestamp with negative timezone offset without colon");
         assert_eq!(line.message_text, "WARN Connection timeout");
+    }
+
+    #[test]
+    fn test_slash_timestamp_with_microseconds() {
+        let raw = "2026/03/09 01:20:14.942857 INFO Something happened".to_string();
+        let line = parse_generic_line(raw, 1).expect("should parse slash-separated timestamp with microseconds");
+        assert_eq!(line.message_text, "INFO Something happened");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-03-09 01:20:14"
+        );
+    }
+
+    #[test]
+    fn test_slash_timestamp_without_fraction() {
+        let raw = "2026/03/09 01:20:14 DEBUG No fractions".to_string();
+        let line = parse_generic_line(raw, 1).expect("should parse slash-separated timestamp without fraction");
+        assert_eq!(line.message_text, "DEBUG No fractions");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-03-09 01:20:14"
+        );
+    }
+
+    #[test]
+    fn test_time_only_with_milliseconds() {
+        let raw = "01:34:00.178 INFO Something happened".to_string();
+        let line = parse_generic_line(raw, 1).expect("should parse time-only timestamp");
+        assert_eq!(line.message_text, "INFO Something happened");
+        assert_eq!(line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(), "1970-01-01 01:34:00.178");
+    }
+
+    #[test]
+    fn test_time_only_without_fraction() {
+        let raw = "01:34:00 DEBUG No fractions".to_string();
+        let line = parse_generic_line(raw, 1).expect("should parse time-only timestamp without fraction");
+        assert_eq!(line.message_text, "DEBUG No fractions");
+        assert_eq!(line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(), "1970-01-01 01:34:00");
     }
 }
