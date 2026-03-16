@@ -135,11 +135,11 @@ impl SessionState {
     /// Toggle bookmark at the given line index
     pub fn toggle_bookmark(&mut self, line_index: StoreID) {
         if self.store.has_bookmark(&line_index) {
-            log::debug!("Removing bookmark at line {line_index:?}");
+            tracing::debug!("Removing bookmark at line {line_index:?}");
             self.store.remove_bookmark(&line_index);
         } else {
             let bookmark_name = String::new();
-            log::debug!("Adding bookmark with empty annotation");
+            tracing::debug!("Adding bookmark with empty annotation");
             self.store.set_bookmark(&line_index, bookmark_name);
         }
         self.modified = true;

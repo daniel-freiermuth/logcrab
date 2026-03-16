@@ -52,13 +52,17 @@ struct Args {
 }
 
 fn main() -> eframe::Result<()> {
-    // Initialize logger with millisecond precision timestamps
+    // Initialize tracing subscriber with millisecond precision timestamps.
     // Set RUST_LOG environment variable to override (e.g., RUST_LOG=debug)
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_timer(tracing_subscriber::fmt::time::uptime())
         .init();
 
-    log::info!(
+    tracing::info!(
         "LogCrab starting up (version {})",
         env!("CARGO_PKG_VERSION")
     );
@@ -66,7 +70,7 @@ fn main() -> eframe::Result<()> {
     #[cfg(feature = "ram-profiling")]
     let _profiler = {
         let args_early = Args::parse();
-        log::info!(
+        tracing::info!(
             "RAM profiling enabled, output: {}",
             args_early.profile_output.display()
         );
@@ -77,22 +81,22 @@ fn main() -> eframe::Result<()> {
 
     #[cfg(feature = "cpu-profiling")]
     {
-        log::info!("CPU profiling enabled with Tracy - run Tracy profiler to connect");
+        tracing::info!("CPU profiling enabled with Tracy - run Tracy profiler to connect");
     }
 
     let args = Args::parse();
 
     if !args.files.is_empty() {
-        log::info!("Opening {} file(s) from command line", args.files.len());
+        tracing::info!("Opening {} file(s) from command line", args.files.len());
         for file in &args.files {
-            log::info!("  - {}", file.display());
+            tracing::info!("  - {}", file.display());
         }
     }
 
     // Load app icon
     let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../logo.png"))
         .unwrap_or_else(|e| {
-            log::warn!("Failed to load app icon: {e}");
+            tracing::warn!("Failed to load app icon: {e}");
             IconData::default()
         });
 

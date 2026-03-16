@@ -699,7 +699,7 @@ fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<Btsnoop
     profiling::scope!("parse_btsnoop_to_lines");
     use anyhow::Context as _;
     let path = path.as_ref();
-    log::info!("Starting btsnoop parsing: {}", path.display());
+    tracing::info!("Starting btsnoop parsing: {}", path.display());
 
     let mut file = File::open(path)
         .with_context(|| format!("Failed to open btsnoop file: {}", path.display()))?;
@@ -721,7 +721,7 @@ fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<Btsnoop
                 DateTime::from_timestamp(0, 0).map(|epoch| (epoch + delta).with_timezone(&Local))
             })
         else {
-            log::warn!("Failed to convert packet timestamp at line {line_number}, skipping");
+            tracing::warn!("Failed to convert packet timestamp at line {line_number}, skipping");
             line_number += 1;
             continue;
         };
@@ -732,6 +732,6 @@ fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<Btsnoop
         line_number += 1;
     }
 
-    log::info!("Parsed {} HCI packets from btsnoop file", lines.len());
+    tracing::info!("Parsed {} HCI packets from btsnoop file", lines.len());
     Ok(lines)
 }

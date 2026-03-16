@@ -113,10 +113,10 @@ impl GlobalConfig {
     pub fn load() -> Self {
         if let Some(path) = Self::config_path() {
             if path.exists() {
-                log::info!("Loading global config from {}", path.display());
+                tracing::info!("Loading global config from {}", path.display());
                 if let Ok(contents) = std::fs::read_to_string(&path) {
                     if let Ok(config) = serde_json::from_str::<Self>(&contents) {
-                        log::info!(
+                        tracing::info!(
                             "Loaded {} shortcuts and {} favorite filters",
                             config.shortcuts.len(),
                             config.favorite_filters.len()
@@ -125,7 +125,7 @@ impl GlobalConfig {
                     }
                 }
             } else {
-                log::info!("No global config found, using defaults");
+                tracing::info!("No global config found, using defaults");
             }
         }
 
@@ -149,7 +149,7 @@ impl GlobalConfig {
         // Write to file
         std::fs::write(&path, json).map_err(|e| format!("Failed to write config file: {e}"))?;
 
-        log::info!("Saved global config to {}", path.display());
+        tracing::info!("Saved global config to {}", path.display());
         Ok(())
     }
 }

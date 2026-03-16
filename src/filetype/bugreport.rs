@@ -26,7 +26,7 @@ pub fn detect_year_from_header(content: &str) -> Option<i32> {
     for line in content.lines().take(50) {
         if let Ok(Some(caps)) = DUMPSTATE_HEADER.captures(line) {
             if let Ok(year) = caps[1].parse::<i32>() {
-                log::info!("Detected year {year} from bugreport dumpstate header");
+                tracing::info!("Detected year {year} from bugreport dumpstate header");
                 return Some(year);
             }
         }
@@ -57,14 +57,14 @@ impl BugreportFileType {
     /// Falls back to the current calendar year if no header is found.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         use anyhow::Context as _;
-        let mut file = File::open(path)
-            .with_context(|| format!("Failed to open {}", path.display()))?;
+        let mut file =
+            File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
 
         let mut preview_buf = [0u8; 4096];
         let preview_n = file.read(&mut preview_buf).unwrap_or(0);
         let preview = String::from_utf8_lossy(&preview_buf[..preview_n]);
         let year = detect_year_from_header(&preview).unwrap_or_else(|| {
-            log::warn!(
+            tracing::warn!(
                 "No dumpstate year found in {}, using current year",
                 path.display()
             );

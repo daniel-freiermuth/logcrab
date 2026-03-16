@@ -185,7 +185,7 @@ where
         {
             Ok(f) => f,
             Err(e) => {
-                log::error!("Cannot open .crab file {}: {e}", crab_path.display());
+                tracing::error!("Cannot open .crab file {}: {e}", crab_path.display());
                 return None;
             }
         };
@@ -193,14 +193,14 @@ where
         // Try to acquire exclusive lock
         match file.try_lock_exclusive() {
             Ok(()) => {
-                log::info!(
+                tracing::info!(
                     "Successfully acquired exclusive lock on {}",
                     crab_path.display()
                 );
                 Some(file)
             }
             Err(e) => {
-                log::error!(
+                tracing::error!(
                     "Cannot lock .crab file {} (already open in another instance?): {e}",
                     crab_path.display()
                 );
@@ -293,7 +293,7 @@ where
         let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match CrabFile::<FT>::load_from_file(file) {
             Ok(crab_data) => {
-                log::info!(
+                tracing::info!(
                     "Loaded {} bookmarks from {}",
                     crab_data.bookmarks.len(),
                     crab_path.display()
@@ -317,7 +317,7 @@ where
                 // Empty or invalid .crab file, that's fine for a new session
             }
             Err(crate::core::SessionError::VersionTooNew { found, supported }) => {
-                log::warn!(
+                tracing::warn!(
                     ".crab file {} has version {found} (app supports up to {supported}); \
                      bookmarks and file state not loaded, saves blocked to prevent data loss",
                     crab_path.display()
@@ -326,7 +326,7 @@ where
                     .store(true, AtomicOrdering::Relaxed);
             }
             Err(e) => {
-                log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
+                tracing::warn!("Failed to load .crab file {}: {e}", crab_path.display());
             }
         }
     }
@@ -341,7 +341,7 @@ where
                 .expect("crab_lock mutex poisoned")
                 .1
                 .clone();
-            log::warn!(
+            tracing::warn!(
                 "Skipping save to {} — .crab file is from a newer version of LogCrab",
                 crab_path.display()
             );
@@ -359,12 +359,12 @@ where
         // The OS-level lock (via fs2) is held for the lifetime of SourceData
         let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match crab_data.save_to_file(file) {
-            Ok(()) => log::debug!(
+            Ok(()) => tracing::debug!(
                 "Saved .crab file {} with {} bookmarks",
                 crab_path.display(),
                 crab_data.bookmarks.len()
             ),
-            Err(e) => log::error!("Failed to save .crab file {}: {e}", crab_path.display()),
+            Err(e) => tracing::error!("Failed to save .crab file {}: {e}", crab_path.display()),
         }
     }
 
@@ -428,7 +428,7 @@ where
             profiling::scope!("SourceData::lines::write");
             let mut lines_guard = self.lines.write().expect("lines lock poisoned");
             let start_idx = lines_guard.len();
-            log::debug!(
+            tracing::debug!(
                 "Appending {} lines to existing {} lines (merge overhead)",
                 lines.len(),
                 start_idx
@@ -599,7 +599,7 @@ where
                 // Empty or invalid .crab file, that's fine for a new session
             }
             Err(e) => {
-                log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
+                tracing::warn!("Failed to load .crab file {}: {e}", crab_path.display());
             }
         }
         Ok((Vec::new(), Vec::new()))
@@ -841,7 +841,7 @@ impl LogStore {
         let path = removed.file_path().to_path_buf();
         drop(sources);
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
-        log::info!("Removed source: {}", path.display());
+        tracing::info!("Removed source: {}", path.display());
         Some(path)
     }
 

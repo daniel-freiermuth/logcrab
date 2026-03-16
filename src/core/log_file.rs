@@ -115,11 +115,11 @@ impl LogFileLoader {
             .to_string_lossy()
             .into_owned();
 
-        log::debug!("background_load: opening {}", path.display());
+        tracing::debug!("background_load: opening {}", path.display());
         let mut file_type = match open_fn(path, Arc::clone(&data_source.file_state)) {
             Ok(ft) => ft,
             Err(e) => {
-                log::error!("Failed to open {}: {e}", path.display());
+                tracing::error!("Failed to open {}: {e}", path.display());
                 toast.set_error(format!("Failed to open file: {e}"));
                 toast.dismiss();
                 return;
@@ -163,7 +163,7 @@ impl LogFileLoader {
 
         let score_start = std::time::Instant::now();
         let total_lines = data_source.len();
-        log::debug!("Starting background anomaly scoring for {total_lines} lines");
+        tracing::debug!("Starting background anomaly scoring for {total_lines} lines");
 
         let mut scorer = create_default_scorer();
         let mut raw_scores = Vec::new();
@@ -173,7 +173,7 @@ impl LogFileLoader {
         for idx in 0..total_lines {
             if idx % 1000 == 0 {
                 if data_source.is_cancelled() {
-                    log::info!("Anomaly scoring cancelled for {}", path.display());
+                    tracing::info!("Anomaly scoring cancelled for {}", path.display());
                     toast.set_error("Scoring cancelled".to_string());
                     toast.dismiss();
                     return;
@@ -183,7 +183,7 @@ impl LogFileLoader {
             }
 
             let Some(log_line) = data_source.get_as_log_line(idx) else {
-                log::warn!("Skipping scoring for line {idx} due to missing entry");
+                tracing::warn!("Skipping scoring for line {idx} due to missing entry");
                 raw_scores.push(0.0);
                 continue;
             };
@@ -209,7 +209,7 @@ impl LogFileLoader {
             let min_raw = raw_scores.iter().copied().fold(f64::INFINITY, f64::min);
             let max_raw = raw_scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let avg_raw: f64 = raw_scores.iter().sum::<f64>() / raw_scores.len() as f64;
-            log::info!(
+            tracing::info!(
                 "Score statistics - Raw: min={:.3}, max={:.3}, avg={:.3}, total_lines={}",
                 min_raw,
                 max_raw,
@@ -221,10 +221,10 @@ impl LogFileLoader {
         data_source.set_scores(&normalized_scores);
 
         let score_duration = score_start.elapsed();
-        log::info!(
+        tracing::info!(
             "Anomaly scoring took {score_duration:?} for {}",
             path.display()
         );
-        log::info!("Total processing time: {:?}", start_time.elapsed());
+        tracing::info!("Total processing time: {:?}", start_time.elapsed());
     }
 }

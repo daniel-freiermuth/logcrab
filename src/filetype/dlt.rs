@@ -550,8 +550,8 @@ impl InputFileType for DltFileType {
         // Clone the boot_times Arc so read() can write into it without
         // ever touching the outer Arc<DltFileState>.
         let boot_times = Arc::clone(&file_state.boot_times);
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open {}", path.display()))?;
+        let file =
+            File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
         let inner = ByteCountReader::new(BufReader::new(file));
         let bytes_read_rc = inner.bytes_read_arc();
         let reader = DltMessageReader::new(inner, true);
@@ -591,7 +591,7 @@ impl InputFileType for DltFileType {
                 Ok(Some(_)) => {}  // skip non-Item messages (e.g. skipped bytes)
                 Ok(None) => break, // EOF
                 Err(e) => {
-                    log::warn!("Failed to parse DLT message: {e:?}");
+                    tracing::warn!("Failed to parse DLT message: {e:?}");
                     // continue — DLT files sometimes have minor corruption
                 }
             }
@@ -631,14 +631,14 @@ pub fn convert_dlt_message(msg: &dlt_core::dlt::Message, line_number: usize) -> 
     let storage_time = storage_time_to_datetime(&msg.storage_header.as_ref()?.timestamp)?;
 
     if msg.header.ecu_id.is_none() {
-        log::warn!("DLT message missing ECU ID for line {line_number}");
+        tracing::warn!("DLT message missing ECU ID for line {line_number}");
     }
     if msg.extended_header.is_none() {
-        log::error!("DLT message missing Extended Header for line {line_number}");
+        tracing::error!("DLT message missing Extended Header for line {line_number}");
         return None;
     }
     if msg.storage_header.is_none() {
-        log::error!("DLT message missing Storage Header for line {line_number}");
+        tracing::error!("DLT message missing Storage Header for line {line_number}");
         return None;
     }
 

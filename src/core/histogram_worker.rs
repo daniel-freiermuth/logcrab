@@ -146,7 +146,7 @@ impl HistogramWorker {
     fn worker_loop(request_rx: &Receiver<HistogramRequest>) {
         profiling::function_scope!();
 
-        log::debug!("Histogram worker thread started");
+        tracing::debug!("Histogram worker thread started");
 
         // Queue-map for fair FIFO processing with coalescing
         let mut pending_requests = QueueMap::new();
@@ -157,7 +157,7 @@ impl HistogramWorker {
                 let filter_id = request.filter_id;
                 let is_new = pending.insert(filter_id, request);
                 if !is_new {
-                    log::trace!("Coalescing histogram request for filter {filter_id}");
+                    tracing::trace!("Coalescing histogram request for filter {filter_id}");
                 }
             }
         };
@@ -174,13 +174,13 @@ impl HistogramWorker {
             // Process histograms in FIFO order (not by filter_id)
             while let Some((filter_id, request)) = pending_requests.pop_front() {
                 profiling::scope!("process_single_histogram");
-                log::trace!("Processing histogram request for filter {filter_id}");
+                tracing::trace!("Processing histogram request for filter {filter_id}");
 
                 let result_channel = request.result_tx.clone();
 
                 let result = Self::compute_histogram(request);
 
-                log::trace!("Histogram {filter_id} complete",);
+                tracing::trace!("Histogram {filter_id} complete",);
 
                 // Send result back (ignore errors if receiver is gone)
                 let _ = result_channel.send(result);
@@ -189,7 +189,7 @@ impl HistogramWorker {
                 drain_pending(&mut pending_requests);
             }
         }
-        log::debug!("Histogram worker thread shutting down (channel closed)");
+        tracing::debug!("Histogram worker thread shutting down (channel closed)");
     }
 
     /// Compute histogram data

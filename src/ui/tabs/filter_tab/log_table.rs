@@ -779,7 +779,7 @@ impl LogTable {
 
             // Get the fully-calibrated timestamp (config + file_state applied)
             let Some(display_time) = store.adjusted_timestamp(&line_idx) else {
-                log::error!("adjusted_timestamp: source not found for {line_idx:?}");
+                tracing::error!("adjusted_timestamp: source not found for {line_idx:?}");
                 return;
             };
 

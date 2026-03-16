@@ -392,7 +392,7 @@ impl KeyboardBindings {
             bindings.insert(*action, binding);
         }
 
-        log::info!(
+        tracing::info!(
             "Loaded keyboard shortcuts ({} custom, {} defaults)",
             config.shortcuts.len(),
             bindings.len() - config.shortcuts.len()
@@ -424,7 +424,7 @@ impl KeyboardBindings {
     /// Save shortcuts to global config
     pub fn save_to_config(&self, config: &mut GlobalConfig) {
         config.shortcuts.clone_from(&self.bindings);
-        log::info!("Saved {} keyboard shortcuts to config", self.bindings.len());
+        tracing::info!("Saved {} keyboard shortcuts to config", self.bindings.len());
     }
 
     /// Get the shortcut string for a specific action

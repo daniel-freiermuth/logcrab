@@ -293,7 +293,7 @@ impl LogCrabTab for BookmarksView {
             {
                 // Save config when changed
                 if let Err(e) = global_config.save() {
-                    log::error!("Failed to save config: {e}");
+                    tracing::error!("Failed to save config: {e}");
                 }
             }
             ui.label("Show in Timeline");
@@ -311,9 +311,9 @@ impl LogCrabTab for BookmarksView {
                         .save_file()
                     {
                         if let Err(e) = Self::export_bookmarks(data_state, &path) {
-                            log::error!("Failed to export bookmarks: {e}");
+                            tracing::error!("Failed to export bookmarks: {e}");
                         } else {
-                            log::info!("Bookmarks exported to {}", path.display());
+                            tracing::info!("Bookmarks exported to {}", path.display());
                         }
                     }
                 }

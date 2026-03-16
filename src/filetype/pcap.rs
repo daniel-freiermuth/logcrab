@@ -1118,7 +1118,8 @@ enum PcapFormat {
 fn detect_pcap_format(path: &Path) -> anyhow::Result<PcapFormat> {
     use anyhow::Context as _;
     use std::io::Read;
-    let mut file = File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
+    let mut file =
+        File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic)
         .context("Failed to read magic")?;
@@ -1149,8 +1150,9 @@ pub fn parse_pcap_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PcapLo
 fn parse_legacy_pcap_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     profiling::scope!("parse_legacy_pcap_to_lines");
     use anyhow::Context as _;
-    log::info!("Starting legacy pcap parsing: {}", path.display());
-    let file = File::open(path).with_context(|| format!("Failed to open pcap file: {}", path.display()))?;
+    tracing::info!("Starting legacy pcap parsing: {}", path.display());
+    let file = File::open(path)
+        .with_context(|| format!("Failed to open pcap file: {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut pcap_reader = LegacyPcapReader::new(65536, reader)
         .map_err(|e| anyhow::anyhow!("Failed to create pcap reader: {e:?}"))?;
@@ -1181,20 +1183,21 @@ fn parse_legacy_pcap_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
                     .map_err(|e| anyhow::anyhow!("Read error: {e}"))?;
             }
             Err(e) => {
-                log::warn!("Pcap parse error: {e:?}");
+                tracing::warn!("Pcap parse error: {e:?}");
                 break;
             }
         }
     }
-    log::info!("Parsed {} legacy pcap packets", lines.len());
+    tracing::info!("Parsed {} legacy pcap packets", lines.len());
     Ok(lines)
 }
 
 fn parse_pcapng_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     profiling::scope!("parse_pcapng_to_lines");
     use anyhow::Context as _;
-    log::info!("Starting pcapng parsing: {}", path.display());
-    let file = File::open(path).with_context(|| format!("Failed to open pcapng file: {}", path.display()))?;
+    tracing::info!("Starting pcapng parsing: {}", path.display());
+    let file = File::open(path)
+        .with_context(|| format!("Failed to open pcapng file: {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut pcap_reader = PcapNGReader::new(65536, reader)
         .map_err(|e| anyhow::anyhow!("Failed to create pcapng reader: {e:?}"))?;
@@ -1256,11 +1259,11 @@ fn parse_pcapng_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
                     .map_err(|e| anyhow::anyhow!("Read error: {e}"))?;
             }
             Err(e) => {
-                log::warn!("Pcapng parse error: {e:?}");
+                tracing::warn!("Pcapng parse error: {e:?}");
                 break;
             }
         }
     }
-    log::info!("Parsed {} pcapng packets", lines.len());
+    tracing::info!("Parsed {} pcapng packets", lines.len());
     Ok(lines)
 }

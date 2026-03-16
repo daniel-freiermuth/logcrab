@@ -268,7 +268,7 @@ macro_rules! register_filetypes {
             match ::std::fs::File::open(path) {
                 Ok(f) => { let _ = f.take(MAX_SAMPLE_BYTES as u64).read_to_end(&mut sample); }
                 Err(e) => {
-                    log::error!("Cannot open file for format detection: {e}");
+                    tracing::error!("Cannot open file for format detection: {e}");
                     toast.set_error(format!("Cannot open file: {e}"));
                     return None;
                 }
@@ -277,7 +277,7 @@ macro_rules! register_filetypes {
                 if <$t_ftype as $crate::filetype::TextFileType>::looks_like(
                     &mut ::std::io::Cursor::new(&sample),
                 ) {
-                    log::info!("Opening {} with detected format {}", path.display(), stringify!($t_ftype));
+                    tracing::info!("Opening {} with detected format {}", path.display(), stringify!($t_ftype));
                     let config_val = file_config.$t_slug.clone();
                     let arc_config = ::std::sync::Arc::new(::std::sync::RwLock::new(config_val.clone()));
                     return $crate::core::log_file::LogFileLoader::load_typed(
@@ -291,7 +291,7 @@ macro_rules! register_filetypes {
                 }
             )*
             // Should never be reached if the last text type is a catch-all.
-            log::error!("open_text_source: no text type matched — is the catch-all registered last?");
+            tracing::error!("open_text_source: no text type matched — is the catch-all registered last?");
             None
         }
 

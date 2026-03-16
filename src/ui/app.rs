@@ -137,10 +137,10 @@ impl LogCrabApp {
                 path = PathBuf::from(path.to_string_lossy().trim_end_matches(".crab"));
 
                 if path.exists() {
-                    log::info!("Loading log file from .crab session: {}", path.display());
+                    tracing::info!("Loading log file from .crab session: {}", path.display());
                 } else {
                     let err_msg = format!("File not found: {}", path.display());
-                    log::error!("{err_msg}");
+                    tracing::error!("{err_msg}");
                     self.toast_manager.show_error(err_msg);
                     return;
                 }
@@ -152,8 +152,7 @@ impl LogCrabApp {
                 .toast_manager
                 .create_progress_toast(file_name, "Starting...");
 
-            if let Err(e) =
-                session.add_file(&path, &toast_handle, &self.global_config.file_config)
+            if let Err(e) = session.add_file(&path, &toast_handle, &self.global_config.file_config)
             {
                 self.toast_manager.show_warning(e.to_string());
             }
@@ -235,7 +234,7 @@ impl LogCrabApp {
         }
 
         for path in log_files {
-            log::info!("Adding dropped file to workspace: {}", path.display());
+            tracing::info!("Adding dropped file to workspace: {}", path.display());
             self.add_file_to_session(path);
         }
 
@@ -243,13 +242,16 @@ impl LogCrabApp {
         if !filter_files.is_empty() {
             if let Some(ref mut log_view) = self.session {
                 for path in &filter_files {
-                    log::info!("Importing dropped filter file: {}", path.display());
+                    tracing::info!("Importing dropped filter file: {}", path.display());
                     match log_view.import_filters(path) {
                         Ok(count) => {
-                            log::info!("Imported {count} filters from {}", path.display());
+                            tracing::info!("Imported {count} filters from {}", path.display());
                         }
                         Err(e) => {
-                            log::error!("Failed to import filters from {}: {e}", path.display());
+                            tracing::error!(
+                                "Failed to import filters from {}: {e}",
+                                path.display()
+                            );
                             self.toast_manager.show_error(format!(
                                 "Failed to import {}: {e}",
                                 path.file_name().map_or_else(
@@ -261,7 +263,7 @@ impl LogCrabApp {
                     }
                 }
             } else {
-                log::warn!(
+                tracing::warn!(
                     "Cannot import filter files - no log file is open. Open a log file first."
                 );
                 self.toast_manager
@@ -317,8 +319,8 @@ impl LogCrabApp {
                             let _ = self.global_config.save();
                         }
                         match log_view.export_filters(&path) {
-                            Ok(()) => log::info!("Filters exported successfully"),
-                            Err(e) => log::error!("Failed to export filters: {e}"),
+                            Ok(()) => tracing::info!("Filters exported successfully"),
+                            Err(e) => tracing::error!("Failed to export filters: {e}"),
                         }
                     }
                     ui.close();
@@ -344,9 +346,12 @@ impl LogCrabApp {
                         for path in paths {
                             match log_view.import_filters(&path) {
                                 Ok(count) => {
-                                    log::info!("Imported {count} filters from {}", path.display());
+                                    tracing::info!(
+                                        "Imported {count} filters from {}",
+                                        path.display()
+                                    );
                                 }
-                                Err(e) => log::error!(
+                                Err(e) => tracing::error!(
                                     "Failed to import filters from {}: {e}",
                                     path.display()
                                 ),
@@ -396,7 +401,7 @@ impl LogCrabApp {
             {
                 // Save config when changed
                 if let Err(e) = self.global_config.save() {
-                    log::error!("Failed to save config: {e}");
+                    tracing::error!("Failed to save config: {e}");
                 }
             }
 
@@ -414,7 +419,7 @@ impl LogCrabApp {
                 }
                 // Save config when changed
                 if let Err(e) = self.global_config.save() {
-                    log::error!("Failed to save config: {e}");
+                    tracing::error!("Failed to save config: {e}");
                 }
             }
 
@@ -422,7 +427,7 @@ impl LogCrabApp {
 
             if self.global_config.file_config.render(ui) {
                 if let Err(e) = self.global_config.save() {
-                    log::error!("Failed to save config: {e}");
+                    tracing::error!("Failed to save config: {e}");
                 }
                 if let Some(ref mut session) = self.session {
                     session

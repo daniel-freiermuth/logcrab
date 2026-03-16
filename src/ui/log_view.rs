@@ -19,7 +19,9 @@
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::session::CRAB_FILTERS_VERSION;
-use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule, SessionError};
+use crate::core::{
+    CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule, SessionError,
+};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -115,12 +117,12 @@ impl CrabSession {
     ) -> Result<(), SessionError> {
         // Check if the file is already loaded
         if self.state.store.contains_file(path) {
-            log::info!("Skipping already loaded file: {}", path.display());
+            tracing::info!("Skipping already loaded file: {}", path.display());
             toast.dismiss();
             return Ok(());
         }
 
-        log::info!("Adding file to session: {}", path.display());
+        tracing::info!("Adding file to session: {}", path.display());
 
         let Some(variant) = LogFileLoader::load_file(path, toast, None, file_config) else {
             toast.set_error("File is already open in another LogCrab instance".to_string());
@@ -135,7 +137,7 @@ impl CrabSession {
                 return Err(e);
             }
             Err(e) => {
-                log::warn!("Failed to load session data for {}: {e}", path.display());
+                tracing::warn!("Failed to load session data for {}: {e}", path.display());
                 (Vec::new(), Vec::new())
             }
         };
@@ -159,7 +161,7 @@ impl CrabSession {
 
         if !exists {
             self.add_filter_view(false, Some(saved_filter.into()));
-            log::debug!("Merged filter: '{}'", saved_filter.search_text);
+            tracing::debug!("Merged filter: '{}'", saved_filter.search_text);
         }
     }
 
@@ -173,12 +175,12 @@ impl CrabSession {
 
         if !exists {
             self.state.highlights.push(saved_highlight.into());
-            log::debug!("Merged highlight: '{}'", saved_highlight.search_text);
+            tracing::debug!("Merged highlight: '{}'", saved_highlight.search_text);
         }
     }
 
     pub fn save_crab_file(&self) {
-        log::debug!("Saving .crab files for all sources");
+        tracing::debug!("Saving .crab files for all sources");
         let filters = self
             .dock_state
             .iter_all_tabs()
@@ -191,7 +193,7 @@ impl CrabSession {
         // Each source saves its own bookmarks + shared filters/highlights
         self.state.store.save_all_crab_files(&filters, &highlights);
 
-        log::debug!(
+        tracing::debug!(
             "Saved .crab files with {} filters, {} highlights",
             filters.len(),
             highlights.len(),
@@ -199,7 +201,7 @@ impl CrabSession {
     }
 
     pub fn export_filters(&self, path: &Path) -> Result<(), String> {
-        log::debug!("Exporting filters to: {}", path.display());
+        tracing::debug!("Exporting filters to: {}", path.display());
         let filters = self
             .dock_state
             .iter_all_tabs()
@@ -215,7 +217,7 @@ impl CrabSession {
             .save(path)
             .map_err(|e| format!("Failed to save filters: {e}"))?;
 
-        log::info!(
+        tracing::info!(
             "Successfully exported {} filters to {}",
             filters_data.filters.len(),
             path.display()
@@ -224,12 +226,12 @@ impl CrabSession {
     }
 
     pub fn import_filters(&mut self, path: &Path) -> Result<usize, String> {
-        log::debug!("Importing filters from: {}", path.display());
+        tracing::debug!("Importing filters from: {}", path.display());
 
         let filters_data =
             CrabFilters::load(path).map_err(|e| format!("Failed to load filters: {e}"))?;
 
-        log::info!(
+        tracing::info!(
             "Importing .crab-filters v{} with {} filters",
             filters_data.version,
             filters_data.filters.len()
@@ -241,7 +243,7 @@ impl CrabSession {
             self.add_filter_view(false, Some(state));
         }
 
-        log::info!(
+        tracing::info!(
             "Successfully imported {count} filters from {}",
             path.display()
         );
@@ -511,7 +513,7 @@ impl CrabSession {
 
 impl Drop for CrabSession {
     fn drop(&mut self) {
-        log::debug!("Dropping LogView");
+        tracing::debug!("Dropping LogView");
         self.save_crab_file();
     }
 }

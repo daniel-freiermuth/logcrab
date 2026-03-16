@@ -161,8 +161,8 @@ impl InputFileType for DmesgFileType {
         _file_state: std::sync::Arc<DmesgFileState>,
     ) -> anyhow::Result<Self> {
         use anyhow::Context as _;
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open {}", path.display()))?;
+        let file =
+            File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
         Ok(Self {
             reader: BufReader::new(file),
             line_number: 0,

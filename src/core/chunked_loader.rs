@@ -77,14 +77,14 @@ impl ChunkedLoader {
 
         loop {
             if data_source.is_cancelled() {
-                log::info!("ChunkedLoader: cancellation requested, stopping early");
+                tracing::info!("ChunkedLoader: cancellation requested, stopping early");
                 break;
             }
 
             let chunk = match input.read(current_chunk_size) {
                 Ok(lines) => lines,
                 Err(e) => {
-                    log::error!("ChunkedLoader: read error: {e}");
+                    tracing::error!("ChunkedLoader: read error: {e}");
                     toast.set_error(format!("Read error: {e}"));
                     return false;
                 }
@@ -101,7 +101,7 @@ impl ChunkedLoader {
                     && current_chunk_size < self.max_chunk_size
                 {
                     current_chunk_size = (current_chunk_size * 2).min(self.max_chunk_size);
-                    log::debug!("ChunkedLoader: chunk size → {current_chunk_size}");
+                    tracing::debug!("ChunkedLoader: chunk size → {current_chunk_size}");
                 }
 
                 // Progress update
@@ -119,7 +119,7 @@ impl ChunkedLoader {
 
         let elapsed = start.elapsed();
         let total_lines = data_source.len();
-        log::info!("ChunkedLoader: {total_lines} lines in {chunk_count} chunks ({elapsed:?})");
+        tracing::info!("ChunkedLoader: {total_lines} lines in {chunk_count} chunks ({elapsed:?})");
 
         !data_source.is_empty()
     }

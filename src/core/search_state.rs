@@ -129,7 +129,7 @@ impl SearchState {
     /// Request a background filter update for the given store.
     fn request_filter_update(&self, store: Arc<LogStore>, worker: &FilterWorkerHandle) {
         if !self.search_text.is_empty() {
-            log::trace!(
+            tracing::trace!(
                 "Search {}: requesting background filter for '{}'",
                 self.id,
                 self.search_text
@@ -168,7 +168,7 @@ impl SearchState {
             got_any = true;
         }
         if got_any {
-            log::trace!(
+            tracing::trace!(
                 "Search {}: completed filtering ({} matches)",
                 self.id,
                 self.filtered_indices.len()

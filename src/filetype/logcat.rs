@@ -158,8 +158,8 @@ impl InputFileType for LogcatFileType {
     ) -> anyhow::Result<Self> {
         use anyhow::Context as _;
         let year = chrono::Local::now().year();
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open {}", path.display()))?;
+        let file =
+            File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
         Ok(Self {
             reader: BufReader::new(file),
             year,
@@ -184,7 +184,7 @@ impl InputFileType for LogcatFileType {
                         result.push(line);
                         lines_read += 1;
                     } else {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to parse line {}: '{}'",
                             self.line_number,
                             buf.trim_end()

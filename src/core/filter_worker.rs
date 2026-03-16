@@ -117,7 +117,7 @@ impl FilterWorker {
     fn worker_loop(request_rx: &Receiver<FilterRequest>, is_filtering: &Arc<AtomicBool>) {
         profiling::function_scope!();
 
-        log::debug!("Filter worker thread started");
+        tracing::debug!("Filter worker thread started");
 
         // Queue-map for fair FIFO processing with coalescing
         let mut pending_requests = QueueMap::new();
@@ -127,7 +127,7 @@ impl FilterWorker {
             while let Ok(request) = request_rx.try_recv() {
                 let filter_id = request.filter_id;
                 if !pending.insert(filter_id, request) {
-                    log::trace!("Coalescing request for filter {filter_id}");
+                    tracing::trace!("Coalescing request for filter {filter_id}");
                 }
             }
         };
@@ -143,7 +143,7 @@ impl FilterWorker {
 
             while let Some((filter_id, request)) = pending_requests.pop_front() {
                 profiling::scope!("process_single_filter");
-                log::trace!("Processing filter request (search: '{:?}')", request.regex);
+                tracing::trace!("Processing filter request (search: '{:?}')", request.regex);
 
                 let store_version = request.store.version();
                 // Filter lines in parallel
@@ -170,7 +170,7 @@ impl FilterWorker {
                     })
                 };
 
-                log::trace!(
+                tracing::trace!(
                     "Filter {} complete: {} matches",
                     filter_id,
                     filtered_indices.len(),
@@ -196,6 +196,6 @@ impl FilterWorker {
             }
             is_filtering.store(false, Ordering::Relaxed);
         }
-        log::debug!("Filter worker thread shutting down (channel closed)");
+        tracing::debug!("Filter worker thread shutting down (channel closed)");
     }
 }

@@ -185,7 +185,7 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
     /// Migrate a v2 session into the current v3 format.
     fn migrate_from_v2(v2: CrabFileV2) -> Self {
         use crate::filetype::LineType as _;
-        log::info!(
+        tracing::info!(
             "Migrating .crab file from v{} to v{}",
             v2.version,
             CRAB_FILE_VERSION
@@ -284,7 +284,7 @@ impl CrabFilters {
         let filters: Self = serde_json::from_str(&content).map_err(SessionError::Parse)?;
 
         if filters.version > CRAB_FILTERS_VERSION {
-            log::warn!(
+            tracing::warn!(
                 ".crab-filters file version {} is newer than supported version {}. Some features may not work correctly.",
                 filters.version,
                 CRAB_FILTERS_VERSION
@@ -314,7 +314,10 @@ pub enum SessionError {
     Serialize(serde_json::Error),
     /// The .crab file was created by a newer version of LogCrab than this build supports.
     /// Loading is refused to prevent silent data loss when the file would be overwritten.
-    VersionTooNew { found: u32, supported: u32 },
+    VersionTooNew {
+        found: u32,
+        supported: u32,
+    },
 }
 
 impl std::fmt::Display for SessionError {

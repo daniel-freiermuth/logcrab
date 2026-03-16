@@ -142,9 +142,9 @@ impl FilterView {
                         if let Err(e) =
                             export_filtered_results(&self.state, &log_view_state.store, &path)
                         {
-                            log::error!("Failed to export filtered results: {e}");
+                            tracing::error!("Failed to export filtered results: {e}");
                         } else {
-                            log::info!("Filtered results exported to {}", path.display());
+                            tracing::info!("Filtered results exported to {}", path.display());
                         }
                     }
                 }
@@ -224,7 +224,7 @@ impl FilterView {
                 LogTableEvent::SetTimeZero { line_index } => {
                     self.state.timestamp_mode = store.adjusted_timestamp(&line_index).map_or_else(
                         || {
-                            log::warn!("Failed to set time zero for line index {line_index:?}");
+                            tracing::warn!("Failed to set time zero for line index {line_index:?}");
                             TimestampMode::Absolute
                         },
                         TimestampMode::Relative,
@@ -288,7 +288,7 @@ impl FilterView {
                     }) {
                         // Remove from favorites
                         global_config.favorite_filters.remove(pos);
-                        log::info!("Removed favorite: '{search_text}'");
+                        tracing::info!("Removed favorite: '{search_text}'");
                     } else {
                         // Add to favorites
                         global_config
@@ -297,7 +297,7 @@ impl FilterView {
                                 search_text,
                                 case_sensitive,
                             ));
-                        log::info!("Added favorite: '{}'", self.state.search.search_text);
+                        tracing::info!("Added favorite: '{}'", self.state.search.search_text);
                     }
 
                     // Save global config

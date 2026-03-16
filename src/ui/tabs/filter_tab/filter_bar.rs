@@ -76,7 +76,7 @@ impl FilterBar {
             .find(|f| f.matches(filter))
         {
             fav.name.clone_from(&new_name);
-            log::info!("Updated favorite name to: '{new_name}'");
+            tracing::info!("Updated favorite name to: '{new_name}'");
         }
         let _ = global_config.save();
     }
