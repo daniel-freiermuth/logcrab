@@ -316,8 +316,7 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = LOGCAT_TIMESTAMP_GENERIC.captures(remaining) {
-        let current_year = Local::now().year();
-        let timestamp_str = format!("{}-{}", current_year, &caps[1]);
+        let timestamp_str = format!("1970-{}", &caps[1]);
         if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.3f")
         {
@@ -325,8 +324,7 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = SYSLOG_TIMESTAMP.captures(remaining) {
-        let current_year = Local::now().year();
-        let ts_str = format!("{} {}", current_year, &caps[1]);
+        let ts_str = format!("1970 {}", &caps[1]);
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S%.3f") {
             timestamp = Local.from_local_datetime(&naive).single();
             remaining = remaining[caps[0].len()..].trim_start();
@@ -388,6 +386,10 @@ mod tests {
         let raw = "Nov 20 14:23:45 INFO Application started".to_string();
         let line = parse_generic_line(raw, 1).expect("should parse syslog format");
         assert_eq!(line.message_text, "INFO Application started");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "1970-11-20 14:23:45"
+        );
     }
 
     #[test]
@@ -457,10 +459,9 @@ mod tests {
         let raw = "11-20 14:23:45.123 E/ActivityManager: Process crashed".to_string();
         let line = parse_generic_line(raw, 1).expect("Should parse logcat timestamp format");
         assert_eq!(line.message_text, "E/ActivityManager: Process crashed");
-        let current_year = Local::now().year();
         assert_eq!(
             line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
-            format!("{current_year}-11-20 14:23:45.123")
+            "1970-11-20 14:23:45.123"
         );
     }
 
@@ -475,10 +476,9 @@ mod tests {
             line.message_text,
             "qcgpio[gpio_drv.c:1222]: dalcfg_query_item_name gpio_driver done"
         );
-        let current_year = Local::now().year();
         assert_eq!(
             line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
-            format!("{current_year}-02-03 23:26:34.864")
+            "1970-02-03 23:26:34.864"
         );
     }
 
