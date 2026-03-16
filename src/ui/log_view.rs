@@ -19,7 +19,7 @@
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::session::CRAB_FILTERS_VERSION;
-use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule};
+use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule, SessionError};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -99,21 +99,25 @@ impl CrabSession {
         self.monotonic_filter_counter += 1;
     }
 
-    /// Add a file to the current session
+    /// Add a file to the current session.
     ///
     /// Loads the file asynchronously and adds it as an additional source to the store.
     /// Skips files that are already loaded.
+    ///
+    /// Returns `Err` if the session file was created by a newer version of
+    /// LogCrab than this build supports. The caller is responsible for surfacing this
+    /// warning to the user.
     pub fn add_file(
         &mut self,
         path: &Path,
         toast: &ProgressToastHandle,
         file_config: &crate::core::log_store::GlobalFileConfig,
-    ) {
+    ) -> Result<(), SessionError> {
         // Check if the file is already loaded
         if self.state.store.contains_file(path) {
             log::info!("Skipping already loaded file: {}", path.display());
             toast.dismiss();
-            return;
+            return Ok(());
         }
 
         log::info!("Adding file to session: {}", path.display());
@@ -121,9 +125,20 @@ impl CrabSession {
         let Some(variant) = LogFileLoader::load_file(path, toast, None, file_config) else {
             toast.set_error("File is already open in another LogCrab instance".to_string());
             toast.dismiss();
-            return;
+            return Ok(());
         };
-        let (filters, highlights) = variant.load_saved_filters_and_highlights();
+
+        let (filters, highlights) = match variant.load_saved_filters_and_highlights() {
+            Ok(pair) => pair,
+            Err(e @ SessionError::VersionTooNew { .. }) => {
+                self.state.store.add_source(variant);
+                return Err(e);
+            }
+            Err(e) => {
+                log::warn!("Failed to load session data for {}: {e}", path.display());
+                (Vec::new(), Vec::new())
+            }
+        };
         self.state.store.add_source(variant);
         for saved_filter in &filters {
             self.add_filter_if_not_exists(saved_filter);
@@ -131,6 +146,7 @@ impl CrabSession {
         for saved_highlight in &highlights {
             self.add_highlight_if_not_exists(saved_highlight);
         }
+        Ok(())
     }
 
     fn add_filter_if_not_exists(&mut self, saved_filter: &SavedFilter) {

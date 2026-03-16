@@ -76,6 +76,9 @@ where
     version: AtomicU64,
     /// Flag to request cancellation of background loading/scoring operations
     cancel_requested: AtomicBool,
+    /// Set when the .crab file on disk was created by a newer version of LogCrab.
+    /// When true, saves are blocked to prevent silent data loss.
+    crab_version_too_new: AtomicBool,
 }
 
 impl<FT: InputFileType> std::fmt::Debug for SourceData<FT> {
@@ -147,6 +150,7 @@ where
             crab_lock: Mutex::new((crab_lock, crab_path)),
             version: AtomicU64::new(1),
             cancel_requested: AtomicBool::new(false),
+            crab_version_too_new: AtomicBool::new(false),
         };
         sd.load_bookmarks();
         sd
@@ -312,6 +316,15 @@ where
             Err(crate::core::SessionError::Parse(_)) => {
                 // Empty or invalid .crab file, that's fine for a new session
             }
+            Err(crate::core::SessionError::VersionTooNew { found, supported }) => {
+                log::warn!(
+                    ".crab file {} has version {found} (app supports up to {supported}); \
+                     bookmarks and file state not loaded, saves blocked to prevent data loss",
+                    crab_path.display()
+                );
+                self.crab_version_too_new
+                    .store(true, AtomicOrdering::Relaxed);
+            }
             Err(e) => {
                 log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
             }
@@ -321,6 +334,19 @@ where
     /// Save bookmarks to this source's .crab file
     /// Note: filters and highlights are passed in since they're shared across sources
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
+        if self.crab_version_too_new.load(AtomicOrdering::Relaxed) {
+            let crab_path = self
+                .crab_lock
+                .lock()
+                .expect("crab_lock mutex poisoned")
+                .1
+                .clone();
+            log::warn!(
+                "Skipping save to {} — .crab file is from a newer version of LogCrab",
+                crab_path.display()
+            );
+            return;
+        }
         let crab_data = CrabFile::<FT> {
             version: CRAB_FILE_VERSION,
             bookmarks: self.get_bookmarks(),
@@ -548,12 +574,21 @@ where
         }
     }
 
-    /// Load and merge filters and highlights
-    pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
+    /// Load and merge filters and highlights.
+    ///
+    /// Returns `Err(SessionError::VersionTooNew)` when the .crab file was written by a
+    /// newer version of LogCrab; in that case no filters or highlights are loaded and
+    /// the caller is expected to surface a warning to the user.
+    pub fn load_saved_filters_and_highlights(
+        &self,
+    ) -> Result<(Vec<SavedFilter>, Vec<SavedHighlight>), crate::core::SessionError> {
         let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match CrabFile::<FT>::load_from_file(file) {
             Ok(crab_data) => {
-                return (crab_data.filters, crab_data.highlights);
+                return Ok((crab_data.filters, crab_data.highlights));
+            }
+            Err(e @ crate::core::SessionError::VersionTooNew { .. }) => {
+                return Err(e);
             }
             Err(crate::core::SessionError::Io(ref e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
@@ -567,7 +602,7 @@ where
                 log::warn!("Failed to load .crab file {}: {e}", crab_path.display());
             }
         }
-        (Vec::new(), Vec::new())
+        Ok((Vec::new(), Vec::new()))
     }
 }
 

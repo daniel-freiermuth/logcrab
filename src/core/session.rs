@@ -227,9 +227,10 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
         }
 
         if version > CRAB_FILE_VERSION {
-            log::warn!(
-                ".crab file version {version} is newer than supported version {CRAB_FILE_VERSION}. Some features may not work correctly."
-            );
+            return Err(SessionError::VersionTooNew {
+                found: version,
+                supported: CRAB_FILE_VERSION,
+            });
         }
 
         // v3+: remap the per-format slug key to the canonical `file_state` key.
@@ -311,6 +312,9 @@ pub enum SessionError {
     Io(std::io::Error),
     Parse(serde_json::Error),
     Serialize(serde_json::Error),
+    /// The .crab file was created by a newer version of LogCrab than this build supports.
+    /// Loading is refused to prevent silent data loss when the file would be overwritten.
+    VersionTooNew { found: u32, supported: u32 },
 }
 
 impl std::fmt::Display for SessionError {
@@ -319,6 +323,10 @@ impl std::fmt::Display for SessionError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Parse(e) => write!(f, "Parse error: {e}"),
             Self::Serialize(e) => write!(f, "Serialization error: {e}"),
+            Self::VersionTooNew { found, supported } => write!(
+                f,
+                ".crab file version {found} is newer than supported version {supported}"
+            ),
         }
     }
 }
@@ -329,6 +337,7 @@ impl std::error::Error for SessionError {
             Self::Io(e) => Some(e),
             Self::Parse(e) => Some(e),
             Self::Serialize(e) => Some(e),
+            Self::VersionTooNew { .. } => None,
         }
     }
 }

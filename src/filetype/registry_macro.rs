@@ -380,7 +380,7 @@ macro_rules! register_filetypes {
 
             pub fn load_saved_filters_and_highlights(
                 &self,
-            ) -> (Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>) {
+            ) -> Result<(Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>), $crate::core::SessionError> {
                 match self {
                     $( Self::$b_arm(s) => s.load_saved_filters_and_highlights(), )*
                     $( Self::$t_arm(s) => s.load_saved_filters_and_highlights(), )*
