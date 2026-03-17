@@ -130,12 +130,12 @@ impl InputFileType for OtelFileType {
         _config: (),
         _file_state: std::sync::Arc<OtelFileState>,
     ) -> anyhow::Result<Self> {
-        let metadata =
-            metadata(path).map_err(|e| anyhow::anyhow!("Failed to stat {}: {e}", path.display()))?;
+        let metadata = metadata(path)
+            .map_err(|e| anyhow::anyhow!("Failed to stat {}: {e}", path.display()))?;
         let file_size = metadata.len();
 
-        let mut file =
-            File::open(path).map_err(|e| anyhow::anyhow!("Failed to open {}: {e}", path.display()))?;
+        let mut file = File::open(path)
+            .map_err(|e| anyhow::anyhow!("Failed to open {}: {e}", path.display()))?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)
             .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", path.display()))?;
@@ -176,8 +176,7 @@ impl InputFileType for OtelFileType {
                         let secs = i64::try_from(nanos / 1_000_000_000).unwrap_or(i64::MAX);
                         let subsec_nanos = (nanos % 1_000_000_000) as u32;
                         DateTime::from_timestamp(secs, subsec_nanos)
-                            .map(|dt| dt.with_timezone(&Local))
-                            .unwrap_or_else(|| UNIX_EPOCH.into())
+                            .map_or_else(|| UNIX_EPOCH.into(), |dt| dt.with_timezone(&Local))
                     } else {
                         // Into local time
                         UNIX_EPOCH.into()
