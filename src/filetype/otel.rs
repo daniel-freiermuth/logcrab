@@ -129,19 +129,19 @@ impl InputFileType for OtelFileType {
         path: &Path,
         _config: (),
         _file_state: std::sync::Arc<OtelFileState>,
-    ) -> Result<Self, String> {
+    ) -> anyhow::Result<Self> {
         let metadata =
-            metadata(path).map_err(|e| format!("Failed to stat {}: {e}", path.display()))?;
+            metadata(path).map_err(|e| anyhow::anyhow!("Failed to stat {}: {e}", path.display()))?;
         let file_size = metadata.len();
 
         let mut file =
-            File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+            File::open(path).map_err(|e| anyhow::anyhow!("Failed to open {}: {e}", path.display()))?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)
-            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", path.display()))?;
 
         let logs_data: LogsData = serde_json::from_str(&contents)
-            .map_err(|e| format!("Failed to parse OTLP JSON: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse OTLP JSON: {e}"))?;
 
         let mut line_number = 0usize;
         let mut records = Vec::new();
@@ -225,7 +225,7 @@ impl InputFileType for OtelFileType {
         })
     }
 
-    fn read(&mut self, lines_to_read: usize) -> Result<Vec<Self::LineType>, String> {
+    fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let batch: Vec<_> = self.records.by_ref().take(lines_to_read).collect();
         if batch.is_empty() {
             self.bytes_read = self.file_size;
