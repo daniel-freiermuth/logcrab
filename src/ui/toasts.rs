@@ -22,7 +22,7 @@
 //! The `ToastManager` renders all active handles each frame.
 
 use egui::{Align2, Color32, Margin};
-use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
+use egui_toast::{Toast, ToastKind, ToastOptions, ToastStyle, Toasts};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -175,41 +175,16 @@ impl ToastManager {
         handle
     }
 
-    /// Show an error toast (auto-dismisses after timeout)
-    #[allow(dead_code)]
+    /// Show an error toast (requires explicit dismissal).
     pub fn show_error(&mut self, message: impl Into<String>) {
         self.toasts.add(Toast {
             text: message.into().into(),
             kind: ToastKind::Error,
-            options: ToastOptions::default()
-                .duration_in_seconds(8.0)
-                .show_progress(true),
-            ..Default::default()
-        });
-    }
-
-    /// Show a success toast (auto-dismisses after timeout)
-    #[allow(dead_code)]
-    pub fn show_success(&mut self, message: impl Into<String>) {
-        self.toasts.add(Toast {
-            text: message.into().into(),
-            kind: ToastKind::Success,
-            options: ToastOptions::default()
-                .duration_in_seconds(3.0)
-                .show_progress(true),
-            ..Default::default()
-        });
-    }
-
-    /// Show a warning toast (auto-dismisses after timeout)
-    pub fn show_warning(&mut self, message: impl Into<String>) {
-        self.toasts.add(Toast {
-            text: message.into().into(),
-            kind: ToastKind::Warning,
-            options: ToastOptions::default()
-                .duration_in_seconds(5.0)
-                .show_progress(true),
-            ..Default::default()
+            options: ToastOptions::default().duration(None),
+            style: ToastStyle {
+                close_button_text: "Got it".into(),
+                ..Default::default()
+            },
         });
     }
 
@@ -288,7 +263,7 @@ impl ToastManager {
         }
     }
 
-    /// Render a single progress toast. Returns true if the close button was clicked.
+    /// Render a single progress toast. Returns true if the close/ack button was clicked.
     fn render_single_progress_toast(ui: &mut egui::Ui, state: &ProgressToastState) -> bool {
         let is_error = state.error.is_some();
 

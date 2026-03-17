@@ -264,7 +264,7 @@ impl LogCrabApp {
                     "Cannot import filter files - no log file is open. Open a log file first."
                 );
                 self.toast_manager
-                    .show_warning("Cannot import filters - open a log file first");
+                    .show_error("Cannot import filters - open a log file first");
             }
         }
     }
