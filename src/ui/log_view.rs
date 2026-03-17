@@ -111,6 +111,7 @@ impl CrabSession {
         &mut self,
         path: &Path,
         toast: &ProgressToastHandle,
+        warnings: &crate::ui::ToastSender,
         file_config: &crate::core::log_store::GlobalFileConfig,
     ) {
         // Check if the file is already loaded
@@ -123,7 +124,7 @@ impl CrabSession {
         tracing::info!("Adding file to session: {}", path.display());
 
         let Some((variant, filters, highlights)) =
-            LogFileLoader::load_file(path, toast, file_config)
+            LogFileLoader::load_file(path, toast, warnings, file_config)
         else {
             toast.set_error(format!("Cannot open '{}'", path.display()));
             toast.dismiss();

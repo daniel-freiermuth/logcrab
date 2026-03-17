@@ -7,7 +7,7 @@ pub mod toasts;
 pub mod windows;
 
 pub use log_view::CrabSession;
-pub use toasts::{ProgressToastHandle, ToastManager};
+pub use toasts::{ProgressToastHandle, ToastManager, ToastSender};
 
 use egui::Color32;
 

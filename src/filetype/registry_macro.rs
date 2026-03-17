@@ -206,6 +206,7 @@ macro_rules! register_filetypes {
         pub fn try_open_binary(
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
+            warnings: &$crate::ui::ToastSender,
             file_config: &GlobalFileConfig,
         ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
@@ -223,6 +224,7 @@ macro_rules! register_filetypes {
                     let (source, filters, highlights) = $crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
+                        warnings,
                         arc_config,
                         move |p, fs| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
                     );
@@ -237,6 +239,7 @@ macro_rules! register_filetypes {
         pub fn open_text_source(
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
+            warnings: &$crate::ui::ToastSender,
             file_config: &GlobalFileConfig,
         ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
@@ -246,7 +249,7 @@ macro_rules! register_filetypes {
                 Ok(f) => { let _ = f.take(MAX_SAMPLE_BYTES as u64).read_to_end(&mut sample); }
                 Err(e) => {
                     tracing::error!("Cannot open file for format detection: {e}");
-                    toast.set_error(format!("Cannot open file: {e}"));
+                    warnings.send(format!("Cannot open file: {e}"));
                     return None;
                 }
             }
@@ -260,6 +263,7 @@ macro_rules! register_filetypes {
                     let (source, filters, highlights) = $crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
+                        warnings,
                         arc_config,
                         move |p, fs| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
                     );

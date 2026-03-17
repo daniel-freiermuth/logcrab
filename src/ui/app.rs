@@ -151,8 +151,14 @@ impl LogCrabApp {
             let toast_handle = self
                 .toast_manager
                 .create_progress_toast(file_name, "Starting...");
+            let warnings = self.toast_manager.sender();
 
-            session.add_file(&path, &toast_handle, &self.global_config.file_config);
+            session.add_file(
+                &path,
+                &toast_handle,
+                &warnings,
+                &self.global_config.file_config,
+            );
         }
     }
 

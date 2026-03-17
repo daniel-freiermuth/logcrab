@@ -49,10 +49,12 @@ impl LogFileLoader {
     pub fn load_file(
         path: &Path,
         toast: &ProgressToastHandle,
+        warnings: &crate::ui::ToastSender,
         file_config: &GlobalFileConfig,
     ) -> Option<(DataSourceVariant, Vec<SavedFilter>, Vec<SavedHighlight>)> {
-        crate::core::log_store::try_open_binary(path, toast, file_config)
-            .or_else(|| crate::core::log_store::open_text_source(path, toast, file_config))
+        crate::core::log_store::try_open_binary(path, toast, warnings, file_config).or_else(|| {
+            crate::core::log_store::open_text_source(path, toast, warnings, file_config)
+        })
     }
 
     /// Create a typed [`SourceData<T>`], spawn a background loading thread, and
@@ -63,6 +65,7 @@ impl LogFileLoader {
     pub(crate) fn load_typed<FT>(
         path: PathBuf,
         toast: &ProgressToastHandle,
+        warnings: &crate::ui::ToastSender,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> anyhow::Result<FT>
             + Send
@@ -72,7 +75,7 @@ impl LogFileLoader {
         FT: InputFileType + Send + 'static,
         FT::LineType: Clone,
     {
-        let (sd, filters, highlights) = SourceData::new(path.clone(), config, toast);
+        let (sd, filters, highlights) = SourceData::new(path.clone(), config, warnings);
         let data_source = Arc::new(sd);
         let source_clone = Arc::clone(&data_source);
         let toast_clone = toast.clone();

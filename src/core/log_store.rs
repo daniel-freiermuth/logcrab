@@ -110,7 +110,7 @@ where
     pub fn new(
         file_path: PathBuf,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
-        toast: &crate::ui::ProgressToastHandle,
+        warnings: &crate::ui::ToastSender,
     ) -> (Self, Vec<SavedFilter>, Vec<SavedHighlight>) {
         assert!(
             file_path.file_name().is_some(),
@@ -125,7 +125,7 @@ where
                     "Cannot lock {} — opening read-only (file already open in another instance)",
                     crab_path.display()
                 );
-                toast.set_error(format!(
+                warnings.send(format!(
                     "'{}' is already open in another LogCrab instance — \
                     opened read-only (bookmarks and filters not loaded)",
                     file_path
@@ -135,7 +135,7 @@ where
                 ));
                 (None, None)
             },
-            |lock_file| Self::open_crab_file(lock_file, &crab_path, toast),
+            |lock_file| Self::open_crab_file(lock_file, &crab_path, warnings),
         );
 
         // Consume the parsed CrabFile immediately — apply bookmarks/file_state
@@ -186,7 +186,7 @@ where
     fn open_crab_file(
         file: File,
         crab_path: &Path,
-        toast: &crate::ui::ProgressToastHandle,
+        warnings: &crate::ui::ToastSender,
     ) -> (Option<File>, Option<CrabFile<FT>>) {
         let mut file = file;
         match CrabFile::<FT>::load_from_file(&mut file) {
@@ -204,7 +204,7 @@ where
                     crab_path.display()
                 );
                 tracing::warn!("{msg}");
-                toast.set_error(msg);
+                warnings.send(msg);
                 // Drop `file` here to release the OS lock.
                 (None, None)
             }

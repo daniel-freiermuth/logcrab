@@ -60,6 +60,27 @@ impl ProgressToastState {
     }
 }
 
+/// A lightweight sender that lets any code (including background threads) enqueue
+/// standalone warning messages for display as persistent error toasts.
+///
+/// Obtain one via [`ToastManager::sender`]. Multiple senders share the same queue.
+#[derive(Clone)]
+pub struct ToastSender {
+    queue: Arc<Mutex<Vec<String>>>,
+    ctx: egui::Context,
+}
+
+impl ToastSender {
+    /// Enqueue `message` to be shown as a persistent standalone error toast on
+    /// the next UI frame.
+    pub fn send(&self, message: impl Into<String>) {
+        if let Ok(mut q) = self.queue.lock() {
+            q.push(message.into());
+        }
+        self.ctx.request_repaint();
+    }
+}
+
 /// A thread-safe handle to a progress toast.
 ///
 /// Can be sent to background threads and used to update the toast.
@@ -133,6 +154,8 @@ pub struct ToastManager {
     toasts: Toasts,
     /// Active progress toast handles
     progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
+    /// Standalone notifications enqueued via [`ToastSender`].
+    pending_notifications: Arc<Mutex<Vec<String>>>,
     /// egui context for repaints
     ctx: egui::Context,
 }
@@ -147,6 +170,7 @@ impl ToastManager {
         Self {
             toasts,
             progress_handles: Arc::new(Mutex::new(Vec::new())),
+            pending_notifications: Arc::new(Mutex::new(Vec::new())),
             ctx,
         }
     }
@@ -169,6 +193,15 @@ impl ToastManager {
         handle
     }
 
+    /// Return a [`ToastSender`] that can enqueue standalone warning toasts from
+    /// any thread. Drained each frame inside [`Self::show`].
+    pub fn sender(&self) -> ToastSender {
+        ToastSender {
+            queue: Arc::clone(&self.pending_notifications),
+            ctx: self.ctx.clone(),
+        }
+    }
+
     /// Show an error toast (requires explicit dismissal).
     pub fn show_error(&mut self, message: impl Into<String>) {
         self.toasts.add(Toast {
@@ -184,6 +217,17 @@ impl ToastManager {
 
     /// Render all toasts - call this in the update loop
     pub fn show(&mut self, ctx: &egui::Context) {
+        // Promote any pending standalone notifications to persistent error toasts.
+        // Drain into a local vec first to release the lock before calling show_error.
+        let pending: Vec<String> = self
+            .pending_notifications
+            .lock()
+            .map(|mut q| q.drain(..).collect())
+            .unwrap_or_default();
+        for msg in pending {
+            self.show_error(msg);
+        }
+
         // Render progress toasts manually (not using egui-toast for these)
         self.render_progress_toasts(ctx);
 
