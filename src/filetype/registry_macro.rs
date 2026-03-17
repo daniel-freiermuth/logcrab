@@ -203,21 +203,9 @@ macro_rules! register_filetypes {
             exts
         }
 
-        /// Try to open `path` as a binary format by reading its header and matching
-        /// against each registered binary type's magic bytes in declaration order.
-        ///
-        /// `crab_lock` is borrowed mutably; the contained value is moved out with
-        /// `.take()` only when a matching type is found, leaving it `None` for the
-        /// caller to verify it was consumed. If no binary type matches the header
-        /// `crab_lock` is left untouched so the caller can pass it on to
-        /// [`open_text_source`].
-        ///
-        /// Returns `Some(variant)` on a match, `None` when no binary type recognises
-        /// the header (caller should fall through to text detection).
         pub fn try_open_binary(
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
-            crab_lock: &mut ::std::option::Option<(::std::fs::File, ::std::path::PathBuf)>,
             file_config: &GlobalFileConfig,
         ) -> ::std::option::Option<DataSourceVariant> {
             use ::std::io::Read as _;
@@ -235,7 +223,6 @@ macro_rules! register_filetypes {
                     return Some($crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
-                        crab_lock.take(),
                         arc_config,
                         move |p, fs| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
                     ).into());
@@ -245,20 +232,10 @@ macro_rules! register_filetypes {
             None
         }
 
-        /// Open `path` as a text-format source.
-        ///
-        /// Reads up to 100 KB from the file as a detection sample, then calls
-        /// `looks_like()` on each registered text type in declaration order; first
-        /// match wins. The last registered type must be a catch-all (e.g. `Generic`)
-        /// that always returns `true`, so a match is always found as long as the file
-        /// can be opened.
-        ///
-        /// Returns `None` when the file cannot be opened for sampling, or when `.crab`
-        /// lock acquisition fails.
+        /// Returns `None` when the file cannot be opened for sampling.
         pub fn open_text_source(
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
-            crab_lock: ::std::option::Option<(::std::fs::File, ::std::path::PathBuf)>,
             file_config: &GlobalFileConfig,
         ) -> ::std::option::Option<DataSourceVariant> {
             use ::std::io::Read as _;
@@ -282,7 +259,6 @@ macro_rules! register_filetypes {
                     return Some($crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
-                        crab_lock,
                         arc_config,
                         move |p, fs| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
                     ).into());

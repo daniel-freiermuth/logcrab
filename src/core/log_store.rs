@@ -187,44 +187,6 @@ where
         }
     }
 
-    /// Create a `SourceData` with an existing `.crab` file lock.
-    ///
-    /// `config` is the shared `Arc<RwLock<T::Config>>` for this file type — see
-    /// [`Self::new`] for ownership semantics.
-    ///
-    /// Passing the lock from the old `SourceData` avoids the race condition where the
-    /// OS hasn't released the lock before the new source tries to acquire it.
-    pub fn new_with_lock(
-        file_path: PathBuf,
-        crab_lock: File,
-        crab_path: PathBuf,
-        config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
-        toast: &crate::ui::ProgressToastHandle,
-    ) -> Self {
-        assert!(
-            file_path.file_name().is_some(),
-            "file_path must have a filename component: {}",
-            file_path.display()
-        );
-
-        let crab = Self::open_crab_file(crab_lock, &crab_path, toast);
-        let mut sd = Self {
-            source_id: SOURCE_ID_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
-            file_path,
-            lines: RwLock::new(Vec::new()),
-            by_timestamp: RwLock::new(Vec::new()),
-            config,
-            file_state: Arc::new(Default::default()),
-            bookmarks: RwLock::new(HashMap::new()),
-            crab_path,
-            crab: Mutex::new(crab),
-            version: AtomicU64::new(1),
-            cancel_requested: AtomicBool::new(false),
-        };
-        sd.load_bookmarks();
-        sd
-    }
-
     /// Compute the .crab file path for a given log file path
     fn compute_crab_path(file_path: &Path) -> PathBuf {
         let mut crab_path = file_path.to_path_buf();

@@ -21,7 +21,6 @@ use crate::core::log_store::{DataSourceVariant, GlobalFileConfig, SourceData};
 use crate::core::ChunkedLoader;
 use crate::filetype::{InputFileType, LineType};
 use crate::ui::ProgressToastHandle;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -50,13 +49,10 @@ impl LogFileLoader {
     pub fn load_file(
         path: &Path,
         toast: &ProgressToastHandle,
-        crab_lock: Option<(File, PathBuf)>,
         file_config: &GlobalFileConfig,
     ) -> Option<DataSourceVariant> {
-        let mut crab_lock = crab_lock;
-        crate::core::log_store::try_open_binary(path, toast, &mut crab_lock, file_config).or_else(
-            || crate::core::log_store::open_text_source(path, toast, crab_lock, file_config),
-        )
+        crate::core::log_store::try_open_binary(path, toast, file_config)
+            .or_else(|| crate::core::log_store::open_text_source(path, toast, file_config))
     }
 
     /// Create a typed [`SourceData<T>`], spawn a background loading thread, and
@@ -67,7 +63,6 @@ impl LogFileLoader {
     pub(crate) fn load_typed<FT>(
         path: PathBuf,
         toast: &ProgressToastHandle,
-        crab_lock: Option<(File, PathBuf)>,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> anyhow::Result<FT>
             + Send
@@ -77,17 +72,7 @@ impl LogFileLoader {
         FT: InputFileType + Send + 'static,
         FT::LineType: Clone,
     {
-        let data_source = if let Some((lock_file, lock_path)) = crab_lock {
-            Arc::new(SourceData::new_with_lock(
-                path.clone(),
-                lock_file,
-                lock_path,
-                config,
-                toast,
-            ))
-        } else {
-            Arc::new(SourceData::new(path.clone(), config, toast))
-        };
+        let data_source = Arc::new(SourceData::new(path.clone(), config, toast));
         let source_clone = Arc::clone(&data_source);
         let toast_clone = toast.clone();
         thread::spawn(move || {
