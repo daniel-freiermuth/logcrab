@@ -26,9 +26,6 @@ use egui_toast::{Toast, ToastKind, ToastOptions, ToastStyle, Toasts};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-/// How long a dismissed toast stays visible (in seconds)
-const DISMISSED_TOAST_LINGER_SECS: f32 = 3.0;
-
 /// Shared state for a progress toast, updated by the handle, read by the renderer
 #[derive(Debug, Clone)]
 pub struct ProgressToastState {
@@ -57,10 +54,9 @@ impl Default for ProgressToastState {
 }
 
 impl ProgressToastState {
-    /// Check if this toast should be removed (dismissed and linger time elapsed)
-    pub fn should_remove(&self) -> bool {
-        self.dismissed_at
-            .is_some_and(|t| t.elapsed().as_secs_f32() > DISMISSED_TOAST_LINGER_SECS)
+    /// Check if this toast should be removed.
+    pub const fn should_remove(&self) -> bool {
+        self.dismissed_at.is_some()
     }
 }
 
@@ -113,12 +109,10 @@ impl ProgressToastHandle {
         self.ctx.request_repaint();
     }
 
-    /// Dismiss the toast (it will linger for a few seconds before disappearing)
+    /// Dismiss the toast immediately.
     pub fn dismiss(&self) {
         if let Ok(mut state) = self.state.write() {
-            if state.dismissed_at.is_none() {
-                state.dismissed_at = Some(Instant::now());
-            }
+            state.dismissed_at = Some(Instant::now());
         }
         self.ctx.request_repaint();
     }
@@ -247,16 +241,9 @@ impl ToastManager {
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     if Self::render_single_progress_toast(ui, state) {
-                        // Close button was clicked - dismiss the toast immediately
-                        // Set dismissed_at far enough in the past to pass the linger check
+                        // Close button was clicked - dismiss immediately
                         if let Ok(mut s) = state_arc.write() {
-                            s.dismissed_at = Some(
-                                Instant::now()
-                                    .checked_sub(std::time::Duration::from_secs_f32(
-                                        DISMISSED_TOAST_LINGER_SECS + 1.0,
-                                    ))
-                                    .expect("instant subtraction within valid range"),
-                            );
+                            s.dismissed_at = Some(Instant::now());
                         }
                     }
                 });
