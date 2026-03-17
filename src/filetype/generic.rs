@@ -1,7 +1,7 @@
 // LogCrab - GPL-3.0-or-later
 // Copyright (C) 2026 Daniel Freiermuth
 
-use chrono::{DateTime, Datelike, Local, TimeZone};
+use chrono::{DateTime, Local, TimeZone};
 use egui::Ui;
 use fancy_regex::Regex;
 use std::fs::File;
@@ -442,7 +442,8 @@ mod tests {
 
     #[test]
     fn test_bracketed_ctime_timestamp() {
-        let raw = "[Sat Mar  7 11:53:27 2026] kernel: usb 1-1: new high-speed USB device".to_string();
+        let raw =
+            "[Sat Mar  7 11:53:27 2026] kernel: usb 1-1: new high-speed USB device".to_string();
         let line = parse_generic_line(raw, 1).expect("should parse bracketed ctime timestamp");
         assert_eq!(
             line.message_text,

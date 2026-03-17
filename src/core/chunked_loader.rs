@@ -92,29 +92,29 @@ impl ChunkedLoader {
 
             if chunk.is_empty() {
                 break;
-            } else {
-                data_source.append_lines(chunk);
-                chunk_count += 1;
-
-                // Adaptive chunk size growth
-                if chunk_count.is_multiple_of(self.chunks_before_growth)
-                    && current_chunk_size < self.max_chunk_size
-                {
-                    current_chunk_size = (current_chunk_size * 2).min(self.max_chunk_size);
-                    tracing::debug!("ChunkedLoader: chunk size → {current_chunk_size}");
-                }
-
-                // Progress update
-                let progress = if file_size > 0 {
-                    (input.bytes_consumed() as f32 / file_size as f32).min(1.0)
-                } else {
-                    0.0
-                };
-                toast.update(
-                    progress,
-                    format!("Loading {}… ({} lines)", file_name, data_source.len()),
-                );
             }
+
+            data_source.append_lines(chunk);
+            chunk_count += 1;
+
+            // Adaptive chunk size growth
+            if chunk_count.is_multiple_of(self.chunks_before_growth)
+                && current_chunk_size < self.max_chunk_size
+            {
+                current_chunk_size = (current_chunk_size * 2).min(self.max_chunk_size);
+                tracing::debug!("ChunkedLoader: chunk size → {current_chunk_size}");
+            }
+
+            // Progress update
+            let progress = if file_size > 0 {
+                (input.bytes_consumed() as f32 / file_size as f32).min(1.0)
+            } else {
+                0.0
+            };
+            toast.update(
+                progress,
+                format!("Loading {}… ({} lines)", file_name, data_source.len()),
+            );
         }
 
         let elapsed = start.elapsed();

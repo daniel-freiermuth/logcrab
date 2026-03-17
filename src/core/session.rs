@@ -312,7 +312,7 @@ pub enum SessionError {
     Io(std::io::Error),
     Parse(serde_json::Error),
     Serialize(serde_json::Error),
-    /// The .crab file was created by a newer version of LogCrab than this build supports.
+    /// The .crab file was created by a newer version of `LogCrab` than this build supports.
     /// Loading is refused to prevent silent data loss when the file would be overwritten.
     VersionTooNew {
         found: u32,

@@ -19,9 +19,7 @@
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::session::CRAB_FILTERS_VERSION;
-use crate::core::{
-    CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule, SessionError,
-};
+use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -107,19 +105,19 @@ impl CrabSession {
     /// Skips files that are already loaded.
     ///
     /// Returns `Err` if the session file was created by a newer version of
-    /// LogCrab than this build supports. The caller is responsible for surfacing this
+    /// `LogCrab` than this build supports. The caller is responsible for surfacing this
     /// warning to the user.
     pub fn add_file(
         &mut self,
         path: &Path,
         toast: &ProgressToastHandle,
         file_config: &crate::core::log_store::GlobalFileConfig,
-    ) -> Result<(), SessionError> {
+    ) {
         // Check if the file is already loaded
         if self.state.store.contains_file(path) {
             tracing::info!("Skipping already loaded file: {}", path.display());
             toast.dismiss();
-            return Ok(());
+            return;
         }
 
         tracing::info!("Adding file to session: {}", path.display());
@@ -127,7 +125,7 @@ impl CrabSession {
         let Some(variant) = LogFileLoader::load_file(path, toast, None, file_config) else {
             toast.set_error("File is already open in another LogCrab instance".to_string());
             toast.dismiss();
-            return Ok(());
+            return;
         };
 
         let (filters, highlights) = variant.load_saved_filters_and_highlights();
@@ -138,7 +136,6 @@ impl CrabSession {
         for saved_highlight in &highlights {
             self.add_highlight_if_not_exists(saved_highlight);
         }
-        Ok(())
     }
 
     fn add_filter_if_not_exists(&mut self, saved_filter: &SavedFilter) {

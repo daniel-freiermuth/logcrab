@@ -17,5 +17,5 @@ pub use log_file::LogFileLoader;
 pub use log_store::LogStore;
 pub use search_rule::SearchRule;
 pub use search_state::SearchState;
-pub use session::{CrabFilters, SavedFilter, SavedHighlight, SavedSearch, SessionError};
+pub use session::{CrabFilters, SavedFilter, SavedHighlight, SavedSearch};
 // pub use task_worker::{TaskWorker, TaskWorkerHandle};

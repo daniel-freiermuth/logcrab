@@ -164,11 +164,11 @@ impl BookmarkPanel {
             .min_scrolled_height(body_height)
             .drag_to_scroll(false)
             .max_scroll_height(body_height)
-            .column(Column::initial(150.0).resizable(true).clip(true))  // Annotation
-            .column(Column::initial(140.0).resizable(true).clip(true))  // Source
-            .column(Column::initial(175.0).resizable(true).clip(true))  // Line
-            .column(Column::initial(200.0).resizable(true).clip(true))  // Timestamp
-            .column(Column::remainder().resizable(true).clip(true))     // Message
+            .column(Column::initial(150.0).resizable(true).clip(true)) // Annotation
+            .column(Column::initial(140.0).resizable(true).clip(true)) // Source
+            .column(Column::initial(175.0).resizable(true).clip(true)) // Line
+            .column(Column::initial(200.0).resizable(true).clip(true)) // Timestamp
+            .column(Column::remainder().resizable(true).clip(true)) // Message
             .column(Column::initial(40.0).resizable(false).clip(true)); // Delete
 
         if let Some(row_idx) = scroll_to_row {
@@ -346,9 +346,7 @@ impl BookmarkPanel {
         row.col(|ui| {
             Self::paint_selection_background(ui, is_selected, is_closest, dark_mode);
 
-            let name = store
-                .get_source_name(store_id)
-                .unwrap_or_default();
+            let name = store.get_source_name(store_id).unwrap_or_default();
             ui.label(RichText::new(name).color(color));
 
             let response = ui.interact(

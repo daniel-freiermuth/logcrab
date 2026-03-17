@@ -72,7 +72,7 @@ where
     crab_path: PathBuf,
     /// OS exclusive lock + cached crab data.
     ///
-    /// `(None, None)` — lock released because the file was written by a newer LogCrab;
+    /// `(None, None)` — lock released because the file was written by a newer `LogCrab`;
     ///                   all reads and writes are refused.
     /// `(Some(file), Some(data))` — lock held; parsed data not yet consumed.
     /// `(Some(file), None)` — lock held; data already consumed (normal steady state).
@@ -119,7 +119,9 @@ where
 
         let crab_path = Self::compute_crab_path(&file_path);
         let crab_lock = Self::acquire_crab_lock(&crab_path)?;
-        Some(Self::new_with_lock(file_path, crab_lock, crab_path, config, toast))
+        Some(Self::new_with_lock(
+            file_path, crab_lock, crab_path, config, toast,
+        ))
     }
 
     /// Parse the `.crab` file immediately after locking it.
@@ -372,7 +374,10 @@ where
                 self.crab_path.display(),
                 crab_data.bookmarks.len()
             ),
-            Err(e) => tracing::error!("Failed to save .crab file {}: {e}", self.crab_path.display()),
+            Err(e) => tracing::error!(
+                "Failed to save .crab file {}: {e}",
+                self.crab_path.display()
+            ),
         }
     }
 
@@ -584,11 +589,9 @@ where
 
     /// Load filters and highlights from the cached `.crab` data.
     ///
-    /// Returns empty vecs when the file was from a newer LogCrab version (lock released
+    /// Returns empty vecs when the file was from a newer `LogCrab` version (lock released
     /// at open time) or when no data was cached (empty/unparseable file).
-    pub fn load_saved_filters_and_highlights(
-        &self,
-    ) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
+    pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
         let mut crab = self.crab.lock().expect("crab mutex poisoned");
         match crab.1.take() {
             Some(data) => (data.filters, data.highlights),
