@@ -99,15 +99,23 @@ impl InputFileType for BugreportFileType {
 
     fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
-        let mut buf = String::new();
+        let mut buf = Vec::new();
         while result.len() < lines_to_read {
             buf.clear();
-            match self.reader.read_line(&mut buf) {
+            match self.reader.read_until(b'\n', &mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
                     self.bytes_read += n as u64;
                     self.line_number += 1;
-                    let raw = buf.trim_end_matches(['\n', '\r']).to_string();
+                    let line_str = String::from_utf8_lossy(&buf);
+                    let raw = line_str.trim_end_matches(['\n', '\r']).to_string();
+                    if std::str::from_utf8(&buf).is_err() {
+                        tracing::warn!(
+                            "Invalid UTF-8 at line {}:{}; replacing broken bytes with U+FFFD",
+                            self.line_number,
+                            raw
+                        );
+                    }
                     if let Some(line) = parse_logcat_line(raw, self.line_number, self.year) {
                         result.push(line);
                     }
