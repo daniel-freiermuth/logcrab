@@ -232,14 +232,13 @@ macro_rules! register_filetypes {
                 {
                     let config_val = file_config.$b_slug.clone();
                     let arc_config = ::std::sync::Arc::new(::std::sync::RwLock::new(config_val.clone()));
-                    return $crate::core::log_file::LogFileLoader::load_typed(
+                    return Some($crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
                         crab_lock.take(),
                         arc_config,
                         move |p, fs| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
-                    )
-                    .map(::std::convert::Into::into);
+                    ).into());
                 }
             )*
             // Header didn't match any registered binary type — caller should try text detection.
@@ -280,14 +279,13 @@ macro_rules! register_filetypes {
                     tracing::info!("Opening {} with detected format {}", path.display(), stringify!($t_ftype));
                     let config_val = file_config.$t_slug.clone();
                     let arc_config = ::std::sync::Arc::new(::std::sync::RwLock::new(config_val.clone()));
-                    return $crate::core::log_file::LogFileLoader::load_typed(
+                    return Some($crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
                         crab_lock,
                         arc_config,
                         move |p, fs| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
-                    )
-                    .map(::std::convert::Into::into);
+                    ).into());
                 }
             )*
             // Should never be reached if the last text type is a catch-all.

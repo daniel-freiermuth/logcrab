@@ -46,7 +46,7 @@ impl LogFileLoader {
     /// `file_config` is the session-wide [`GlobalFileConfig`]; each typed source
     /// receives `Arc::clone` of its type's config arc so config mutations propagate live.
     ///
-    /// Returns `None` if the `.crab` session file is already locked by another instance.
+    /// Returns `None` only if the file cannot be opened for format detection.
     pub fn load_file(
         path: &Path,
         toast: &ProgressToastHandle,
@@ -64,8 +64,6 @@ impl LogFileLoader {
     ///
     /// `open_fn` is called from the background thread and must return a
     /// ready-to-read [`InputFileType`] for the given path.
-    ///
-    /// Returns `None` if the `.crab` file is already locked by another instance.
     pub(crate) fn load_typed<FT>(
         path: PathBuf,
         toast: &ProgressToastHandle,
@@ -74,7 +72,7 @@ impl LogFileLoader {
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> anyhow::Result<FT>
             + Send
             + 'static,
-    ) -> Option<Arc<SourceData<FT>>>
+    ) -> Arc<SourceData<FT>>
     where
         FT: InputFileType + Send + 'static,
         FT::LineType: Clone,
@@ -88,14 +86,14 @@ impl LogFileLoader {
                 toast,
             ))
         } else {
-            Arc::new(SourceData::new(path.clone(), config, toast)?)
+            Arc::new(SourceData::new(path.clone(), config, toast))
         };
         let source_clone = Arc::clone(&data_source);
         let toast_clone = toast.clone();
         thread::spawn(move || {
             Self::background_load(path.as_path(), &source_clone, &toast_clone, open_fn);
         });
-        Some(data_source)
+        data_source
     }
 
     /// Open the file via `open_fn`, drive [`ChunkedLoader`], score, and dismiss the toast.

@@ -97,20 +97,17 @@ where
     FT::LineType: Clone,
 {
     /// Create a `SourceData` for a file source.
-    ///
-    /// `config` is a shared `Arc<RwLock<T::Config>>` whose lifetime should span the
-    /// whole session. All sources of the same type share the same `Arc` instance so
-    /// that a single config mutation propagates to every open file of that type.
-    ///
     /// Acquires an exclusive lock on the `.crab` session file to prevent multiple
-    /// instances from opening the same file simultaneously.
+    /// instances from clobbering each other's session state.
     ///
-    /// Returns `None` if the lock cannot be acquired (file already open in another instance).
+    /// If the lock is already held by another instance the file is opened in
+    /// **read-only mode**: bookmarks and saved state are not loaded, and writes
+    /// are silently skipped for the lifetime of this source.
     pub fn new(
         file_path: PathBuf,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
         toast: &crate::ui::ProgressToastHandle,
-    ) -> Option<Self> {
+    ) -> Self {
         assert!(
             file_path.file_name().is_some(),
             "file_path must have a filename component: {}",
@@ -118,10 +115,39 @@ where
         );
 
         let crab_path = Self::compute_crab_path(&file_path);
-        let crab_lock = Self::acquire_crab_lock(&crab_path)?;
-        Some(Self::new_with_lock(
-            file_path, crab_lock, crab_path, config, toast,
-        ))
+        let crab = Self::acquire_crab_lock(&crab_path).map_or_else(
+            || {
+                tracing::warn!(
+                    "Cannot lock {} — opening read-only (file already open in another instance)",
+                    crab_path.display()
+                );
+                toast.set_error(format!(
+                    "'{}' is already open in another LogCrab instance — \
+                    opened read-only (bookmarks and filters not loaded)",
+                    file_path
+                        .file_name()
+                        .unwrap_or(file_path.as_os_str())
+                        .to_string_lossy()
+                ));
+                (None, None)
+            },
+            |lock_file| Self::open_crab_file(lock_file, &crab_path, toast),
+        );
+        let mut sd = Self {
+            source_id: SOURCE_ID_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
+            file_path,
+            lines: RwLock::new(Vec::new()),
+            by_timestamp: RwLock::new(Vec::new()),
+            config,
+            file_state: Arc::new(Default::default()),
+            bookmarks: RwLock::new(HashMap::new()),
+            crab_path,
+            crab: Mutex::new(crab),
+            version: AtomicU64::new(1),
+            cancel_requested: AtomicBool::new(false),
+        };
+        sd.load_bookmarks();
+        sd
     }
 
     /// Parse the `.crab` file immediately after locking it.

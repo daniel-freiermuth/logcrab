@@ -123,7 +123,7 @@ impl CrabSession {
         tracing::info!("Adding file to session: {}", path.display());
 
         let Some(variant) = LogFileLoader::load_file(path, toast, None, file_config) else {
-            toast.set_error("File is already open in another LogCrab instance".to_string());
+            toast.set_error(format!("Cannot open '{}'", path.display()));
             toast.dismiss();
             return;
         };
