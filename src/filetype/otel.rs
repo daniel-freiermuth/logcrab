@@ -173,10 +173,16 @@ impl InputFileType for OtelFileType {
                     let timestamp = if nanos > 0 {
                         // not completely correct, but a data 200 years in the future is a bug
                         // TODO: error variants to surface this
-                        let secs = i64::try_from(nanos / 1_000_000_000).unwrap_or(i64::MAX);
+                        let secs = i64::try_from(nanos / 1_000_000_000).unwrap_or_else(|_| {
+                            tracing::warn!("Timestamp in log record is too large: {nanos} nanoseconds since epoch");
+                            i64::MAX
+                        });
                         let subsec_nanos = (nanos % 1_000_000_000) as u32;
                         DateTime::from_timestamp(secs, subsec_nanos)
-                            .map_or_else(|| UNIX_EPOCH.into(), |dt| dt.with_timezone(&Local))
+                            .map_or_else(|| {
+                                tracing::warn!("Invalid timestamp in log record: {nanos} nanoseconds since epoch");
+                                UNIX_EPOCH.into()
+                            }, |dt| dt.with_timezone(&Local))
                     } else {
                         // Into local time
                         UNIX_EPOCH.into()
