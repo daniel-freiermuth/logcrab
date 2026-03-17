@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::core::session::{CrabFile, CRAB_FILE_VERSION};
+use crate::core::session::{CrabFile, SessionError, CRAB_FILE_VERSION};
 use crate::core::{SavedFilter, SavedHighlight};
 use crate::filetype::{
     btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType, dmesg::DmesgFileType,
@@ -68,17 +68,18 @@ where
     pub file_state: Arc<<FT::LineType as LineType>::FileState>,
     /// Bookmarks for this source, keyed by line index within this source
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
-    /// Locked .crab file handle and path to prevent multiple instances from opening the same session.
-    /// The OS-level file lock (via fs2) is held for the lifetime of this `SourceData`,
-    /// providing exclusive access. The Mutex allows interior mutability for reads/writes.
-    /// Path is stored alongside to avoid recomputation and ensure single source of truth.
-    crab_lock: Mutex<(File, PathBuf)>,
+    /// Path to the `.crab` session file (immutable after construction).
+    crab_path: PathBuf,
+    /// OS exclusive lock + cached crab data.
+    ///
+    /// `(None, None)` — lock released because the file was written by a newer LogCrab;
+    ///                   all reads and writes are refused.
+    /// `(Some(file), Some(data))` — lock held; parsed data not yet consumed.
+    /// `(Some(file), None)` — lock held; data already consumed (normal steady state).
+    crab: Mutex<(Option<File>, Option<CrabFile<FT>>)>,
     version: AtomicU64,
     /// Flag to request cancellation of background loading/scoring operations
     cancel_requested: AtomicBool,
-    /// Set when the .crab file on disk was created by a newer version of LogCrab.
-    /// When true, saves are blocked to prevent silent data loss.
-    crab_version_too_new: AtomicBool,
 }
 
 impl<FT: InputFileType> std::fmt::Debug for SourceData<FT> {
@@ -108,6 +109,7 @@ where
     pub fn new(
         file_path: PathBuf,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
+        toast: &crate::ui::ProgressToastHandle,
     ) -> Option<Self> {
         assert!(
             file_path.file_name().is_some(),
@@ -117,7 +119,44 @@ where
 
         let crab_path = Self::compute_crab_path(&file_path);
         let crab_lock = Self::acquire_crab_lock(&crab_path)?;
-        Some(Self::new_with_lock(file_path, crab_lock, crab_path, config))
+        Some(Self::new_with_lock(file_path, crab_lock, crab_path, config, toast))
+    }
+
+    /// Parse the `.crab` file immediately after locking it.
+    ///
+    /// Returns `(Some(file), Some(data))` on success.
+    /// Returns `(Some(file), None)` when the file is empty or unparseable.
+    /// Returns `(None, None)` on `VersionTooNew`, releasing the OS lock.
+    fn open_crab_file(
+        file: File,
+        crab_path: &Path,
+        toast: &crate::ui::ProgressToastHandle,
+    ) -> (Option<File>, Option<CrabFile<FT>>) {
+        let mut file = file;
+        match CrabFile::<FT>::load_from_file(&mut file) {
+            Ok(data) => (Some(file), Some(data)),
+            Err(SessionError::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                (Some(file), None) // Empty .crab file (just created)
+            }
+            Err(SessionError::Parse(_)) => {
+                (Some(file), None) // Unparseable, fine for a new session
+            }
+            Err(SessionError::VersionTooNew { found, supported }) => {
+                let msg = format!(
+                    ".crab file {} was written by a newer LogCrab (v{found}, app supports up to v{supported}); \
+                     bookmarks and file state not loaded",
+                    crab_path.display()
+                );
+                tracing::warn!("{msg}");
+                toast.set_error(msg);
+                // Drop `file` here to release the OS lock.
+                (None, None)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load .crab file {}: {e}", crab_path.display());
+                (Some(file), None)
+            }
+        }
     }
 
     /// Create a `SourceData` with an existing `.crab` file lock.
@@ -132,6 +171,7 @@ where
         crab_lock: File,
         crab_path: PathBuf,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
+        toast: &crate::ui::ProgressToastHandle,
     ) -> Self {
         assert!(
             file_path.file_name().is_some(),
@@ -139,6 +179,7 @@ where
             file_path.display()
         );
 
+        let crab = Self::open_crab_file(crab_lock, &crab_path, toast);
         let mut sd = Self {
             source_id: SOURCE_ID_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
             file_path,
@@ -147,10 +188,10 @@ where
             config,
             file_state: Arc::new(Default::default()),
             bookmarks: RwLock::new(HashMap::new()),
-            crab_lock: Mutex::new((crab_lock, crab_path)),
+            crab_path,
+            crab: Mutex::new(crab),
             version: AtomicU64::new(1),
             cancel_requested: AtomicBool::new(false),
-            crab_version_too_new: AtomicBool::new(false),
         };
         sd.load_bookmarks();
         sd
@@ -290,63 +331,34 @@ where
 
     /// Load bookmarks from this source's .crab file
     fn load_bookmarks(&mut self) {
-        let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
-        match CrabFile::<FT>::load_from_file(file) {
-            Ok(crab_data) => {
-                tracing::info!(
-                    "Loaded {} bookmarks from {}",
-                    crab_data.bookmarks.len(),
-                    crab_path.display()
-                );
-                profiling::scope!("SourceData::bookmarks::write");
-                {
-                    let mut bookmarks = self.bookmarks.write().expect("bookmarks lock poisoned");
-                    for bookmark in crab_data.bookmarks {
-                        bookmarks.insert(bookmark.line_index, bookmark);
-                    }
-                }
-
-                self.file_state = Arc::new(crab_data.file_state);
-            }
-            Err(crate::core::SessionError::Io(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                // Empty .crab file (just created), that's fine
-            }
-            Err(crate::core::SessionError::Parse(_)) => {
-                // Empty or invalid .crab file, that's fine for a new session
-            }
-            Err(crate::core::SessionError::VersionTooNew { found, supported }) => {
-                tracing::warn!(
-                    ".crab file {} has version {found} (app supports up to {supported}); \
-                     bookmarks and file state not loaded, saves blocked to prevent data loss",
-                    crab_path.display()
-                );
-                self.crab_version_too_new
-                    .store(true, AtomicOrdering::Relaxed);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load .crab file {}: {e}", crab_path.display());
-            }
+        let crab = self.crab.lock().expect("crab mutex poisoned");
+        let Some(data) = crab.1.as_ref() else {
+            return;
+        };
+        tracing::info!(
+            "Loaded {} bookmarks from {}",
+            data.bookmarks.len(),
+            self.crab_path.display()
+        );
+        self.file_state = Arc::new(data.file_state.clone());
+        profiling::scope!("SourceData::bookmarks::write");
+        let mut bookmarks = self.bookmarks.write().expect("bookmarks lock poisoned");
+        for bookmark in data.bookmarks.clone() {
+            bookmarks.insert(bookmark.line_index, bookmark);
         }
     }
 
     /// Save bookmarks to this source's .crab file
     /// Note: filters and highlights are passed in since they're shared across sources
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
-        if self.crab_version_too_new.load(AtomicOrdering::Relaxed) {
-            let crab_path = self
-                .crab_lock
-                .lock()
-                .expect("crab_lock mutex poisoned")
-                .1
-                .clone();
+        let mut crab = self.crab.lock().expect("crab mutex poisoned");
+        let Some(file) = crab.0.as_mut() else {
             tracing::warn!(
                 "Skipping save to {} — .crab file is from a newer version of LogCrab",
-                crab_path.display()
+                self.crab_path.display()
             );
             return;
-        }
+        };
         let crab_data = CrabFile::<FT> {
             version: CRAB_FILE_VERSION,
             bookmarks: self.get_bookmarks(),
@@ -354,17 +366,13 @@ where
             highlights: highlights.to_vec(),
             file_state: (*self.file_state).clone(),
         };
-
-        // Use the locked file handle for writing to avoid conflicts
-        // The OS-level lock (via fs2) is held for the lifetime of SourceData
-        let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
         match crab_data.save_to_file(file) {
             Ok(()) => tracing::debug!(
                 "Saved .crab file {} with {} bookmarks",
-                crab_path.display(),
+                self.crab_path.display(),
                 crab_data.bookmarks.len()
             ),
-            Err(e) => tracing::error!("Failed to save .crab file {}: {e}", crab_path.display()),
+            Err(e) => tracing::error!("Failed to save .crab file {}: {e}", self.crab_path.display()),
         }
     }
 
@@ -574,35 +582,18 @@ where
         }
     }
 
-    /// Load and merge filters and highlights.
+    /// Load filters and highlights from the cached `.crab` data.
     ///
-    /// Returns `Err(SessionError::VersionTooNew)` when the .crab file was written by a
-    /// newer version of LogCrab; in that case no filters or highlights are loaded and
-    /// the caller is expected to surface a warning to the user.
+    /// Returns empty vecs when the file was from a newer LogCrab version (lock released
+    /// at open time) or when no data was cached (empty/unparseable file).
     pub fn load_saved_filters_and_highlights(
         &self,
-    ) -> Result<(Vec<SavedFilter>, Vec<SavedHighlight>), crate::core::SessionError> {
-        let (file, crab_path) = &mut *self.crab_lock.lock().expect("crab_lock mutex poisoned");
-        match CrabFile::<FT>::load_from_file(file) {
-            Ok(crab_data) => {
-                return Ok((crab_data.filters, crab_data.highlights));
-            }
-            Err(e @ crate::core::SessionError::VersionTooNew { .. }) => {
-                return Err(e);
-            }
-            Err(crate::core::SessionError::Io(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                // Empty .crab file (just created), that's fine
-            }
-            Err(crate::core::SessionError::Parse(_)) => {
-                // Empty or invalid .crab file, that's fine for a new session
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load .crab file {}: {e}", crab_path.display());
-            }
+    ) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
+        let mut crab = self.crab.lock().expect("crab mutex poisoned");
+        match crab.1.take() {
+            Some(data) => (data.filters, data.highlights),
+            None => (Vec::new(), Vec::new()),
         }
-        Ok((Vec::new(), Vec::new()))
     }
 }
 

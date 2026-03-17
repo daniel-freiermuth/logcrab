@@ -130,17 +130,7 @@ impl CrabSession {
             return Ok(());
         };
 
-        let (filters, highlights) = match variant.load_saved_filters_and_highlights() {
-            Ok(pair) => pair,
-            Err(e @ SessionError::VersionTooNew { .. }) => {
-                self.state.store.add_source(variant);
-                return Err(e);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load session data for {}: {e}", path.display());
-                (Vec::new(), Vec::new())
-            }
-        };
+        let (filters, highlights) = variant.load_saved_filters_and_highlights();
         self.state.store.add_source(variant);
         for saved_filter in &filters {
             self.add_filter_if_not_exists(saved_filter);

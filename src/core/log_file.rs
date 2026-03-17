@@ -85,9 +85,10 @@ impl LogFileLoader {
                 lock_file,
                 lock_path,
                 config,
+                toast,
             ))
         } else {
-            Arc::new(SourceData::new(path.clone(), config)?)
+            Arc::new(SourceData::new(path.clone(), config, toast)?)
         };
         let source_clone = Arc::clone(&data_source);
         let toast_clone = toast.clone();
