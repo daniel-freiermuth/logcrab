@@ -70,13 +70,12 @@ where
     bookmarks: RwLock<HashMap<usize, Bookmark>>,
     /// Path to the `.crab` session file (immutable after construction).
     crab_path: PathBuf,
-    /// OS exclusive lock + cached crab data.
+    /// OS exclusive lock on the `.crab` session file.
     ///
-    /// `(None, None)` — lock released because the file was written by a newer `LogCrab`;
-    ///                   all reads and writes are refused.
-    /// `(Some(file), Some(data))` — lock held; parsed data not yet consumed.
-    /// `(Some(file), None)` — lock held; data already consumed (normal steady state).
-    crab: Mutex<(Option<File>, Option<CrabFile<FT>>)>,
+    /// `None` — lock released because the file was written by a newer `LogCrab`;
+    ///           all reads and writes are refused.
+    /// `Some(mutex)` — lock held; mutex provides `&mut File` for writes.
+    crab: Option<Mutex<File>>,
     version: AtomicU64,
     /// Flag to request cancellation of background loading/scoring operations
     cancel_requested: AtomicBool,
@@ -97,17 +96,22 @@ where
     FT::LineType: Clone,
 {
     /// Create a `SourceData` for a file source.
+    ///
     /// Acquires an exclusive lock on the `.crab` session file to prevent multiple
-    /// instances from clobbering each other's session state.
+    /// instances from clobbering each other's session state. Parsed session data
+    /// (bookmarks, file state) is applied immediately; the saved filters and
+    /// highlights are returned to the caller so they never need to be stored.
     ///
     /// If the lock is already held by another instance the file is opened in
     /// **read-only mode**: bookmarks and saved state are not loaded, and writes
     /// are silently skipped for the lifetime of this source.
+    ///
+    /// Returns `(Self, saved_filters, saved_highlights)`.
     pub fn new(
         file_path: PathBuf,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
         toast: &crate::ui::ProgressToastHandle,
-    ) -> Self {
+    ) -> (Self, Vec<SavedFilter>, Vec<SavedHighlight>) {
         assert!(
             file_path.file_name().is_some(),
             "file_path must have a filename component: {}",
@@ -115,7 +119,7 @@ where
         );
 
         let crab_path = Self::compute_crab_path(&file_path);
-        let crab = Self::acquire_crab_lock(&crab_path).map_or_else(
+        let (lock_file, maybe_crab) = Self::acquire_crab_lock(&crab_path).map_or_else(
             || {
                 tracing::warn!(
                     "Cannot lock {} — opening read-only (file already open in another instance)",
@@ -133,21 +137,45 @@ where
             },
             |lock_file| Self::open_crab_file(lock_file, &crab_path, toast),
         );
-        let mut sd = Self {
+
+        // Consume the parsed CrabFile immediately — apply bookmarks/file_state
+        // here and return filters/highlights to the caller so nothing lingers.
+        let (filters, highlights, bookmarks_vec, file_state_arc) = match maybe_crab {
+            Some(crab) => {
+                tracing::info!(
+                    "Loaded {} bookmarks from {}",
+                    crab.bookmarks.len(),
+                    crab_path.display()
+                );
+                (
+                    crab.filters,
+                    crab.highlights,
+                    crab.bookmarks,
+                    Arc::new(crab.file_state),
+                )
+            }
+            None => (vec![], vec![], vec![], Arc::new(Default::default())),
+        };
+
+        let sd = Self {
             source_id: SOURCE_ID_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
             file_path,
             lines: RwLock::new(Vec::new()),
             by_timestamp: RwLock::new(Vec::new()),
             config,
-            file_state: Arc::new(Default::default()),
-            bookmarks: RwLock::new(HashMap::new()),
+            file_state: file_state_arc,
+            bookmarks: RwLock::new(
+                bookmarks_vec
+                    .into_iter()
+                    .map(|b| (b.line_index, b))
+                    .collect(),
+            ),
             crab_path,
-            crab: Mutex::new(crab),
+            crab: lock_file.map(Mutex::new),
             version: AtomicU64::new(1),
             cancel_requested: AtomicBool::new(false),
         };
-        sd.load_bookmarks();
-        sd
+        (sd, filters, highlights)
     }
 
     /// Parse the `.crab` file immediately after locking it.
@@ -319,36 +347,17 @@ where
             .collect()
     }
 
-    /// Load bookmarks from this source's .crab file
-    fn load_bookmarks(&mut self) {
-        let crab = self.crab.lock().expect("crab mutex poisoned");
-        let Some(data) = crab.1.as_ref() else {
-            return;
-        };
-        tracing::info!(
-            "Loaded {} bookmarks from {}",
-            data.bookmarks.len(),
-            self.crab_path.display()
-        );
-        self.file_state = Arc::new(data.file_state.clone());
-        profiling::scope!("SourceData::bookmarks::write");
-        let mut bookmarks = self.bookmarks.write().expect("bookmarks lock poisoned");
-        for bookmark in data.bookmarks.clone() {
-            bookmarks.insert(bookmark.line_index, bookmark);
-        }
-    }
-
     /// Save bookmarks to this source's .crab file
     /// Note: filters and highlights are passed in since they're shared across sources
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
-        let mut crab = self.crab.lock().expect("crab mutex poisoned");
-        let Some(file) = crab.0.as_mut() else {
+        let Some(mutex) = &self.crab else {
             tracing::warn!(
                 "Skipping save to {} — .crab file is from a newer version of LogCrab",
                 self.crab_path.display()
             );
             return;
         };
+        let mut file = mutex.lock().expect("crab mutex poisoned");
         let crab_data = CrabFile::<FT> {
             version: CRAB_FILE_VERSION,
             bookmarks: self.get_bookmarks(),
@@ -356,7 +365,7 @@ where
             highlights: highlights.to_vec(),
             file_state: (*self.file_state).clone(),
         };
-        match crab_data.save_to_file(file) {
+        match crab_data.save_to_file(&mut file) {
             Ok(()) => tracing::debug!(
                 "Saved .crab file {} with {} bookmarks",
                 self.crab_path.display(),
@@ -572,18 +581,6 @@ where
         let file_state = &*self.file_state;
         if let Some(line) = lines.get(line_index) {
             line.egui_render_context_menu(ui, &*config, file_state);
-        }
-    }
-
-    /// Load filters and highlights from the cached `.crab` data.
-    ///
-    /// Returns empty vecs when the file was from a newer `LogCrab` version (lock released
-    /// at open time) or when no data was cached (empty/unparseable file).
-    pub fn load_saved_filters_and_highlights(&self) -> (Vec<SavedFilter>, Vec<SavedHighlight>) {
-        let mut crab = self.crab.lock().expect("crab mutex poisoned");
-        match crab.1.take() {
-            Some(data) => (data.filters, data.highlights),
-            None => (Vec::new(), Vec::new()),
         }
     }
 }

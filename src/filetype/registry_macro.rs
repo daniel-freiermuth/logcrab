@@ -207,7 +207,7 @@ macro_rules! register_filetypes {
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
             file_config: &GlobalFileConfig,
-        ) -> ::std::option::Option<DataSourceVariant> {
+        ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
             let mut file = ::std::fs::File::open(path).ok()?;
             let mut header = [0u8; 16];
@@ -220,12 +220,13 @@ macro_rules! register_filetypes {
                 {
                     let config_val = file_config.$b_slug.clone();
                     let arc_config = ::std::sync::Arc::new(::std::sync::RwLock::new(config_val.clone()));
-                    return Some($crate::core::log_file::LogFileLoader::load_typed(
+                    let (source, filters, highlights) = $crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
                         arc_config,
                         move |p, fs| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
-                    ).into());
+                    );
+                    return Some((source.into(), filters, highlights));
                 }
             )*
             // Header didn't match any registered binary type — caller should try text detection.
@@ -237,7 +238,7 @@ macro_rules! register_filetypes {
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
             file_config: &GlobalFileConfig,
-        ) -> ::std::option::Option<DataSourceVariant> {
+        ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
             const MAX_SAMPLE_BYTES: usize = 100 * 1024;
             let mut sample = ::std::vec::Vec::with_capacity(MAX_SAMPLE_BYTES);
@@ -256,12 +257,13 @@ macro_rules! register_filetypes {
                     tracing::info!("Opening {} with detected format {}", path.display(), stringify!($t_ftype));
                     let config_val = file_config.$t_slug.clone();
                     let arc_config = ::std::sync::Arc::new(::std::sync::RwLock::new(config_val.clone()));
-                    return Some($crate::core::log_file::LogFileLoader::load_typed(
+                    let (source, filters, highlights) = $crate::core::log_file::LogFileLoader::load_typed(
                         path.to_path_buf(),
                         toast,
                         arc_config,
                         move |p, fs| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
-                    ).into());
+                    );
+                    return Some((source.into(), filters, highlights));
                 }
             )*
             // Should never be reached if the last text type is a catch-all.
@@ -349,15 +351,6 @@ macro_rules! register_filetypes {
                 match self {
                     $( Self::$b_arm(s) => s.save_crab_file(filters, highlights), )*
                     $( Self::$t_arm(s) => s.save_crab_file(filters, highlights), )*
-                }
-            }
-
-            pub fn load_saved_filters_and_highlights(
-                &self,
-            ) -> (Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>) {
-                match self {
-                    $( Self::$b_arm(s) => s.load_saved_filters_and_highlights(), )*
-                    $( Self::$t_arm(s) => s.load_saved_filters_and_highlights(), )*
                 }
             }
 

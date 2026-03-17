@@ -122,13 +122,14 @@ impl CrabSession {
 
         tracing::info!("Adding file to session: {}", path.display());
 
-        let Some(variant) = LogFileLoader::load_file(path, toast, file_config) else {
+        let Some((variant, filters, highlights)) =
+            LogFileLoader::load_file(path, toast, file_config)
+        else {
             toast.set_error(format!("Cannot open '{}'", path.display()));
             toast.dismiss();
             return;
         };
 
-        let (filters, highlights) = variant.load_saved_filters_and_highlights();
         self.state.store.add_source(variant);
         for saved_filter in &filters {
             self.add_filter_if_not_exists(saved_filter);

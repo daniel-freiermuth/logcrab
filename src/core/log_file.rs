@@ -18,7 +18,7 @@
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
 use crate::core::log_store::{DataSourceVariant, GlobalFileConfig, SourceData};
-use crate::core::ChunkedLoader;
+use crate::core::{ChunkedLoader, SavedFilter, SavedHighlight};
 use crate::filetype::{InputFileType, LineType};
 use crate::ui::ProgressToastHandle;
 use std::path::{Path, PathBuf};
@@ -50,7 +50,7 @@ impl LogFileLoader {
         path: &Path,
         toast: &ProgressToastHandle,
         file_config: &GlobalFileConfig,
-    ) -> Option<DataSourceVariant> {
+    ) -> Option<(DataSourceVariant, Vec<SavedFilter>, Vec<SavedHighlight>)> {
         crate::core::log_store::try_open_binary(path, toast, file_config)
             .or_else(|| crate::core::log_store::open_text_source(path, toast, file_config))
     }
@@ -67,18 +67,19 @@ impl LogFileLoader {
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> anyhow::Result<FT>
             + Send
             + 'static,
-    ) -> Arc<SourceData<FT>>
+    ) -> (Arc<SourceData<FT>>, Vec<SavedFilter>, Vec<SavedHighlight>)
     where
         FT: InputFileType + Send + 'static,
         FT::LineType: Clone,
     {
-        let data_source = Arc::new(SourceData::new(path.clone(), config, toast));
+        let (sd, filters, highlights) = SourceData::new(path.clone(), config, toast);
+        let data_source = Arc::new(sd);
         let source_clone = Arc::clone(&data_source);
         let toast_clone = toast.clone();
         thread::spawn(move || {
             Self::background_load(path.as_path(), &source_clone, &toast_clone, open_fn);
         });
-        data_source
+        (data_source, filters, highlights)
     }
 
     /// Open the file via `open_fn`, drive [`ChunkedLoader`], score, and dismiss the toast.
