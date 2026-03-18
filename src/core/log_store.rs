@@ -23,8 +23,8 @@ use crate::filetype::{
     generic::GenericFileType, logcat::LogcatFileType, otel::OtelFileType, pcap::PcapFileType,
 };
 use crate::filetype::{
-    btsnoop::BtsnoopLogLine, dlt::DltLogLine, dmesg::DmesgLogLine, generic::GenericLogLine,
-    logcat::LogcatLogLine, otel::OtelLogLine, pcap::PcapLogLine,
+    btsnoop::BtsnoopLogLine, bugreport::BugreportLogLine, dlt::DltLogLine, dmesg::DmesgLogLine,
+    generic::GenericLogLine, logcat::LogcatLogLine, otel::OtelLogLine, pcap::PcapLogLine,
 };
 use crate::filetype::{InputFileType, LineType, LogFileState};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
@@ -590,7 +590,7 @@ crate::register_filetypes! {
         pcap:    Pcap:    PcapFileType:    PcapLogLine,
     }
     text {
-        bugreport: Bugreport: BugreportFileType: LogcatLogLine,
+        bugreport: Bugreport: BugreportFileType: BugreportLogLine,
         logcat:    Logcat:   LogcatFileType:    LogcatLogLine,
         dmesg:     Dmesg:    DmesgFileType:     DmesgLogLine,
         otel:      Otel:     OtelFileType:      OtelLogLine,

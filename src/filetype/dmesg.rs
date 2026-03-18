@@ -49,6 +49,14 @@ impl DmesgLogLine {
             anomaly_score: 0.0,
         }
     }
+
+    /// Append a continuation line to both the raw and message text.
+    pub fn append_continuation(&mut self, raw: &str) {
+        self.raw_line.push('\n');
+        self.raw_line.push_str(raw);
+        self.message_text.push('\n');
+        self.message_text.push_str(raw);
+    }
 }
 
 // ============================================================================
@@ -201,10 +209,7 @@ impl InputFileType for DmesgFileType {
                         self.pending = Some(new_entry);
                     } else if let Some(ref mut prev) = self.pending {
                         // Continuation line: append to the pending entry.
-                        prev.raw_line.push('\n');
-                        prev.raw_line.push_str(&raw);
-                        prev.message_text.push('\n');
-                        prev.message_text.push_str(&raw);
+                        prev.append_continuation(&raw);
                     }
                     // Orphan continuation (no pending entry yet) is silently dropped.
                 }
@@ -249,10 +254,17 @@ impl TextFileType for DmesgFileType {
 // Dmesg parsing utilities
 // ============================================================================
 
-/// Matches `[SECONDS.MICROSECONDS] rest` — the canonical dmesg timestamp format.
-/// Seconds may be any non-negative integer; fractional part is exactly 6 digits.
+/// Matches dmesg timestamp lines in two common variants:
+///
+/// - Plain:   `[SECONDS.MICROSECONDS] message`
+/// - Android: `<PRIORITY>[ SECONDS.MICROSECONDS][    TPID] message`
+///
+/// The optional `<N>` syslog-priority prefix and the optional `[    TPID]`
+/// thread-ID field are consumed but not captured. Seconds may be any
+/// non-negative integer; the fractional part is exactly 6 digits.
 static DMESG_TIMESTAMP: LazyLock<fancy_regex::Regex> = LazyLock::new(|| {
-    fancy_regex::Regex::new(r"^\[\s*(\d+)\.(\d{6})\] (.*)$").expect("valid regex literal")
+    fancy_regex::Regex::new(r"^(?:<\d+>)?\[\s*(\d+)\.(\d{6})\](?:\[.*?\])?\s*(.*)$")
+        .expect("valid regex literal")
 });
 
 /// Returns `true` when the line starts with a dmesg-style `[SSSSSS.UUUUUU]` header.
@@ -320,6 +332,25 @@ mod tests {
         assert!(parse_dmesg_line("not a dmesg line".to_string(), 1).is_none());
     }
 
+    #[test]
+    fn test_parse_android_bugreport_format() {
+        // Android bugreport kernel log: syslog priority prefix + thread-ID field
+        let raw = "<14>[ 1400.067717][    T1] init: Untracked pid 22963 exited with status 0"
+            .to_string();
+        let line = parse_dmesg_line(raw, 1).expect("should parse Android dmesg line");
+        assert_eq!(
+            line.message_text,
+            "init: Untracked pid 22963 exited with status 0"
+        );
+        assert_eq!(
+            line.timestamp.timestamp_micros(),
+            1_400 * 1_000_000 + 67_717
+        );
+        assert!(is_dmesg_line(
+            "<14>[ 1400.067717][    T1] init: some message"
+        ));
+    }
+
     // ---- multi-line merging via DmesgFileType::read() ----
 
     fn make_reader(content: &str) -> DmesgFileType {
@@ -375,22 +406,27 @@ mod tests {
 
     #[test]
     fn test_pending_carried_across_batches() {
-        // Read in batches of 1 source-line to exercise cross-batch continuation.
+        // `read(N)` returns up to N *complete* logical entries, not N physical
+        // lines. It reads ahead until it can produce a full entry (i.e. until it
+        // encounters the next timestamp or EOF to flush the pending one).
+        //
+        // With content:
+        //   [   1.000000] Entry      ← pending
+        //   continuation             ← appended
+        //   [   2.000000] Next       ← flushes Entry+cont, holds Next
+        //   (EOF)                    ← flushes Next
+        //
+        // read(1) call 1: consumes all three lines, flushes Entry+continuation.
+        // read(1) call 2: hits EOF, flushes Next.
         let content = "[   1.000000] Entry\ncontinuation\n[   2.000000] Next\n";
         let mut ft = make_reader(content);
-        // Batch 1: reads "[   1.000000] Entry" — pending, no output yet.
         let b1 = ft.read(1).expect("read");
-        assert!(b1.is_empty(), "pending must not be flushed mid-batch");
-        // Batch 2: reads "continuation" — appended, no new flush.
+        assert_eq!(b1.len(), 1);
+        assert_eq!(b1[0].message_text, "Entry\ncontinuation");
         let b2 = ft.read(1).expect("read");
-        assert!(b2.is_empty());
-        // Batch 3: reads "[   2.000000] Next" — flushes first entry, holds second.
+        assert_eq!(b2.len(), 1);
+        assert_eq!(b2[0].message_text, "Next");
         let b3 = ft.read(1).expect("read");
-        assert_eq!(b3.len(), 1);
-        assert_eq!(b3[0].message_text, "Entry\ncontinuation");
-        // Batch 4: EOF — flushes second entry.
-        let b4 = ft.read(1).expect("read");
-        assert_eq!(b4.len(), 1);
-        assert_eq!(b4[0].message_text, "Next");
+        assert!(b3.is_empty(), "should be EOF");
     }
 }
