@@ -240,7 +240,7 @@ impl LineType for PcapLogLine {
                     display_time,
                     false,
                     Some(display_time),
-                    None,
+                    raw_time,
                 ),
             ));
             ui.close();

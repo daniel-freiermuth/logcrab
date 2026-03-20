@@ -439,7 +439,7 @@ impl LineType for DltLogLine {
                     current_time,
                     is_inferred,
                     Some(current_time),
-                    Some(self.storage_time),
+                    self.storage_time,
                 ),
             });
             ui.close();

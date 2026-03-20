@@ -14,7 +14,7 @@ pub struct CalibrationWindow {
     focus_requested: bool,
     is_dlt: bool,
     calculated_time: Option<DateTime<Local>>,
-    storage_time: Option<DateTime<Local>>,
+    original_time: DateTime<Local>,
     apply_to_all_apps: bool,
 }
 
@@ -23,14 +23,14 @@ impl CalibrationWindow {
         current_time: DateTime<Local>,
         is_dlt: bool,
         calculated_time: Option<DateTime<Local>>,
-        storage_time: Option<DateTime<Local>>,
+        original_time: DateTime<Local>,
     ) -> Self {
         Self {
             target_time_str: current_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             focus_requested: false,
             is_dlt,
             calculated_time,
-            storage_time,
+            original_time,
             apply_to_all_apps: false,
         }
     }
@@ -71,20 +71,16 @@ impl CalibrationWindow {
                     });
                 }
 
-                if let Some(stor_time) = self.storage_time {
-                    ui.horizontal(|ui| {
-                        ui.label(original_label);
-                        ui.label(stor_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
-                        if ui.button("Use for calibration").clicked() {
-                            self.target_time_str =
-                                stor_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-                        }
-                    });
-                }
+                ui.horizontal(|ui| {
+                    ui.label(original_label);
+                    ui.label(self.original_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
+                    if ui.button("Use for calibration").clicked() {
+                        self.target_time_str =
+                            self.original_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                    }
+                });
 
-                if self.calculated_time.is_some() || self.storage_time.is_some() {
-                    ui.add_space(10.0);
-                }
+                ui.add_space(10.0);
 
                 ui.label("Set the target timestamp for this log entry:");
                 ui.label("Format: YYYY-MM-DD HH:MM:SS.mmm");

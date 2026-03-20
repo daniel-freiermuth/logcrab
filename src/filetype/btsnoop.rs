@@ -107,7 +107,7 @@ impl LineType for BtsnoopLogLine {
                     display_time,
                     false,
                     Some(display_time),
-                    None,
+                    raw_time,
                 ),
             ));
             ui.close();
