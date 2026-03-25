@@ -73,10 +73,16 @@ impl CalibrationWindow {
 
                 ui.horizontal(|ui| {
                     ui.label(original_label);
-                    ui.label(self.original_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
+                    ui.label(
+                        self.original_time
+                            .format("%Y-%m-%d %H:%M:%S%.3f")
+                            .to_string(),
+                    );
                     if ui.button("Use for calibration").clicked() {
-                        self.target_time_str =
-                            self.original_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                        self.target_time_str = self
+                            .original_time
+                            .format("%Y-%m-%d %H:%M:%S%.3f")
+                            .to_string();
                     }
                 });
 
