@@ -135,10 +135,22 @@ def git_push() -> None:
     print("Pushed commits and tags to remote")
 
 
-def cargo_deb() -> None:
-    """Build the Debian package."""
+def cargo_deb() -> str:
+    """Build the Debian package and rename it."""
+    import glob
+    
     print("\nBuilding Debian package...")
     run(["cargo", "deb"], capture=False)
+    
+    # Find and rename the generated .deb file
+    deb_files = glob.glob("target/debian/*.deb")
+    if deb_files:
+        original = deb_files[0]
+        new_name = "target/debian/logcrab_amd64_ubuntu24.deb"
+        run(["mv", original, new_name])
+        print(f"Renamed {original} to {new_name}")
+        return new_name
+    return ""
 
 
 def main() -> int:
