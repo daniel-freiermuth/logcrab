@@ -1,5 +1,6 @@
 use fancy_regex::Regex;
 use std::sync::LazyLock;
+use tracing::warn;
 
 /// Format time difference with 3 significant digits and appropriate unit
 pub fn format_time_diff(diff: chrono::Duration) -> String {
@@ -79,25 +80,40 @@ static URL_PATTERN: LazyLock<Regex> =
 static WHITESPACE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s+").expect("valid regex literal"));
 
+/// Apply regex replacement, keeping original on error (e.g., `BacktrackLimitExceeded`)
+fn try_replace(text: &str, pattern: &Regex, replacement: &str) -> String {
+    pattern.try_replacen(text, 0, replacement).map_or_else(
+        |e| {
+            warn!(
+                "Regex replacement failed ({}), keeping original text (len={})",
+                e,
+                text.len()
+            );
+            text.to_string()
+        },
+        std::borrow::Cow::into_owned,
+    )
+}
+
 /// Normalize a log message to create a template key
 /// This helps identify structurally similar messages
 pub fn normalize_message(message: &str) -> String {
     let mut normalized = message.to_lowercase();
 
     // Replace UUIDs first (before hex, since UUIDs contain hex)
-    normalized = UUID_PATTERN.replace_all(&normalized, "<UUID>").to_string();
+    normalized = try_replace(&normalized, &UUID_PATTERN, "<UUID>");
 
     // Replace URLs
-    normalized = URL_PATTERN.replace_all(&normalized, "<URL>").to_string();
+    normalized = try_replace(&normalized, &URL_PATTERN, "<URL>");
 
     // Replace hex values
-    normalized = HEX_PATTERN.replace_all(&normalized, "<HEX>").to_string();
+    normalized = try_replace(&normalized, &HEX_PATTERN, "<HEX>");
 
     // Replace numbers
-    normalized = NUMBER_PATTERN.replace_all(&normalized, "<NUM>").to_string();
+    normalized = try_replace(&normalized, &NUMBER_PATTERN, "<NUM>");
 
     // Normalize whitespace
-    normalized = WHITESPACE_PATTERN.replace_all(&normalized, " ").to_string();
+    normalized = try_replace(&normalized, &WHITESPACE_PATTERN, " ");
 
     normalized.trim().to_string()
 }
