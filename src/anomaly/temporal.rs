@@ -42,8 +42,8 @@ impl AnomalyScorer for TemporalScorer {
         let mut score: f64 = 0.0;
 
         // Component 1: Time since last occurrence (recency)
-        let template_key = &line.template_key;
-        if let Some(&last_time) = self.last_seen.get(template_key) {
+        let template_key = line.template_key();
+        if let Some(&last_time) = self.last_seen.get(&template_key) {
             let time_diff = current_time - last_time;
             let time_diff_secs = time_diff.num_seconds().abs(); // Use absolute value for out-of-order logs
 
@@ -81,8 +81,7 @@ impl AnomalyScorer for TemporalScorer {
         let current_time = line.timestamp;
 
         // Update last seen time for this template
-        self.last_seen
-            .insert(line.template_key.clone(), current_time);
+        self.last_seen.insert(line.template_key(), current_time);
 
         // Add to recent timestamps
         self.recent_timestamps.push_back(current_time);

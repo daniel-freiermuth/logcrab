@@ -534,14 +534,12 @@ where
         let config = self.config.read().expect("config lock poisoned");
         let file_state = &*self.file_state;
         let line = lines.get(line_index)?;
-        let raw_message = line.message();
         Some(LogLine {
             timestamp: line.timestamp(&*config, file_state),
             message: line.display_message(&*config, file_state),
             raw: line.raw(),
             line_number: line.line_number(),
             anomaly_score: line.anomaly_score(),
-            template_key: crate::parser::normalize_message(&raw_message),
         })
     }
 
@@ -617,8 +615,15 @@ pub struct LogLine {
     pub line_number: usize,
     /// Anomaly score in [0, 100].
     pub anomaly_score: f64,
-    /// Normalised template key for anomaly detection.
-    pub template_key: String,
+}
+
+impl LogLine {
+    /// Compute the normalised template key for anomaly detection.
+    /// This is computed on-demand rather than stored to avoid expensive
+    /// regex normalization when not needed (e.g., histogram rendering).
+    pub fn template_key(&self) -> String {
+        crate::parser::normalize_message(&self.message)
+    }
 }
 
 /// Central storage for log lines from one or more sources
