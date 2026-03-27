@@ -301,8 +301,8 @@ fn parse_avrcp_pdu_params(
         0x11 => {
             if is_response && !params.is_empty() {
                 let count = params[0] as usize;
-                if params.len() >= 1 + count {
-                    let attrs: Vec<&str> = params[1..1 + count]
+                if params.len() > count {
+                    let attrs: Vec<&str> = params[1..=count]
                         .iter()
                         .map(|&id| get_player_app_attr_name(id))
                         .collect();
@@ -528,7 +528,7 @@ fn parse_avrcp_pdu_params(
         // SetAbsoluteVolume
         0x50 => {
             let raw = *params.first()? & 0x7F;
-            let pct = (raw as u32 * 100) / 127;
+            let pct = (u32::from(raw) * 100) / 127;
             Some(format!("Volume={pct}% (0x{raw:02X})"))
         }
         // SetAddressedPlayer
@@ -725,7 +725,7 @@ fn decode_notification_response(event_id: u8, data: &[u8]) -> Option<String> {
         }
         0x0D => {
             let raw = *data.first()? & 0x7F;
-            let pct = (raw as u32 * 100) / 127;
+            let pct = (u32::from(raw) * 100) / 127;
             Some(format!("Volume={pct}% (0x{raw:02X})"))
         }
         _ => None,
@@ -744,11 +744,11 @@ const fn get_player_app_attr_name(attr_id: u8) -> &'static str {
 
 const fn get_player_app_attr_value(attr_id: u8, value_id: u8) -> &'static str {
     match (attr_id, value_id) {
-        (0x01, 0x01) | (0x02, 0x01) | (0x03, 0x01) | (0x04, 0x01) => "OFF",
+        (0x01..=0x04, 0x01) => "OFF",
         (0x01, 0x02) => "ON",
-        (0x02, 0x02) | (0x03, 0x02) | (0x04, 0x02) => "All",
+        (0x02..=0x04, 0x02) => "All",
         (0x02, 0x03) => "Single",
-        (0x02, 0x04) | (0x03, 0x03) | (0x04, 0x03) => "Group",
+        (0x02, 0x04) | (0x03 | 0x04, 0x03) => "Group",
         _ => "?",
     }
 }
