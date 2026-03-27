@@ -36,8 +36,6 @@ pub struct DltLogLine {
     pub app_id: String,
     /// Original line number in source file
     pub line_number: usize,
-    /// Anomaly score (mutable)
-    pub anomaly_score: f64,
 }
 
 impl DltLogLine {
@@ -56,7 +54,6 @@ impl DltLogLine {
             ecu_id,
             app_id,
             line_number,
-            anomaly_score: 0.0,
         }
     }
 
@@ -388,14 +385,6 @@ impl LineType for DltLogLine {
 
     fn line_number(&self) -> usize {
         self.line_number
-    }
-
-    fn anomaly_score(&self) -> f64 {
-        self.anomaly_score
-    }
-
-    fn set_anomaly_score(&mut self, score: f64) {
-        self.anomaly_score = score;
     }
 
     fn egui_render_context_menu(
