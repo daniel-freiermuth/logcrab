@@ -55,9 +55,9 @@ impl LogFileLoader {
         file_config: &GlobalFileConfig,
         store: &Arc<LogStore>,
     ) -> Option<(DataSourceVariant, Vec<SavedFilter>, Vec<SavedHighlight>)> {
-        crate::core::log_store::try_open_binary(path, toast, warnings, file_config, store).or_else(|| {
-            crate::core::log_store::open_text_source(path, toast, warnings, file_config, store)
-        })
+        crate::core::log_store::try_open_binary(path, toast, warnings, file_config, store).or_else(
+            || crate::core::log_store::open_text_source(path, toast, warnings, file_config, store),
+        )
     }
 
     /// Create a typed [`SourceData<T>`], spawn a background loading thread, and
@@ -88,7 +88,14 @@ impl LogFileLoader {
         let store_clone = Arc::clone(store);
         let toast_clone = toast.clone();
         thread::spawn(move || {
-            Self::background_load(path.as_path(), &source_clone, &toast_clone, open_fn, &store_clone, source_id);
+            Self::background_load(
+                path.as_path(),
+                &source_clone,
+                &toast_clone,
+                open_fn,
+                &store_clone,
+                source_id,
+            );
         });
         (data_source, filters, highlights)
     }
