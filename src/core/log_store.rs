@@ -710,7 +710,10 @@ pub struct LogStore {
 impl std::fmt::Debug for LogStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LogStore")
-            .field("sources_count", &self.sources.read().map(|s| s.len()).unwrap_or(0))
+            .field(
+                "sources_count",
+                &self.sources.read().map(|s| s.len()).unwrap_or(0),
+            )
             .field("sources_version", &self.sources_version)
             .field("scores_count", &self.scores.len())
             .finish()
