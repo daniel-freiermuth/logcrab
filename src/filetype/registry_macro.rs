@@ -208,6 +208,7 @@ macro_rules! register_filetypes {
             toast: &$crate::ui::ProgressToastHandle,
             warnings: &$crate::ui::ToastSender,
             file_config: &GlobalFileConfig,
+            store: &::std::sync::Arc<$crate::core::log_store::LogStore>,
         ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
             let mut file = ::std::fs::File::open(path).ok()?;
@@ -227,6 +228,7 @@ macro_rules! register_filetypes {
                         warnings,
                         arc_config,
                         move |p, fs| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
+                        store,
                     );
                     return Some((source.into(), filters, highlights));
                 }
@@ -241,6 +243,7 @@ macro_rules! register_filetypes {
             toast: &$crate::ui::ProgressToastHandle,
             warnings: &$crate::ui::ToastSender,
             file_config: &GlobalFileConfig,
+            store: &::std::sync::Arc<$crate::core::log_store::LogStore>,
         ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
             const MAX_SAMPLE_BYTES: usize = 100 * 1024;
@@ -266,6 +269,7 @@ macro_rules! register_filetypes {
                         warnings,
                         arc_config,
                         move |p, fs| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
+                        store,
                     );
                     return Some((source.into(), filters, highlights));
                 }

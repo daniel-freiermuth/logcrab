@@ -40,9 +40,75 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use arc_swap::ArcSwap;
+use dashmap::DashMap;
+
 /// Global counter for generating unique source IDs.
 /// Source IDs are stable across the lifetime of a source, even when other sources are removed.
 static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Lock-free storage for anomaly scores.
+///
+/// Uses `ArcSwap` for atomic pointer swaps — readers never block, and writers
+/// simply build a new `Vec<f64>` and swap it in atomically. This avoids the
+/// need for a write lock on `lines` when updating scores.
+pub struct ScoreStore {
+    /// Anomaly scores indexed by line position (same length as `lines`).
+    /// Default score is 0.0; scores range from 0 to 100.
+    scores: ArcSwap<Vec<f64>>,
+}
+
+impl ScoreStore {
+    /// Create a new empty score store.
+    pub fn new() -> Self {
+        Self {
+            scores: ArcSwap::new(Arc::new(Vec::new())),
+        }
+    }
+
+    /// Set all scores atomically. The provided slice is copied into a new `Arc`.
+    pub fn set_all(&self, scores: &[f64]) {
+        self.scores.store(Arc::new(scores.to_vec()));
+    }
+
+    /// Get the score for a specific line index. Returns 0.0 if out of bounds.
+    pub fn get(&self, index: usize) -> f64 {
+        let guard = self.scores.load();
+        guard.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// Resize the internal vec to accommodate new lines (fills with 0.0).
+    /// Called when lines are appended to keep scores in sync.
+    pub fn resize(&self, new_len: usize) {
+        let current = self.scores.load();
+        if current.len() < new_len {
+            let mut new_scores: Vec<f64> = (**current).clone();
+            new_scores.resize(new_len, 0.0);
+            self.scores.store(Arc::new(new_scores));
+        }
+    }
+}
+
+impl Default for ScoreStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for ScoreStore {
+    fn clone(&self) -> Self {
+        Self {
+            scores: ArcSwap::new(Arc::clone(&self.scores.load())),
+        }
+    }
+}
+
+impl std::fmt::Debug for ScoreStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let guard = self.scores.load();
+        write!(f, "ScoreStore({} scores)", guard.len())
+    }
+}
 
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 pub struct SourceData<FT>
@@ -495,21 +561,6 @@ where
         self.bump_version();
     }
 
-    /// Set anomaly scores for lines (indexed by position in the vector)
-    /// Scores vec should be same length as lines
-    pub fn set_scores(&self, scores: &[f64]) {
-        profiling::scope!("SourceData::set_scores");
-        profiling::scope!("SourceData::lines::write");
-        let mut guard = self.lines.write().expect("lines lock poisoned");
-        for (idx, &score) in scores.iter().enumerate() {
-            if let Some(line) = guard.get_mut(idx) {
-                line.set_anomaly_score(score);
-            }
-        }
-        drop(guard);
-        self.bump_version();
-    }
-
     /// Get the number of lines
     pub fn len(&self) -> usize {
         profiling::scope!("SourceData::lines::read");
@@ -539,7 +590,7 @@ where
             message: line.display_message(&*config, file_state),
             raw: line.raw(),
             line_number: line.line_number(),
-            anomaly_score: line.anomaly_score(),
+            anomaly_score: 0.0, // Scores are stored at LogStore level, populated by get_by_id
         })
     }
 
@@ -630,7 +681,6 @@ impl LogLine {
 ///
 /// Thread-safe: can be shared across threads with Arc<LogStore>
 /// Uses `IndexMap` for O(1) source lookup by ID while maintaining insertion order.
-#[derive(Debug)]
 pub struct LogStore {
     /// Sources indexed by their stable `source_id` for O(1) lookup.
     /// `IndexMap` maintains insertion order for consistent UI display.
@@ -638,6 +688,19 @@ pub struct LogStore {
     /// Version counter that increments when sources are added or removed.
     /// This ensures cache invalidation even when line counts happen to sum to the same value.
     sources_version: AtomicU64,
+    /// Anomaly scores keyed by source_id. Each source has its own ScoreStore.
+    /// Stored at LogStore level (not SourceData) because scores are analysis metadata.
+    scores: DashMap<u64, ScoreStore>,
+}
+
+impl std::fmt::Debug for LogStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogStore")
+            .field("sources_count", &self.sources.read().map(|s| s.len()).unwrap_or(0))
+            .field("sources_version", &self.sources_version)
+            .field("scores_count", &self.scores.len())
+            .finish()
+    }
 }
 
 impl Clone for LogStore {
@@ -646,6 +709,7 @@ impl Clone for LogStore {
         Self {
             sources: RwLock::new(self.sources.read().expect("sources lock poisoned").clone()),
             sources_version: AtomicU64::new(self.sources_version.load(AtomicOrdering::SeqCst)),
+            scores: self.scores.clone(),
         }
     }
 }
@@ -703,6 +767,7 @@ impl LogStore {
         Arc::new(Self {
             sources: RwLock::new(IndexMap::new()),
             sources_version: AtomicU64::new(1),
+            scores: DashMap::new(),
         })
     }
 
@@ -825,9 +890,35 @@ impl LogStore {
         let removed = sources.swap_remove(&source_id)?;
         let path = removed.file_path().to_path_buf();
         drop(sources);
+        // Also remove scores for this source
+        self.scores.remove(&source_id);
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
         tracing::info!("Removed source: {}", path.display());
         Some(path)
+    }
+
+    // ========================================================================
+    // Anomaly Score Management
+    // ========================================================================
+
+    /// Set anomaly scores for a source. Scores are indexed by line position.
+    ///
+    /// This is lock-free for readers — scores are swapped atomically.
+    pub fn set_scores(&self, source_id: u64, scores: &[f64]) {
+        profiling::scope!("LogStore::set_scores");
+        self.scores
+            .entry(source_id)
+            .or_insert_with(ScoreStore::new)
+            .set_all(scores);
+        // Bump version so UI knows to refresh
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
+    /// Get the anomaly score for a specific line. Returns 0.0 if not found.
+    pub fn get_score(&self, source_id: u64, line_index: usize) -> f64 {
+        self.scores
+            .get(&source_id)
+            .map_or(0.0, |store| store.get(line_index))
     }
 
     // ========================================================================
@@ -1074,7 +1165,10 @@ impl LogStore {
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(&id.source_id)?.get_log_line(id.line_index)
+        let mut line = sources.get(&id.source_id)?.get_log_line(id.line_index)?;
+        // Populate anomaly score from store-level score storage
+        line.anomaly_score = self.get_score(id.source_id, id.line_index);
+        Some(line)
     }
 }
 

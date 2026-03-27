@@ -124,7 +124,7 @@ impl CrabSession {
         tracing::info!("Adding file to session: {}", path.display());
 
         let Some((variant, filters, highlights)) =
-            LogFileLoader::load_file(path, toast, warnings, file_config)
+            LogFileLoader::load_file(path, toast, warnings, file_config, &self.state.store)
         else {
             toast.set_error(format!("Cannot open '{}'", path.display()));
             toast.dismiss();

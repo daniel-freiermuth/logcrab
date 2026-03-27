@@ -58,6 +58,7 @@ opentelemetry-proto = { version = "0.31", default-features = false, features = [
 rayon = "1.10"
 egui-toast = "0.19"
 dashmap = { version = "6", features = ["serde"] }
+arc-swap = "1"
 dhat = { version = "0.3", optional = true }
 anyhow = "1"
 profiling = { version = "1.0", default-features = false }
