@@ -31,8 +31,6 @@ pub struct LogcatLogLine {
     tag_message: String,
     /// Original line number in source file
     pub line_number: usize,
-    /// Anomaly score (mutable)
-    pub anomaly_score: f64,
 }
 
 impl LogcatLogLine {
@@ -51,7 +49,6 @@ impl LogcatLogLine {
             message_text,
             tag_message,
             line_number,
-            anomaly_score: 0.0,
         }
     }
 }
@@ -105,14 +102,6 @@ impl LineType for LogcatLogLine {
 
     fn line_number(&self) -> usize {
         self.line_number
-    }
-
-    fn anomaly_score(&self) -> f64 {
-        self.anomaly_score
-    }
-
-    fn set_anomaly_score(&mut self, score: f64) {
-        self.anomaly_score = score;
     }
 
     fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &LogcatFileState) {

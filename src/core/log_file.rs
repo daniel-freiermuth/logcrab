@@ -17,7 +17,7 @@
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::anomaly::{create_default_scorer, normalize_scores};
-use crate::core::log_store::{DataSourceVariant, GlobalFileConfig, SourceData};
+use crate::core::log_store::{DataSourceVariant, GlobalFileConfig, LogStore, SourceData};
 use crate::core::{ChunkedLoader, SavedFilter, SavedHighlight};
 use crate::filetype::{InputFileType, LineType};
 use crate::ui::ProgressToastHandle;
@@ -45,15 +45,18 @@ impl LogFileLoader {
     /// `file_config` is the session-wide [`GlobalFileConfig`]; each typed source
     /// receives `Arc::clone` of its type's config arc so config mutations propagate live.
     ///
+    /// `store` is used to persist anomaly scores after loading completes.
+    ///
     /// Returns `None` only if the file cannot be opened for format detection.
     pub fn load_file(
         path: &Path,
         toast: &ProgressToastHandle,
         warnings: &crate::ui::ToastSender,
         file_config: &GlobalFileConfig,
+        store: &Arc<LogStore>,
     ) -> Option<(DataSourceVariant, Vec<SavedFilter>, Vec<SavedHighlight>)> {
-        crate::core::log_store::try_open_binary(path, toast, warnings, file_config).or_else(|| {
-            crate::core::log_store::open_text_source(path, toast, warnings, file_config)
+        crate::core::log_store::try_open_binary(path, toast, warnings, file_config, store).or_else(|| {
+            crate::core::log_store::open_text_source(path, toast, warnings, file_config, store)
         })
     }
 
@@ -62,6 +65,8 @@ impl LogFileLoader {
     ///
     /// `open_fn` is called from the background thread and must return a
     /// ready-to-read [`InputFileType`] for the given path.
+    ///
+    /// `store` is used to persist anomaly scores after loading completes.
     pub(crate) fn load_typed<FT>(
         path: PathBuf,
         toast: &ProgressToastHandle,
@@ -70,6 +75,7 @@ impl LogFileLoader {
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> anyhow::Result<FT>
             + Send
             + 'static,
+        store: &Arc<LogStore>,
     ) -> (Arc<SourceData<FT>>, Vec<SavedFilter>, Vec<SavedHighlight>)
     where
         FT: InputFileType + Send + 'static,
@@ -77,10 +83,12 @@ impl LogFileLoader {
     {
         let (sd, filters, highlights) = SourceData::new(path.clone(), config, warnings);
         let data_source = Arc::new(sd);
+        let source_id = data_source.source_id();
         let source_clone = Arc::clone(&data_source);
+        let store_clone = Arc::clone(store);
         let toast_clone = toast.clone();
         thread::spawn(move || {
-            Self::background_load(path.as_path(), &source_clone, &toast_clone, open_fn);
+            Self::background_load(path.as_path(), &source_clone, &toast_clone, open_fn, &store_clone, source_id);
         });
         (data_source, filters, highlights)
     }
@@ -91,6 +99,8 @@ impl LogFileLoader {
         data_source: &Arc<SourceData<FT>>,
         toast: &ProgressToastHandle,
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> anyhow::Result<FT>,
+        store: &Arc<LogStore>,
+        source_id: u64,
     ) where
         FT: InputFileType,
         FT::LineType: Clone,
@@ -123,7 +133,7 @@ impl LogFileLoader {
         let load_complete = loader.run(&mut file_type, data_source, &file_name, file_size, toast);
 
         if load_complete && !data_source.is_empty() {
-            Self::score_lines(data_source, path, toast, start_time);
+            Self::score_lines(data_source, path, toast, start_time, store, source_id);
         } else if data_source.is_empty() {
             toast.set_error("No log lines found in file");
         }
@@ -135,11 +145,16 @@ impl LogFileLoader {
     /// Iterates directly over the typed source so no intermediate `Vec<LogLine>` is
     /// allocated.  Each [`LogLine`] DTO is built under a single lock acquisition
     /// via [`SourceData::get_as_log_line`].
+    ///
+    /// Scores are stored in `store` (not `data_source`) because scores are analysis
+    /// metadata separate from the raw log data.
     fn score_lines<FT>(
         data_source: &Arc<SourceData<FT>>,
         path: &Path,
         toast: &ProgressToastHandle,
         start_time: std::time::Instant,
+        store: &Arc<LogStore>,
+        source_id: u64,
     ) where
         FT: InputFileType,
         FT::LineType: Clone,
@@ -206,7 +221,7 @@ impl LogFileLoader {
             );
         }
 
-        data_source.set_scores(&normalized_scores);
+        store.set_scores(source_id, &normalized_scores);
 
         let score_duration = score_start.elapsed();
         tracing::info!(
