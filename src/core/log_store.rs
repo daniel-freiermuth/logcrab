@@ -688,8 +688,8 @@ pub struct LogStore {
     /// Version counter that increments when sources are added or removed.
     /// This ensures cache invalidation even when line counts happen to sum to the same value.
     sources_version: AtomicU64,
-    /// Anomaly scores keyed by source_id. Each source has its own ScoreStore.
-    /// Stored at LogStore level (not SourceData) because scores are analysis metadata.
+    /// Anomaly scores keyed by `source_id`. Each source has its own `ScoreStore`.
+    /// Stored at `LogStore` level (not `SourceData`) because scores are analysis metadata.
     scores: DashMap<u64, ScoreStore>,
 }
 
@@ -911,7 +911,7 @@ impl LogStore {
         profiling::scope!("LogStore::set_scores");
         self.scores
             .entry(source_id)
-            .or_insert_with(ScoreStore::new)
+            .or_default()
             .set_all(scores);
         // Bump version so UI knows to refresh
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
