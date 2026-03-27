@@ -185,12 +185,6 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
     /// Get the original line number in the source file
     fn line_number(&self) -> usize;
 
-    /// Get the anomaly score
-    fn anomaly_score(&self) -> f64;
-
-    /// Set the anomaly score
-    fn set_anomaly_score(&mut self, score: f64);
-
     /// Render format-specific context menu items for a single log line.
     ///
     /// Called inside an egui context menu. Implementations write into
