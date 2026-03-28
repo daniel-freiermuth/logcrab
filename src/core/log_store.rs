@@ -591,6 +591,7 @@ where
             raw: line.raw(),
             line_number: line.line_number(),
             anomaly_score: 0.0, // Scores are stored at LogStore level, populated by get_by_id
+            sidecar_anomaly_score: 0.0,
         })
     }
 
@@ -666,6 +667,8 @@ pub struct LogLine {
     pub line_number: usize,
     /// Anomaly score in [0, 100].
     pub anomaly_score: f64,
+    /// ML sidecar anomaly score in [0, 100]. 0.0 when not available.
+    pub sidecar_anomaly_score: f64,
 }
 
 impl LogLine {
@@ -691,6 +694,12 @@ pub struct LogStore {
     /// Anomaly scores keyed by `source_id`. Each source has its own `ScoreStore`.
     /// Stored at `LogStore` level (not `SourceData`) because scores are analysis metadata.
     scores: DashMap<u64, ScoreStore>,
+    /// ML sidecar anomaly scores keyed by `source_id`.
+    /// Parallel to `scores` but populated by the LogBERT sidecar service.
+    sidecar_scores: DashMap<u64, ScoreStore>,
+    /// Sidecar scoring configuration, set once during session creation.
+    /// Read by background loading threads to decide if sidecar scoring should run.
+    sidecar_config: RwLock<Option<crate::core::log_file::ScoringConfig>>,
 }
 
 impl std::fmt::Debug for LogStore {
@@ -702,6 +711,8 @@ impl std::fmt::Debug for LogStore {
             )
             .field("sources_version", &self.sources_version)
             .field("scores_count", &self.scores.len())
+            .field("sidecar_scores_count", &self.sidecar_scores.len())
+            .field("sidecar_enabled", &self.sidecar_config.read().map(|c| c.is_some()).unwrap_or(false))
             .finish()
     }
 }
@@ -713,6 +724,13 @@ impl Clone for LogStore {
             sources: RwLock::new(self.sources.read().expect("sources lock poisoned").clone()),
             sources_version: AtomicU64::new(self.sources_version.load(AtomicOrdering::SeqCst)),
             scores: self.scores.clone(),
+            sidecar_scores: self.sidecar_scores.clone(),
+            sidecar_config: RwLock::new(
+                self.sidecar_config
+                    .read()
+                    .expect("sidecar_config lock poisoned")
+                    .clone(),
+            ),
         }
     }
 }
@@ -771,6 +789,8 @@ impl LogStore {
             sources: RwLock::new(IndexMap::new()),
             sources_version: AtomicU64::new(1),
             scores: DashMap::new(),
+            sidecar_scores: DashMap::new(),
+            sidecar_config: RwLock::new(None),
         })
     }
 
@@ -922,6 +942,41 @@ impl LogStore {
         self.scores
             .get(&source_id)
             .map_or(0.0, |store| store.get(line_index))
+    }
+
+    /// Set ML sidecar scores for a source.
+    pub fn set_sidecar_scores(&self, source_id: u64, scores: &[f64]) {
+        profiling::scope!("LogStore::set_sidecar_scores");
+        self.sidecar_scores
+            .entry(source_id)
+            .or_default()
+            .set_all(scores);
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
+    /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.
+    pub fn get_sidecar_score(&self, source_id: u64, line_index: usize) -> f64 {
+        self.sidecar_scores
+            .get(&source_id)
+            .map_or(0.0, |store| store.get(line_index))
+    }
+
+    /// Check whether any sidecar scores are stored for the given source.
+    pub fn has_sidecar_scores(&self, source_id: u64) -> bool {
+        self.sidecar_scores.contains_key(&source_id)
+    }
+
+    /// Set the sidecar scoring configuration for this store.
+    pub fn set_sidecar_config(&self, config: crate::core::log_file::ScoringConfig) {
+        *self.sidecar_config.write().expect("sidecar_config lock poisoned") = Some(config);
+    }
+
+    /// Retrieve a clone of the sidecar scoring configuration (if set).
+    pub fn sidecar_config(&self) -> Option<crate::core::log_file::ScoringConfig> {
+        self.sidecar_config
+            .read()
+            .expect("sidecar_config lock poisoned")
+            .clone()
     }
 
     // ========================================================================
@@ -1171,6 +1226,7 @@ impl LogStore {
         let mut line = sources.get(&id.source_id)?.get_log_line(id.line_index)?;
         // Populate anomaly score from store-level score storage
         line.anomaly_score = self.get_score(id.source_id, id.line_index);
+        line.sidecar_anomaly_score = self.get_sidecar_score(id.source_id, id.line_index);
         Some(line)
     }
 }

@@ -2,10 +2,12 @@ use super::windows;
 use super::ToastManager;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorker;
 use crate::core::log_store::all_file_extensions;
+use crate::core::ScoringConfig;
 use crate::core::{FilterWorker, LogStore};
 use crate::input::{KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
@@ -39,6 +41,9 @@ pub struct LogCrabApp {
 
     /// Whether to show the about window
     show_about_window: bool,
+
+    /// Sidecar settings window (None when closed)
+    sidecar_settings_window: Option<windows::SidecarSettingsWindow>,
 
     /// Global configuration (shortcuts, favorites, etc.)
     global_config: GlobalConfig,
@@ -96,6 +101,7 @@ impl LogCrabApp {
             show_anomaly_explanation: false,
             show_shortcuts_window: false,
             show_about_window: false,
+            sidecar_settings_window: None,
             shortcut_bindings: KeyboardBindings::load(&global_config),
             global_config,
             pending_rebind: None,
@@ -122,11 +128,24 @@ impl LogCrabApp {
     pub fn start_new_session(&mut self) {
         // Create a new store for this file
         let store = LogStore::new();
+        // Push sidecar scoring config so background loading threads can use it
+        self.apply_sidecar_config_to_store(&store);
         self.session = Some(CrabSession::new(
             store,
             self.filter_worker.handle(),
             self.histogram_worker.handle(),
         ));
+    }
+
+    /// Build a `ScoringConfig` from the current global config and set it on the store.
+    fn apply_sidecar_config_to_store(&self, store: &Arc<LogStore>) {
+        store.set_sidecar_config(ScoringConfig {
+            use_sidecar: self.global_config.use_sidecar_scoring,
+            sidecar_host: self.global_config.sidecar_host.clone(),
+            sidecar_port: self.global_config.sidecar_port,
+            model_path: self.global_config.selected_model_path.clone(),
+            vocab_path: self.global_config.selected_vocab_path.clone(),
+        });
     }
 
     /// Add a file to the current session
@@ -439,6 +458,40 @@ impl LogCrabApp {
                         .rebuild_all_time_indices(&self.global_config.file_config);
                 }
             }
+
+            ui.separator();
+
+            if ui
+                .checkbox(
+                    &mut self.global_config.use_sidecar_scoring,
+                    "Use LogBERT Sidecar Scoring",
+                )
+                .on_hover_text(
+                    "Use machine learning model for anomaly detection (requires Python sidecar)",
+                )
+                .changed()
+            {
+                if let Err(e) = self.global_config.save() {
+                    tracing::error!("Failed to save config: {e}");
+                }
+                // Update store config so new files use the latest setting
+                if let Some(ref session) = self.session {
+                    self.apply_sidecar_config_to_store(&session.state.store);
+                }
+            }
+
+            if ui
+                .checkbox(
+                    &mut self.global_config.color_by_ml_score,
+                    "Color by ML Score",
+                )
+                .on_hover_text("Color log lines by ML score instead of legacy scorer")
+                .changed()
+            {
+                if let Err(e) = self.global_config.save() {
+                    tracing::error!("Failed to save config: {e}");
+                }
+            }
         });
 
         ui.menu_button("Help", |ui| {
@@ -448,6 +501,13 @@ impl LogCrabApp {
             }
             if ui.button("Keyboard Shortcuts").clicked() {
                 self.show_shortcuts_window = true;
+                ui.close();
+            }
+            if ui.button("Sidecar Settings").clicked() {
+                self.sidecar_settings_window =
+                    Some(windows::SidecarSettingsWindow::open_with_config(
+                        &self.global_config,
+                    ));
                 ui.close();
             }
             ui.separator();
@@ -672,6 +732,42 @@ impl eframe::App for LogCrabApp {
 
         if self.show_about_window {
             windows::render_about_window(ctx, &mut self.show_about_window);
+        }
+
+        // Show sidecar settings window
+        {
+            let mut close_sidecar_window = false;
+
+            if let Some(mut sidecar_window) = self.sidecar_settings_window.take() {
+                egui::Window::new("Sidecar Settings")
+                    .collapsible(false)
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        match sidecar_window.render(ui, &mut self.global_config) {
+                            Ok(should_save) => {
+                                if should_save {
+                                    if let Err(e) = self.global_config.save() {
+                                        tracing::error!("Failed to save config: {e}");
+                                    }
+                                    // Update store with new sidecar config
+                                    if let Some(ref session) = self.session {
+                                        self.apply_sidecar_config_to_store(
+                                            &session.state.store,
+                                        );
+                                    }
+                                    close_sidecar_window = true;
+                                }
+                            }
+                            Err(()) => {
+                                close_sidecar_window = true;
+                            }
+                        }
+                    });
+
+                if !close_sidecar_window {
+                    self.sidecar_settings_window = Some(sidecar_window);
+                }
+            }
         }
 
         // Show toast notifications
