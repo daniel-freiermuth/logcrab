@@ -205,6 +205,7 @@ impl FilterView {
                 scroll_to_row,
                 closest_row_index,
                 all_filter_highlights,
+                global_config.color_by_ml_score,
             )
         };
 

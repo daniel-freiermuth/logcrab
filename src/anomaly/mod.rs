@@ -2,6 +2,7 @@ pub mod entropy;
 pub mod keyword;
 pub mod rarity;
 pub mod scorer;
+pub mod sidecar_client;
 pub mod temporal;
 
 use entropy::EntropyScorer;

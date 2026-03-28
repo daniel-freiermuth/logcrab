@@ -33,7 +33,7 @@ pub enum DltTimestampSource {
 }
 
 /// Global user configuration stored in config directory
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     /// Keyboard shortcuts
     #[serde(default)]
@@ -63,6 +63,63 @@ pub struct GlobalConfig {
     /// Show bookmarks as markers in the timeline/histogram (default: false)
     #[serde(default)]
     pub show_bookmarks_in_timeline: bool,
+
+    /// Use LogBERT sidecar for anomaly scoring (default: false)
+    #[serde(default)]
+    pub use_sidecar_scoring: bool,
+
+    /// Color logs by ML score instead of legacy scorer (default: false)
+    #[serde(default)]
+    pub color_by_ml_score: bool,
+
+    /// Sidecar server host
+    #[serde(default = "default_sidecar_host")]
+    pub sidecar_host: String,
+
+    /// Sidecar server port
+    #[serde(default = "default_sidecar_port")]
+    pub sidecar_port: u16,
+
+    /// Selected model name for anomaly detection
+    #[serde(default)]
+    pub selected_model: Option<String>,
+
+    /// Path to the selected model checkpoint
+    #[serde(default)]
+    pub selected_model_path: Option<String>,
+
+    /// Path to the selected model vocabulary
+    #[serde(default)]
+    pub selected_vocab_path: Option<String>,
+}
+
+fn default_sidecar_host() -> String {
+    crate::anomaly::sidecar_client::SidecarClient::default_host().to_string()
+}
+
+const fn default_sidecar_port() -> u16 {
+    crate::anomaly::sidecar_client::SidecarClient::default_port()
+}
+
+impl Default for GlobalConfig {
+    fn default() -> Self {
+        Self {
+            shortcuts: HashMap::new(),
+            favorite_filters: Vec::new(),
+            bright_mode: false,
+            last_log_directory: None,
+            last_filters_directory: None,
+            file_config: crate::core::log_store::GlobalFileConfig::default(),
+            show_bookmarks_in_timeline: false,
+            use_sidecar_scoring: false,
+            color_by_ml_score: false,
+            sidecar_host: default_sidecar_host(),
+            sidecar_port: default_sidecar_port(),
+            selected_model: None,
+            selected_model_path: None,
+            selected_vocab_path: None,
+        }
+    }
 }
 
 /// A favorite filter that can be quickly added to any log
