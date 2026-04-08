@@ -509,7 +509,11 @@ impl LogCrabApp {
 
     /// Preview hovering files - shows overlay when dragging files over window
     fn preview_files_being_dropped(ctx: &egui::Context) {
-        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
+        // Also guard on window focus: if the OS fails to send HoveredFileCancelled (a known
+        // XWayland/X11 edge case), hovered_files can remain non-empty after the drag leaves.
+        // Requiring focus prevents the overlay from being stuck on screen indefinitely.
+        let active = ctx.input(|i| !i.raw.hovered_files.is_empty() && i.focused);
+        if active {
             let text = ctx.input(|i| {
                 let mut text = "Drop to open:\n".to_owned();
                 for file in &i.raw.hovered_files {
