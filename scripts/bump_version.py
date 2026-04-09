@@ -15,7 +15,18 @@ import sys
 def run(cmd: list[str], check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
     """Run a command and return the result."""
     print(f"$ {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=capture, text=True, check=check)
+    try:
+        result = subprocess.run(cmd, capture_output=capture, text=True, check=check)
+    except subprocess.CalledProcessError as e:
+        print(f"\n--- command failed (exit {e.returncode}) ---", file=sys.stderr)
+        if e.stdout:
+            print("stdout:", file=sys.stderr)
+            print(e.stdout.rstrip(), file=sys.stderr)
+        if e.stderr:
+            print("stderr:", file=sys.stderr)
+            print(e.stderr.rstrip(), file=sys.stderr)
+        print("---", file=sys.stderr)
+        raise
     return result
 
 
