@@ -1,0 +1,581 @@
+openapi: 3.1.0
+info:
+  title: LogCrab Sidecar API
+  version: 1.0.0
+  summary: HTTP API for model discovery and streaming scoring
+  description: |
+    V1 API contract for the LogCrab Rust frontend and Python scoring sidecar.
+
+    Notes on streaming:
+    - `POST /v1/score-stream` uses NDJSON over HTTP.
+    - Each request line is one JSON object matching one of:
+      `StartFrame`, `LinesFrame`, `EndFrame`.
+    - Each response line is one JSON object matching one of:
+      `AcceptedFrame`, `ScoresFrame`, `WarningFrame`, `ErrorFrame`, `CompleteFrame`.
+
+    OpenAPI can describe the endpoint and frame schemas, but does not natively model
+    full-duplex NDJSON line framing semantics. See `x-ndjson-*` vendor extensions
+    for frame-level contract references.
+
+    Companion frame schema:
+    - `docs/sidecar_api_v1.frames.schema.json`
+servers:
+  - url: http://127.0.0.1:8765
+    description: Default localhost sidecar server
+
+tags:
+  - name: health
+  - name: models
+  - name: scoring
+
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      summary: Health and readiness probe
+      operationId: getHealth
+      responses:
+        '200':
+          description: Sidecar is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                ok:
+                  value:
+                    api_version: '1'
+                    status: ok
+
+  /v1/models:
+    get:
+      tags: [models]
+      summary: Discover available models and capabilities
+      operationId: getModels
+      responses:
+        '200':
+          description: List of discoverable models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+              examples:
+                default:
+                  value:
+                    api_version: '1'
+                    models:
+                      - id: logbert-android-errors
+                        display_name: LogBERT Android Errors
+                        kind: sequence_anomaly
+                        version: '2026-04-14'
+                        status: ready
+                        input_mode: ordered_lines
+                        context_window:
+                          max_lines: 512
+                          stride_default: 128
+                          requires_ordered_input: true
+                        training_corpus:
+                          filter_profile: android-errors-v1
+                          description: Android logcat WARN and ERROR lines with parsed message field
+                        supported_fields:
+                          - raw
+                          - message
+                          - template_key
+                          - timestamp_unix_ms
+                          - source_id
+                        required_fields:
+                          - message
+                        chunk_policy:
+                          recommended_lines_per_chunk: 512
+                          max_lines_per_chunk: 1024
+                          max_bytes_per_chunk: 1048576
+                          overlap_lines: 128
+                        output:
+                          score_kind: anomaly
+                          higher_is_more_anomalous: true
+                          supports_explanations: false
+                    filter_profiles:
+                      - id: android-errors-v1
+                        description: Android logcat WARN and ERROR lines with parsed message field
+
+  /v1/score-stream:
+    post:
+      tags: [scoring]
+      summary: Score one corpus over one open NDJSON stream
+      description: |
+        One open connection corresponds to one scoring run.
+
+        Request body:
+        - NDJSON stream of `StartFrame`, zero or more `LinesFrame`, then `EndFrame`.
+
+        Response body:
+        - NDJSON stream of `AcceptedFrame`, zero or more `ScoresFrame` and/or
+          `WarningFrame`, then exactly one terminal frame: `CompleteFrame` or `ErrorFrame`.
+      operationId: scoreStream
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+              description: |
+                NDJSON request stream. Each line is one JSON object frame.
+                See `x-ndjson-request-frame-schema` for per-line schema.
+            examples:
+              minimal:
+                summary: Minimal valid stream
+                value: |
+                  {"type":"start","api_version":"1","model_id":"logbert-android-errors","filtering_mode":"backend_authoritative","options":{"response_mode":"progressive"}}
+                  {"type":"lines","chunk_index":0,"lines":[{"line_id":{"source_id":0,"line_number":123,"timestamp_unix_ms":1713093201000},"raw":"2026-04-14 10:46:41 ERROR disk full","message":"ERROR disk full","template_key":"ERROR <*>","source_name":"system.log"}]}
+                  {"type":"end"}
+      responses:
+        '200':
+          description: Accepted stream; semantic status is conveyed by response frames
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: |
+                  NDJSON response stream. Each line is one JSON object frame.
+                  See `x-ndjson-response-frame-schema` for per-line schema.
+              examples:
+                success:
+                  value: |
+                    {"type":"accepted","api_version":"1","run_id":"run_01hsz2j3p6k4n8m","model_id":"logbert-android-errors","chunk_policy":{"recommended_lines_per_chunk":512,"max_lines_per_chunk":1024,"max_bytes_per_chunk":1048576,"overlap_lines":128}}
+                    {"type":"scores","chunk_index":0,"accepted":[{"line_id":{"source_id":0,"line_number":123,"timestamp_unix_ms":1713093201000},"score":3.421,"score_kind":"anomaly"}],"rejected":[{"line_id":{"source_id":0,"line_number":124,"timestamp_unix_ms":1713093202000},"reason":"filtered_out_by_model_corpus"}]}
+                    {"type":"complete","summary":{"lines_received":1,"lines_scored":1,"lines_rejected":0}}
+        '400':
+          description: Invalid non-stream setup (headers, content type, malformed initial request)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Payload too large before stream processing can proceed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Sidecar failure before stream frames can be emitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Sidecar not ready (model loading or unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      x-ndjson-request-frame-schema:
+        $ref: '#/components/schemas/RequestFrame'
+      x-ndjson-response-frame-schema:
+        $ref: '#/components/schemas/ResponseFrame'
+      x-ndjson-json-schema:
+        relativePath: docs/sidecar_api_v1.frames.schema.json
+        requestRef: '#/$defs/request_frame'
+        responseRef: '#/$defs/response_frame'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: true
+      required: [api_version, status]
+      properties:
+        api_version:
+          type: string
+          const: '1'
+        status:
+          type: string
+          enum: [ok, starting, degraded]
+
+    ModelsResponse:
+      type: object
+      additionalProperties: true
+      required: [api_version, models, filter_profiles]
+      properties:
+        api_version:
+          type: string
+          const: '1'
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelInfo'
+        filter_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterProfileInfo'
+
+    ModelInfo:
+      type: object
+      additionalProperties: true
+      required:
+        - id
+        - display_name
+        - kind
+        - version
+        - status
+        - input_mode
+        - context_window
+        - training_corpus
+        - supported_fields
+        - required_fields
+        - chunk_policy
+        - output
+      properties:
+        id:
+          type: string
+          minLength: 1
+        display_name:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          enum: [sequence_anomaly]
+        version:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum: [ready, loading, unavailable]
+        input_mode:
+          type: string
+          enum: [ordered_lines]
+        context_window:
+          $ref: '#/components/schemas/ContextWindow'
+        training_corpus:
+          $ref: '#/components/schemas/TrainingCorpus'
+        supported_fields:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+        required_fields:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+        chunk_policy:
+          $ref: '#/components/schemas/ChunkPolicy'
+        output:
+          $ref: '#/components/schemas/OutputInfo'
+
+    ContextWindow:
+      type: object
+      additionalProperties: true
+      required: [max_lines, stride_default, requires_ordered_input]
+      properties:
+        max_lines:
+          type: integer
+          minimum: 1
+        stride_default:
+          type: integer
+          minimum: 1
+        requires_ordered_input:
+          type: boolean
+
+    TrainingCorpus:
+      type: object
+      additionalProperties: true
+      required: [filter_profile, description]
+      properties:
+        filter_profile:
+          type: string
+        description:
+          type: string
+
+    ChunkPolicy:
+      type: object
+      additionalProperties: true
+      required:
+        - recommended_lines_per_chunk
+        - max_lines_per_chunk
+        - max_bytes_per_chunk
+        - overlap_lines
+      properties:
+        recommended_lines_per_chunk:
+          type: integer
+          minimum: 1
+        max_lines_per_chunk:
+          type: integer
+          minimum: 1
+        max_bytes_per_chunk:
+          type: integer
+          minimum: 1
+        overlap_lines:
+          type: integer
+          minimum: 0
+
+    OutputInfo:
+      type: object
+      additionalProperties: true
+      required: [score_kind, higher_is_more_anomalous, supports_explanations]
+      properties:
+        score_kind:
+          type: string
+          enum: [anomaly]
+        higher_is_more_anomalous:
+          type: boolean
+        supports_explanations:
+          type: boolean
+
+    FilterProfileInfo:
+      type: object
+      additionalProperties: true
+      required: [id, description]
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+
+    LineId:
+      type: object
+      additionalProperties: true
+      required: [source_id, line_number, timestamp_unix_ms]
+      properties:
+        source_id:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        line_number:
+          type: integer
+          minimum: 0
+        timestamp_unix_ms:
+          type: integer
+          minimum: 0
+
+    InputLine:
+      type: object
+      additionalProperties: true
+      required: [line_id, message]
+      properties:
+        line_id:
+          $ref: '#/components/schemas/LineId'
+        raw:
+          type: string
+        message:
+          type: string
+        template_key:
+          type: string
+        source_name:
+          type: string
+
+    RejectedLine:
+      type: object
+      additionalProperties: true
+      required: [line_id, reason]
+      properties:
+        line_id:
+          $ref: '#/components/schemas/LineId'
+        reason:
+          type: string
+
+    ScoredLine:
+      type: object
+      additionalProperties: true
+      required: [line_id, score]
+      properties:
+        line_id:
+          $ref: '#/components/schemas/LineId'
+        score:
+          type: number
+          format: double
+        score_kind:
+          type: string
+          default: anomaly
+
+    Summary:
+      type: object
+      additionalProperties: true
+      required: [lines_received, lines_scored, lines_rejected]
+      properties:
+        lines_received:
+          type: integer
+          minimum: 0
+        lines_scored:
+          type: integer
+          minimum: 0
+        lines_rejected:
+          type: integer
+          minimum: 0
+
+    StartOptions:
+      type: object
+      additionalProperties: true
+      properties:
+        response_mode:
+          type: string
+          enum: [progressive, final_only]
+      default:
+        response_mode: progressive
+
+    StartFrame:
+      type: object
+      additionalProperties: true
+      required: [type, api_version, model_id, filtering_mode]
+      properties:
+        type:
+          type: string
+          const: start
+        api_version:
+          type: string
+          const: '1'
+        model_id:
+          type: string
+          minLength: 1
+        filtering_mode:
+          type: string
+          const: backend_authoritative
+        options:
+          $ref: '#/components/schemas/StartOptions'
+
+    LinesFrame:
+      type: object
+      additionalProperties: true
+      required: [type, chunk_index, lines]
+      properties:
+        type:
+          type: string
+          const: lines
+        chunk_index:
+          type: integer
+          minimum: 0
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/InputLine'
+
+    EndFrame:
+      type: object
+      additionalProperties: true
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: end
+
+    RequestFrame:
+      oneOf:
+        - $ref: '#/components/schemas/StartFrame'
+        - $ref: '#/components/schemas/LinesFrame'
+        - $ref: '#/components/schemas/EndFrame'
+      discriminator:
+        propertyName: type
+        mapping:
+          start: '#/components/schemas/StartFrame'
+          lines: '#/components/schemas/LinesFrame'
+          end: '#/components/schemas/EndFrame'
+
+    AcceptedFrame:
+      type: object
+      additionalProperties: true
+      required: [type, api_version, run_id, model_id, chunk_policy]
+      properties:
+        type:
+          type: string
+          const: accepted
+        api_version:
+          type: string
+          const: '1'
+        run_id:
+          type: string
+          minLength: 1
+        model_id:
+          type: string
+        chunk_policy:
+          $ref: '#/components/schemas/ChunkPolicy'
+
+    ScoresFrame:
+      type: object
+      additionalProperties: true
+      required: [type, chunk_index, accepted, rejected]
+      properties:
+        type:
+          type: string
+          const: scores
+        chunk_index:
+          type: integer
+          minimum: 0
+        accepted:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredLine'
+        rejected:
+          type: array
+          items:
+            $ref: '#/components/schemas/RejectedLine'
+
+    WarningFrame:
+      type: object
+      additionalProperties: true
+      required: [type, code, message]
+      properties:
+        type:
+          type: string
+          const: warning
+        code:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+
+    ErrorFrame:
+      type: object
+      additionalProperties: true
+      required: [type, code, message]
+      properties:
+        type:
+          type: string
+          const: error
+        code:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+
+    CompleteFrame:
+      type: object
+      additionalProperties: true
+      required: [type, summary]
+      properties:
+        type:
+          type: string
+          const: complete
+        summary:
+          $ref: '#/components/schemas/Summary'
+
+    ResponseFrame:
+      oneOf:
+        - $ref: '#/components/schemas/AcceptedFrame'
+        - $ref: '#/components/schemas/ScoresFrame'
+        - $ref: '#/components/schemas/WarningFrame'
+        - $ref: '#/components/schemas/ErrorFrame'
+        - $ref: '#/components/schemas/CompleteFrame'
+      discriminator:
+        propertyName: type
+        mapping:
+          accepted: '#/components/schemas/AcceptedFrame'
+          scores: '#/components/schemas/ScoresFrame'
+          warning: '#/components/schemas/WarningFrame'
+          error: '#/components/schemas/ErrorFrame'
+          complete: '#/components/schemas/CompleteFrame'
+
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: true
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
