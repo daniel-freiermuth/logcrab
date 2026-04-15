@@ -214,6 +214,17 @@ pub trait InputFileType: HasSlug {
     /// for detection; multiple types may share extensions).
     const FILE_EXTENSIONS: &'static [&'static str];
 
+    /// Version of the `message()` output format.
+    ///
+    /// Increment when the string returned by `message()` changes in a way that
+    /// would affect model training (i.e. the sidecar's training corpus was built
+    /// on a different normalisation). Sent in the WebSocket `start` frame so the
+    /// sidecar can detect training/inference mismatches per filetype.
+    ///
+    /// Default `1`. Override in `impl InputFileType` when `message()` semantics
+    /// change in a backwards-incompatible way.
+    const NORMALIZATION_VERSION: u32 = 1;
+
     /// Open the file for pull-based reading.
     ///
     /// `file_state` is the `Arc<FileState>` for this source — types that populate

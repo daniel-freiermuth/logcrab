@@ -77,6 +77,7 @@ anyhow = "1"
 profiling = { version = "1.0", default-features = false }
 tracy-client = { version = "0.18.4", optional = true }
 tokio = { version = "1.49.0", features = ["sync"] }
+tungstenite = "0.26"
 fs2 = "0.4"
 indexmap = { version = "2", features = ["rayon"] }
 
