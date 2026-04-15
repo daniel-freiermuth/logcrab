@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://logcrab.local/schemas/sidecar_api_v1.frames.schema.json",
-  "title": "LogCrab Sidecar API V1 NDJSON Frames",
-  "description": "Frame-level schema for request and response NDJSON objects used by /v1/score-stream.",
+  "title": "LogCrab Sidecar API V1 WebSocket Frames",
+  "description": "Frame-level schema for request and response WebSocket messages used by WS /v1/score-stream.",
   "$defs": {
     "line_id": {
       "type": "object",
@@ -82,7 +82,6 @@
       "required": [
         "recommended_lines_per_chunk",
         "max_lines_per_chunk",
-        "max_bytes_per_chunk",
         "overlap_lines"
       ],
       "properties": {
@@ -91,10 +90,6 @@
           "minimum": 1
         },
         "max_lines_per_chunk": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_bytes_per_chunk": {
           "type": "integer",
           "minimum": 1
         },
@@ -140,16 +135,6 @@
         },
         "filtering_mode": {
           "const": "backend_authoritative"
-        },
-        "options": {
-          "type": "object",
-          "additionalProperties": true,
-          "properties": {
-            "response_mode": {
-              "type": "string",
-              "enum": ["progressive", "final_only"]
-            }
-          }
         }
       }
     },
