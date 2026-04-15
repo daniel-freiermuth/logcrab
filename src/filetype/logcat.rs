@@ -22,8 +22,13 @@ pub struct LogcatLogLine {
     raw_line: String,
     /// Parsed timestamp
     pub timestamp: DateTime<Local>,
-    /// Message portion (everything after timestamp)
+    /// Full message portion (everything after timestamp: PID TID LEVEL TAG: text).
+    /// Used for UI display via [`LineType::display_message`].
     message_text: String,
+    /// Canonical "TAG: text" portion, stripped of PID/TID/LEVEL prefix.
+    /// Falls back to `message_text` when the level marker cannot be located.
+    /// Used for anomaly scoring, export, and scoring frames via [`LineType::message`].
+    tag_message: String,
     /// Original line number in source file
     pub line_number: usize,
     /// Anomaly score (mutable)
@@ -31,16 +36,20 @@ pub struct LogcatLogLine {
 }
 
 impl LogcatLogLine {
-    pub const fn new(
+    #[must_use]
+    pub fn new(
         raw_line: String,
         timestamp: DateTime<Local>,
         message_text: String,
         line_number: usize,
     ) -> Self {
+        let tag_message = extract_tag_message(&message_text)
+            .unwrap_or_else(|| message_text.clone());
         Self {
             raw_line,
             timestamp,
             message_text,
+            tag_message,
             line_number,
             anomaly_score: 0.0,
         }
@@ -74,7 +83,7 @@ impl LineType for LogcatLogLine {
     }
 
     fn message(&self) -> String {
-        self.message_text.clone()
+        self.tag_message.clone()
     }
 
     fn display_message(&self, _config: &(), file_state: &LogcatFileState) -> String {
@@ -241,6 +250,68 @@ pub fn is_logcat_line(line: &str) -> bool {
     LOGCAT_TIMESTAMP.is_match(line).unwrap_or(false)
 }
 
+/// Extract the `TAG: message` portion from the part of the logcat line that
+/// follows the timestamp (i.e. from `message_text`).
+///
+/// Standard threadtime format: `PID TID LEVEL TAG: message` — this function
+/// scans tokens left-to-right and returns everything after the first
+/// single-character Android log level (`V`/`D`/`I`/`W`/`E`/`F`/`S`) that
+/// appears after at least one preceding token (to avoid a false match when the
+/// very first word happens to be a single letter).
+///
+/// Returns `None` when no level marker is found; callers fall back to the full
+/// `message_text` in that case.
+pub fn extract_tag_message(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+
+    // Skip leading whitespace.
+    while i < n && bytes[i] == b' ' {
+        i += 1;
+    }
+
+    let mut token_count: usize = 0;
+
+    loop {
+        if i >= n {
+            break;
+        }
+
+        let tok_start = i;
+        while i < n && bytes[i] != b' ' {
+            i += 1;
+        }
+        let tok_len = i - tok_start;
+
+        // A single LEVEL character preceded by at least one token (PID/TID).
+        if tok_len == 1
+            && token_count >= 1
+            && matches!(
+                bytes[tok_start],
+                b'V' | b'D' | b'I' | b'W' | b'E' | b'F' | b'S'
+            )
+        {
+            // Skip whitespace after the level marker.
+            while i < n && bytes[i] == b' ' {
+                i += 1;
+            }
+            if i < n {
+                return Some(text[i..].to_string());
+            }
+        }
+
+        token_count += 1;
+
+        // Skip whitespace between tokens.
+        while i < n && bytes[i] == b' ' {
+            i += 1;
+        }
+    }
+
+    None
+}
+
 /// Parse a single logcat line and return the concrete `LogcatLogLine`.
 pub fn parse_logcat_line(raw: String, line_number: usize, year: i32) -> Option<LogcatLogLine> {
     if let Ok(Some(caps)) = LOGCAT_TIMESTAMP.captures(&raw) {
@@ -271,9 +342,15 @@ mod tests {
         let raw = "11-20 14:23:45.123  1234  5678 I ActivityManager: Start proc com.example.app"
             .to_string();
         let line = parse_logcat_line(raw, 1, 2024).expect("should parse logcat line");
+        // message_text: full portion after timestamp (PID TID L TAG: text)
         assert_eq!(
             line.message_text,
             "1234  5678 I ActivityManager: Start proc com.example.app"
+        );
+        // message() / tag_message: canonical TAG: text only
+        assert_eq!(
+            line.message(),
+            "ActivityManager: Start proc com.example.app"
         );
     }
 
@@ -287,13 +364,19 @@ mod tests {
             line.message_text,
             "root     8     8 I CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf"
         );
+        assert_eq!(
+            line.message(),
+            "CAM_INFO: CAM-ICP: cam_icp_mgr_process_dbg_buf"
+        );
     }
 
     #[test]
     fn test_fallback_format() {
+        // Lines without a recognisable level marker fall back to full message_text.
         let raw = "11-20 14:23:45.123 Some message without tag".to_string();
         let line = parse_logcat_line(raw, 1, 2024).expect("should parse logcat line");
         assert_eq!(line.message_text, "Some message without tag");
+        assert_eq!(line.message(), "Some message without tag");
     }
 
     #[test]
@@ -309,5 +392,21 @@ mod tests {
         assert!(is_logcat_line("01-01 00:00:00.000 test"));
         assert!(!is_logcat_line("2024-11-20 14:23:45 generic format"));
         assert!(!is_logcat_line("just some text"));
+    }
+
+    #[test]
+    fn test_extract_tag_message() {
+        assert_eq!(
+            extract_tag_message("1234  5678 I ActivityManager: Start proc"),
+            Some("ActivityManager: Start proc".to_string())
+        );
+        assert_eq!(
+            extract_tag_message("root     8     8 I CAM_INFO: detail"),
+            Some("CAM_INFO: detail".to_string())
+        );
+        // No level marker → None
+        assert_eq!(extract_tag_message("Some message without tag"), None);
+        // Single-token line → None (no preceding token before candidate level)
+        assert_eq!(extract_tag_message("I standalone"), None);
     }
 }
