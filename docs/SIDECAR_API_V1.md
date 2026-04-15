@@ -130,11 +130,11 @@ Example response:
         "description": "Android logcat WARN and ERROR lines with parsed message field"
       },
       "supported_fields": [
-        "raw",
         "message",
         "template_key",
         "timestamp_unix_ms",
-        "source_id"
+        "source_file",
+        "filetype"
       ],
       "required_fields": [
         "message"
@@ -227,10 +227,9 @@ Example:
         "line_number": 123,
         "timestamp_unix_ms": 1713093201000
       },
-      "raw": "2026-04-14 10:46:41 ERROR disk full",
       "message": "ERROR disk full",
-      "template_key": "ERROR <*>",
-      "source_name": "system.log"
+      "source_file": "system.log",
+      "filetype": "generic"
     },
     {
       "line_id": {
@@ -238,10 +237,9 @@ Example:
         "line_number": 124,
         "timestamp_unix_ms": 1713093202000
       },
-      "raw": "2026-04-14 10:46:42 INFO retrying",
       "message": "INFO retrying",
-      "template_key": "INFO <*>",
-      "source_name": "system.log"
+      "source_file": "system.log",
+      "filetype": "generic"
     }
   ]
 }
@@ -444,7 +442,7 @@ Frontend obligations:
 
 1. Call `GET /v1/models`.
 2. Let the user choose a model.
-3. Open `POST /v1/score-stream`.
+3. Open `WS /v1/score-stream`.
 4. Send exactly one `start` frame.
 5. Send zero or more `lines` frames.
 6. Send exactly one `end` frame.
@@ -518,11 +516,108 @@ Suggested internal flow:
 
 This fits the multi-source architecture direction where stable IDs are used as the durable join key.
 
+## Data Preprocessing and Training Pipeline
+
+### The Train/Inference Consistency Problem
+
+The model's vocab maps `template_key → integer ID`. If the string passed to
+`vocab.template_to_id` at inference time differs from the string that was used
+when the vocab was built, every affected token lookup produces `[UNK]` and
+scoring silently degrades. There are three independent sources of divergence
+that must all be eliminated:
+
+1. **Parsing** — who extracts `message` from the raw bytes.
+2. **Normalization** — what regex patterns produce `template_key` from `message`.
+3. **Timestamp** — whether calibration offsets are applied before the value is recorded.
+
+### Resolution: `logcrab export`
+
+A `logcrab export` subcommand (a second binary entry point on top of the
+existing filetype infrastructure) is the canonical bridge between raw log
+files and the training/inference pipeline.
+
+```
+logcrab export bugreport.log > data/raw/bugreport.ndjson
+```
+
+The output is NDJSON, one JSON object per line:
+
+```json
+{"line_number": 1, "timestamp_unix_ms": 1713093201000, "message": "ActivityManager: Start proc com.example.app", "source_file": "bugreport.log", "filetype": "logcat"}
+```
+
+This is the **only** parser of raw log files. The Python `parser.py` in the
+training repo is dead code and will be removed once all training scripts
+consume NDJSON.
+
+### `message` Field Definition
+
+`message` is defined per format:
+
+- **logcat:** `"TAG: text"` — tag and payload only, no PID, TID, or level character.
+  This matches what the Python `LogcatParser` used during training and
+  is the most information-dense signal for the model.
+- **DLT:** `format_body()` — `"{ecu} {session} {app_id} {ctx_id} {type} {payload}"`.
+  No config or calibration dependency.
+- **generic/dmesg/syslog:** post-timestamp, post-level text — the existing `message()` return value.
+
+The `LineType::message()` contract in the Rust codebase is annotated with the
+stability invariant: the returned string must be identical regardless of UI
+settings, time offsets, or calibration state.
+
+### `timestamp_unix_ms` Field Definition
+
+`timestamp_unix_ms` is always the **raw, uncalibrated** source-file timestamp.
+Calibration and time-offset corrections are UI/display concerns and must not
+enter the training or scoring data.
+
+In the Rust export tool and in the Rust code that assembles `lines` frames,
+this is produced by calling:
+
+```rust
+line.timestamp(&Default::default(), &Default::default())
+```
+
+The `LineType::timestamp()` trait contract is annotated with the matching
+stability invariant: calling with default config and default file state must
+return the raw source-file timestamp. For DLT this means `storage_time`
+(no boot-time correction, no `storage_offset_ms`).
+
+### Python Template Normalization
+
+The Python sidecar owns template normalization (`TemplateExtractor.extract_template`).
+It applies this function to the `message` field received in every `lines` frame,
+producing the `template_key` used for vocab lookup — the same function that was
+used when the vocab was built from exported NDJSON.
+
+The `template_key` field on `InputLine` is optional and treated as a debug hint
+only. The sidecar does not use it for vocab lookup.
+
+### Updated Training Pipeline
+
+```bash
+# 1. Export (run once per file; output is stable and can be committed)
+logcrab export bugreport.log > data/raw/bugreport.ndjson
+
+# 2. Build vocabulary
+python src/build_vocab.py --logs data/raw/bugreport.ndjson --output data/processed/sequences
+
+# 3. Train
+python src/pretrain_sequence.py --logs data/raw/bugreport.ndjson --vocab data/processed/sequences/vocab.pkl
+```
+
+The `.ndjson` files are reproducible — the same log file always yields the
+same output as long as the Rust parser is unchanged. If a parser bug is fixed,
+re-export and retrain.
+
+The export format is also the integration test fixture: a recorded `.ndjson`
+file can be replayed against the sidecar to verify scoring without a live
+log file.
+
 ## Open Questions
 
 These do not block V1, but should be decided during implementation:
 
-- Should `raw` always be sent, or should it be optional per model?
 - Should rejected lines be stored as `None`, a richer enum, or a side map in Rust?
 - How much filter profile detail should be exposed to the user versus kept descriptive only?
 - Should the Rust client use `tungstenite` (sync, matches existing `std::thread` worker pattern) or `tokio-tungstenite` (async)?
