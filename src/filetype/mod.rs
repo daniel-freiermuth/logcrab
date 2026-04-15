@@ -132,6 +132,12 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
     /// Must apply `file_state.time_offset_ms` (if the `FileState` type carries one)
     /// on top of the source-selected base timestamp. Used for display, sort, and
     /// filter operations. Call `raw_timestamp()` instead when computing a new offset.
+    ///
+    /// **Stability invariant:** calling with `Config::default()` and
+    /// `FileState::default()` must return the raw, source-file timestamp with no
+    /// user-applied corrections. The `logcrab export` tool and the scoring pipeline
+    /// rely on this to produce UI-independent, reproducible timestamps that are
+    /// consistent between training data generation and inference.
     fn timestamp(
         &self,
         config: &Self::Config,
@@ -140,8 +146,14 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
 
     /// Get the formatted message (may be constructed lazily).
     ///
-    /// Returns the raw log message without any display decorations.
-    /// Used for filtering, anomaly detection, and template key computation.
+    /// Returns the raw log message without any display decorations and without
+    /// any dependency on `Config` or `FileState`. Used for filtering, anomaly
+    /// detection, and template key computation.
+    ///
+    /// **Stability invariant:** the returned string must be identical regardless
+    /// of UI settings, time offsets, or calibration state. This is the string
+    /// emitted by `logcrab export` and sent in scoring `lines` frames — it must
+    /// match what the Python training pipeline saw when building the vocab.
     fn message(&self) -> String;
 
     /// Get the message as it should be displayed in the UI.

@@ -32,17 +32,20 @@
         "line_id": {
           "$ref": "#/$defs/line_id"
         },
-        "raw": {
-          "type": "string"
-        },
         "message": {
           "type": "string"
         },
         "template_key": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional debug hint. Python re-derives the canonical template_key from message."
         },
-        "source_name": {
-          "type": "string"
+        "source_file": {
+          "type": "string",
+          "description": "Original filename of the log source."
+        },
+        "filetype": {
+          "type": "string",
+          "description": "Detected file type, e.g. logcat, dlt, generic, dmesg."
         }
       }
     },

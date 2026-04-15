@@ -320,14 +320,18 @@ components:
       properties:
         line_id:
           $ref: '#/components/schemas/LineId'
-        raw:
-          type: string
         message:
           type: string
         template_key:
           type: string
-        source_name:
+          description: Optional debug hint; Python re-derives the canonical template_key from message.
+        source_file:
           type: string
+          description: Original filename of the log source.
+        filetype:
+          type: string
+          description: Detected file type (e.g. logcat, dlt, generic, dmesg).
+          example: logcat
 
     RejectedLine:
       type: object
