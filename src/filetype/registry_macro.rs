@@ -275,6 +275,72 @@ macro_rules! register_filetypes {
             None
         }
 
+        /// Detect the file type of `path` and export all lines as NDJSON to `out`.
+        ///
+        /// Mirrors the detection logic of [`try_open_binary`] and
+        /// [`open_text_source`] but has no UI dependencies — suitable for CLI
+        /// tools and headless pipelines. Binary types are matched first by magic
+        /// bytes; text types are then matched in registration order by content
+        /// sampling. The last text type must be a catch-all (e.g. `generic`).
+        ///
+        /// Timestamps are raw and uncalibrated (config and file-state are both
+        /// `Default`), honouring the stability invariant on
+        /// [`$crate::filetype::LineType::timestamp`].
+        pub fn export_dispatch(
+            path: &::std::path::Path,
+            out: &mut impl ::std::io::Write,
+        ) -> ::anyhow::Result<()> {
+            use ::anyhow::Context as _;
+            use ::std::io::Read as _;
+
+            // ── Binary: magic-byte detection ─────────────────────────────────
+            let mut header = [0u8; 16];
+            let n = ::std::fs::File::open(path)
+                .with_context(|| format!("cannot open {}", path.display()))?
+                .read(&mut header)
+                .with_context(|| format!("cannot read header of {}", path.display()))?;
+            let header = &header[..n];
+
+            if n >= 4 {
+                $(
+                    if <$b_ftype as $crate::filetype::BinaryFileType>::MAGIC_BYTES
+                        .iter()
+                        .any(|p| header.starts_with(p))
+                    {
+                        return $crate::export::export_typed::<$b_ftype>(
+                            path,
+                            <$b_ftype as $crate::filetype::HasSlug>::SLUG,
+                            out,
+                        );
+                    }
+                )*
+            }
+
+            // ── Text: content sampling ────────────────────────────────────────
+            const MAX_SAMPLE_BYTES: u64 = 100 * 1024;
+            let mut sample = ::std::vec::Vec::new();
+            ::std::fs::File::open(path)
+                .with_context(|| format!("cannot open {}", path.display()))?
+                .take(MAX_SAMPLE_BYTES)
+                .read_to_end(&mut sample)
+                .with_context(|| format!("cannot sample {}", path.display()))?;
+
+            $(
+                if <$t_ftype as $crate::filetype::TextFileType>::looks_like(
+                    &mut ::std::io::Cursor::new(&sample),
+                ) {
+                    return $crate::export::export_typed::<$t_ftype>(
+                        path,
+                        <$t_ftype as $crate::filetype::HasSlug>::SLUG,
+                        out,
+                    );
+                }
+            )*
+
+            // Should never be reached if the last text type is a catch-all.
+            ::anyhow::bail!("export_dispatch: no file type matched for {}", path.display())
+        }
+
         // ── DataSourceVariant ────────────────────────────────────────────────────
 
         #[derive(Debug, Clone)]
