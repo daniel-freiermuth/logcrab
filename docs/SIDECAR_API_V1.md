@@ -7,8 +7,7 @@ The goal is to make the contract concrete enough to implement on both sides whil
 ## Status
 
 - Proposed design
-- Intended transport: localhost HTTP
-- Intended payload format for streaming endpoint: NDJSON
+- Intended transport: localhost HTTP (health, models) and WebSocket (scoring)
 - Companion specification: `docs/sidecar_api_v1.openapi.yaml`
 - Companion frame schema: `docs/sidecar_api_v1.frames.schema.json`
 
@@ -44,12 +43,12 @@ The goal is to make the contract concrete enough to implement on both sides whil
 
 A scoring run is one complete attempt to score one loaded corpus with one selected model.
 
-In V1, a scoring run is represented by one long-lived HTTP request/response pair. Connection lifetime is session lifetime.
+In V1, a scoring run corresponds to one WebSocket connection. Connection lifetime is run lifetime.
 
-- Opening the request starts the run.
-- Streaming request frames feeds input lines.
-- The request `end` frame signals end-of-input.
-- The response `complete` frame signals end-of-run.
+- Opening the connection starts the run.
+- Sending `lines` frames feeds input lines.
+- The `end` frame signals end-of-input.
+- The `complete` response frame signals end-of-run.
 - Closing the connection early cancels the run.
 
 ### Scoring Corpus
@@ -80,13 +79,13 @@ The sidecar must treat this identifier as opaque identity. It may inspect fields
 
 ## API Surface
 
-V1 exposes two endpoints:
+V1 exposes three endpoints:
 
 1. `GET /v1/health`
 2. `GET /v1/models`
-3. `POST /v1/score-stream`
+3. `WS /v1/score-stream`
 
-`POST /v1/score-stream` is the primary protocol. It replaces a create-session / append-chunks / finalize lifecycle.
+`WS /v1/score-stream` is the primary protocol. It replaces a create-session / append-chunks / finalize lifecycle.
 
 ## Endpoint: `GET /v1/health`
 
@@ -148,7 +147,6 @@ Example response:
       "chunk_policy": {
         "recommended_lines_per_chunk": 512,
         "max_lines_per_chunk": 1024,
-        "max_bytes_per_chunk": 1048576,
         "overlap_lines": 128
       },
       "output": {
@@ -173,28 +171,21 @@ Example response:
 - The frontend may show them in the UI to explain what a model will score.
 - The backend remains authoritative for what is accepted.
 
-## Endpoint: `POST /v1/score-stream`
+## Endpoint: `WS /v1/score-stream`
 
 ### Transport
 
-Request:
+- Protocol: WebSocket (`ws://127.0.0.1:8765/v1/score-stream`)
+- Each WebSocket text message is one JSON object with a `type` discriminator.
+- One connection corresponds to exactly one scoring run. Close after `complete` or `error`.
+- The server responds to WebSocket ping frames automatically.
 
-- Method: `POST`
-- Content-Type: `application/x-ndjson`
+### Why WebSocket
 
-Response:
-
-- Status: `200 OK` on accepted stream
-- Content-Type: `application/x-ndjson`
-
-Each line of the request and response body is one JSON object with a `type` discriminator.
-
-### Why NDJSON
-
-- Works with one open connection as one scoring run.
-- Supports incremental upload and incremental output.
-- Avoids buffering an entire corpus into one JSON document.
-- Easy to inspect manually.
+- Native message framing: no newline delimiters or byte stream splitting needed.
+- True bidirectional: the server can emit `scores` frames while the client is still sending `lines` frames.
+- Clean connection lifetime: one run per connection, disconnect cancels the run.
+- Debuggable with `wscat` or any WebSocket client.
 
 ## Request Frames
 
@@ -215,10 +206,7 @@ Example:
   "type": "start",
   "api_version": "1",
   "model_id": "logbert-android-errors",
-  "filtering_mode": "backend_authoritative",
-  "options": {
-    "response_mode": "progressive"
-  }
+  "filtering_mode": "backend_authoritative"
 }
 ```
 
@@ -227,7 +215,6 @@ Fields:
 - `api_version`: protocol version string
 - `model_id`: selected backend model
 - `filtering_mode`: must be `backend_authoritative` in V1
-- `options.response_mode`: `progressive` or `final_only`
 
 ### `lines`
 
@@ -310,7 +297,6 @@ Example:
   "chunk_policy": {
     "recommended_lines_per_chunk": 512,
     "max_lines_per_chunk": 1024,
-    "max_bytes_per_chunk": 1048576,
     "overlap_lines": 128
   }
 }
@@ -448,20 +434,18 @@ The scoring run represents one whole corpus. Chunks only exist to avoid huge req
 
 The backend publishes chunking hints via `GET /v1/models` and echoes them in `accepted`.
 
-The frontend may choose smaller chunks than recommended. It must not exceed backend-published maximums.
+The frontend may choose smaller chunks than recommended. It must not exceed the backend-published `max_lines_per_chunk`.
 
 ## Error Semantics
 
-Recommended HTTP status usage:
+WebSocket upgrade HTTP status codes:
 
-- `200`: stream accepted; semantic errors are sent as `error` frames
-- `400`: malformed HTTP request or invalid non-stream setup
-- `404`: unknown endpoint
-- `413`: request body or chunk too large before stream processing starts
-- `500`: sidecar internal error before an `error` frame can be produced
-- `503`: model server not ready
+- `101`: upgrade accepted, connection is now a WebSocket
+- `400`: invalid upgrade request or unknown path
+- `500`: sidecar internal error during upgrade
+- `503`: sidecar not ready (model loading or unavailable)
 
-Within an accepted scoring stream, semantic failures should use `error` frames instead of switching status codes mid-stream.
+Within an established connection, semantic failures must use `error` frames. The server closes the connection after sending an `error` frame.
 
 ## State Machine
 
@@ -493,7 +477,7 @@ Recommended approach:
 - Define frame schemas in JSON Schema.
 - Generate Rust request/response types from the schema where practical.
 - Use Pydantic models in Python that mirror the same schema.
-- Add contract tests with recorded NDJSON streams in CI.
+- Add contract tests with recorded WebSocket message sequences in CI.
 
 Important nuance:
 
@@ -518,7 +502,6 @@ Likely V2 additions that should not require redesign:
 - model warmup and preload controls
 - richer filter profile metadata
 - async-only models that buffer more before first output
-- optional SSE or WebSocket transport if the HTTP stack becomes limiting
 
 ## Explicitly Deferred From V1
 
@@ -550,6 +533,5 @@ These do not block V1, but should be decided during implementation:
 
 - Should `raw` always be sent, or should it be optional per model?
 - Should rejected lines be stored as `None`, a richer enum, or a side map in Rust?
-- Should response mode default to progressive or final-only?
 - How much filter profile detail should be exposed to the user versus kept descriptive only?
-- Does the chosen Rust HTTP stack support the desired full-duplex streaming shape cleanly enough, or is request-then-stream-response sequencing needed in practice?
+- Should the Rust client use `tungstenite` (sync, matches existing `std::thread` worker pattern) or `tokio-tungstenite` (async)?
