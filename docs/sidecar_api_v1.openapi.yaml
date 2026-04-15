@@ -88,7 +88,6 @@ paths:
                         chunk_policy:
                           recommended_lines_per_chunk: 512
                           max_lines_per_chunk: 1024
-                          max_bytes_per_chunk: 1048576
                           overlap_lines: 128
                         output:
                           score_kind: anomaly
@@ -99,65 +98,36 @@ paths:
                         description: Android logcat WARN and ERROR lines with parsed message field
 
   /v1/score-stream:
-    post:
+    get:
       tags: [scoring]
-      summary: Score one corpus over one open NDJSON stream
+      summary: WebSocket upgrade for streaming anomaly scoring
       description: |
-        One open connection corresponds to one scoring run.
+        WebSocket endpoint. Clients must connect using the WebSocket protocol
+        (`ws://127.0.0.1:8765/v1/score-stream`).
 
-        Request body:
-        - NDJSON stream of `StartFrame`, zero or more `LinesFrame`, then `EndFrame`.
+        One WebSocket connection corresponds to one scoring run.
 
-        Response body:
-        - NDJSON stream of `AcceptedFrame`, zero or more `ScoresFrame` and/or
-          `WarningFrame`, then exactly one terminal frame: `CompleteFrame` or `ErrorFrame`.
+        Client sends: `StartFrame`, zero or more `LinesFrame`, then `EndFrame`.
+        Server sends: `AcceptedFrame`, zero or more `ScoresFrame` and/or
+        `WarningFrame`, then exactly one terminal frame: `CompleteFrame` or `ErrorFrame`.
+
+        Each WebSocket text message is one JSON object. Frame schemas are defined
+        in `docs/sidecar_api_v1.frames.schema.json` and referenced below.
+
+        Note: OpenAPI 3.1 does not model WebSocket natively. This entry documents
+        the upgrade endpoint and links to the frame schemas.
       operationId: scoreStream
-      requestBody:
-        required: true
-        content:
-          application/x-ndjson:
-            schema:
-              type: string
-              description: |
-                NDJSON request stream. Each line is one JSON object frame.
-                See `x-ndjson-request-frame-schema` for per-line schema.
-            examples:
-              minimal:
-                summary: Minimal valid stream
-                value: |
-                  {"type":"start","api_version":"1","model_id":"logbert-android-errors","filtering_mode":"backend_authoritative","options":{"response_mode":"progressive"}}
-                  {"type":"lines","chunk_index":0,"lines":[{"line_id":{"source_id":0,"line_number":123,"timestamp_unix_ms":1713093201000},"raw":"2026-04-14 10:46:41 ERROR disk full","message":"ERROR disk full","template_key":"ERROR <*>","source_name":"system.log"}]}
-                  {"type":"end"}
       responses:
-        '200':
-          description: Accepted stream; semantic status is conveyed by response frames
-          content:
-            application/x-ndjson:
-              schema:
-                type: string
-                description: |
-                  NDJSON response stream. Each line is one JSON object frame.
-                  See `x-ndjson-response-frame-schema` for per-line schema.
-              examples:
-                success:
-                  value: |
-                    {"type":"accepted","api_version":"1","run_id":"run_01hsz2j3p6k4n8m","model_id":"logbert-android-errors","chunk_policy":{"recommended_lines_per_chunk":512,"max_lines_per_chunk":1024,"max_bytes_per_chunk":1048576,"overlap_lines":128}}
-                    {"type":"scores","chunk_index":0,"accepted":[{"line_id":{"source_id":0,"line_number":123,"timestamp_unix_ms":1713093201000},"score":3.421,"score_kind":"anomaly"}],"rejected":[{"line_id":{"source_id":0,"line_number":124,"timestamp_unix_ms":1713093202000},"reason":"filtered_out_by_model_corpus"}]}
-                    {"type":"complete","summary":{"lines_received":1,"lines_scored":1,"lines_rejected":0}}
+        '101':
+          description: Switching Protocols — WebSocket connection established
         '400':
-          description: Invalid non-stream setup (headers, content type, malformed initial request)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '413':
-          description: Payload too large before stream processing can proceed
+          description: Invalid WebSocket upgrade request
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Sidecar failure before stream frames can be emitted
+          description: Sidecar internal error during upgrade
           content:
             application/json:
               schema:
@@ -168,11 +138,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-      x-ndjson-request-frame-schema:
+      x-ws-client-frame-schema:
         $ref: '#/components/schemas/RequestFrame'
-      x-ndjson-response-frame-schema:
+      x-ws-server-frame-schema:
         $ref: '#/components/schemas/ResponseFrame'
-      x-ndjson-json-schema:
+      x-ws-json-schema:
         relativePath: docs/sidecar_api_v1.frames.schema.json
         requestRef: '#/$defs/request_frame'
         responseRef: '#/$defs/response_frame'
@@ -292,16 +262,12 @@ components:
       required:
         - recommended_lines_per_chunk
         - max_lines_per_chunk
-        - max_bytes_per_chunk
         - overlap_lines
       properties:
         recommended_lines_per_chunk:
           type: integer
           minimum: 1
         max_lines_per_chunk:
-          type: integer
-          minimum: 1
-        max_bytes_per_chunk:
           type: integer
           minimum: 1
         overlap_lines:
@@ -402,16 +368,6 @@ components:
           type: integer
           minimum: 0
 
-    StartOptions:
-      type: object
-      additionalProperties: true
-      properties:
-        response_mode:
-          type: string
-          enum: [progressive, final_only]
-      default:
-        response_mode: progressive
-
     StartFrame:
       type: object
       additionalProperties: true
@@ -429,8 +385,6 @@ components:
         filtering_mode:
           type: string
           const: backend_authoritative
-        options:
-          $ref: '#/components/schemas/StartOptions'
 
     LinesFrame:
       type: object
