@@ -119,52 +119,71 @@ impl SidecarSettingsWindow {
                         self.load_models();
                     }
                 } else if self.available_models.is_empty() {
-                    ui.label("No models found in checkpoints directory");
+                    ui.label("No models available");
                 } else {
                     ui.label("Select model:");
 
-                    let current_selected = config.selected_model.as_deref().unwrap_or("");
+                    let current_id = config.selected_model.as_deref().unwrap_or("");
 
                     egui::ComboBox::from_label("")
-                        .selected_text(if current_selected.is_empty() {
+                        .selected_text(if current_id.is_empty() {
                             "Select a model...".to_string()
                         } else {
                             self.available_models
                                 .iter()
-                                .find(|m| m.name == current_selected)
-                                .map_or_else(
-                                    || current_selected.to_string(),
-                                    |m| m.display_name.clone(),
-                                )
+                                .find(|m| m.id == current_id)
+                                .map_or_else(|| current_id.to_string(), |m| m.name.clone())
                         })
                         .show_ui(ui, |ui| {
                             for model in &self.available_models {
+                                // Show compatibility indicator alongside the name.
+                                let norm_versions =
+                                    crate::core::log_store::all_normalization_versions();
+                                let compatible =
+                                    is_normalization_compatible(model, &norm_versions);
+                                let label = if compatible {
+                                    model.name.clone()
+                                } else {
+                                    format!("⚠ {}", model.name)
+                                };
                                 if ui
                                     .selectable_label(
-                                        config.selected_model.as_deref() == Some(&model.name),
-                                        &model.display_name,
+                                        config.selected_model.as_deref() == Some(&model.id),
+                                        label,
                                     )
                                     .clicked()
                                 {
-                                    config.selected_model = Some(model.name.clone());
-                                    config.selected_model_path = Some(model.model_path.clone());
-                                    config.selected_vocab_path = Some(model.vocab_path.clone());
+                                    config.selected_model = Some(model.id.clone());
                                 }
                             }
                         });
 
-                    let selected_model_info = config.selected_model.as_ref().and_then(|selected| {
-                        self.available_models
-                            .iter()
-                            .find(|m| &m.name == selected)
-                            .cloned()
-                    });
-
-                    if let Some(model) = selected_model_info {
+                    // Details for the selected model
+                    if let Some(model) = config.selected_model.as_ref().and_then(|id| {
+                        self.available_models.iter().find(|m| &m.id == id)
+                    }) {
                         ui.add_space(5.0);
                         ui.label(RichText::new("Model Details:").weak());
-                        ui.label(format!("Path: {}", model.model_path));
-                        ui.label(format!("Vocab: {}", model.vocab_path));
+                        ui.label(format!("Architecture: {}", model.architecture));
+                        ui.label(format!("Version: {}", model.version));
+                        ui.label(format!("Status: {}", model.status));
+
+                        let norm_versions = crate::core::log_store::all_normalization_versions();
+                        let mismatches = normalization_mismatches(model, &norm_versions);
+                        if mismatches.is_empty() {
+                            ui.colored_label(Color32::GREEN, "✓ Normalisation versions match");
+                        } else {
+                            ui.add_space(3.0);
+                            ui.colored_label(Color32::YELLOW, "⚠ Normalisation version mismatch:");
+                            for (slug, trained_on, current) in &mismatches {
+                                ui.label(format!(
+                                    "  {slug}: trained on v{trained_on}, frontend is v{current}"
+                                ));
+                            }
+                            ui.label(RichText::new(
+                                "Scores may be less accurate for affected file types.",
+                            ).weak());
+                        }
                     }
                 }
             });
@@ -267,3 +286,33 @@ impl SidecarSettingsWindow {
         }
     }
 }
+
+/// Returns `true` when every filetype in the model's `normalization_versions`
+/// map matches the frontend's current version.
+fn is_normalization_compatible(
+    model: &ModelInfo,
+    frontend_versions: &std::collections::HashMap<&str, u32>,
+) -> bool {
+    normalization_mismatches(model, frontend_versions).is_empty()
+}
+
+/// Returns `(slug, trained_on_version, frontend_version)` for every mismatch.
+fn normalization_mismatches(
+    model: &ModelInfo,
+    frontend_versions: &std::collections::HashMap<&str, u32>,
+) -> Vec<(String, u32, u32)> {
+    model
+        .training_corpus
+        .normalization_versions
+        .iter()
+        .filter_map(|(slug, &trained_on)| {
+            let current = *frontend_versions.get(slug.as_str()).unwrap_or(&1);
+            if current != trained_on {
+                Some((slug.clone(), trained_on, current))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+

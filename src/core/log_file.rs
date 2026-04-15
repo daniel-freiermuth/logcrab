@@ -16,7 +16,10 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::anomaly::{create_default_scorer, normalize_scores, sidecar_client::SidecarClient};
+use crate::anomaly::{
+    create_default_scorer, normalize_scores,
+    sidecar_client::{InputLine, SidecarClient},
+};
 use crate::core::log_store::{DataSourceVariant, GlobalFileConfig, LogStore, SourceData};
 use crate::core::{ChunkedLoader, SavedFilter, SavedHighlight};
 use crate::filetype::{InputFileType, LineType};
@@ -38,8 +41,8 @@ pub struct ScoringConfig {
     pub use_sidecar: bool,
     pub sidecar_host: String,
     pub sidecar_port: u16,
-    pub model_path: Option<String>,
-    pub vocab_path: Option<String>,
+    /// Model id (slug) to use. `None` means skip sidecar scoring.
+    pub model_id: Option<String>,
 }
 
 /// Handles asynchronous loading and processing of log files
@@ -250,17 +253,19 @@ impl LogFileLoader {
         // Run sidecar scoring if configured
         if let Some(config) = store.sidecar_config() {
             if config.use_sidecar {
-                Self::score_with_sidecar(data_source, toast, store, source_id, &config);
+                Self::score_with_sidecar(data_source, path, toast, store, source_id, &config);
             }
         }
     }
 
-    /// Score lines using the LogBERT sidecar server.
+    /// Score lines using the LogBERT sidecar server — V1 WebSocket protocol.
     ///
-    /// Connects to the already-running sidecar, sends lines in chunked batches,
-    /// and stores the resulting scores in the store's sidecar score storage.
+    /// Builds `InputLine`s from the source data, sends them over a WebSocket
+    /// connection, and stores the resulting scores in the store's sidecar score
+    /// storage.
     fn score_with_sidecar<FT>(
         data_source: &Arc<SourceData<FT>>,
+        path: &Path,
         toast: &ProgressToastHandle,
         store: &Arc<LogStore>,
         source_id: u64,
@@ -269,35 +274,19 @@ impl LogFileLoader {
         FT: InputFileType,
         FT::LineType: Clone,
     {
-        tracing::info!("Starting sidecar-based anomaly scoring");
+        let Some(model_id) = config.model_id.as_deref() else {
+            tracing::info!("sidecar scoring skipped: no model selected");
+            return;
+        };
 
+        tracing::info!("Starting sidecar scoring with model {model_id}");
         toast.set_title("LogBERT Sidecar Scoring");
-        toast.update(0.0, "Connecting to LogBERT sidecar...");
+        toast.update(0.0, "Connecting to sidecar...");
 
         let client = match SidecarClient::connect(&config.sidecar_host, config.sidecar_port) {
-            Ok(client) => match client.health_check() {
-                Ok(health) if health.model_loaded => {
-                    tracing::info!(
-                        "Connected to sidecar on {}:{}, device: {}",
-                        config.sidecar_host,
-                        config.sidecar_port,
-                        health.device
-                    );
-                    client
-                }
-                Ok(_) => {
-                    tracing::error!("Sidecar model not loaded");
-                    toast.set_error("Sidecar model not loaded");
-                    return;
-                }
-                Err(e) => {
-                    tracing::error!("Sidecar health check failed: {e}");
-                    toast.set_error(format!("Sidecar not responding: {e}"));
-                    return;
-                }
-            },
+            Ok(c) => c,
             Err(e) => {
-                tracing::error!("Failed to connect to sidecar: {e}");
+                tracing::error!("Failed to create sidecar client: {e}");
                 toast.set_error(format!(
                     "Failed to connect to sidecar at {}:{}: {e}",
                     config.sidecar_host, config.sidecar_port
@@ -306,49 +295,73 @@ impl LogFileLoader {
             }
         };
 
-        let total_lines = data_source.len();
-        let chunk_size = 1_000;
-        let overlap = 512;
-        let mut raw_scores: Vec<f64> = Vec::with_capacity(total_lines);
-
-        let model_path = config.model_path.as_deref().unwrap_or_default();
-        let vocab_path = config.vocab_path.as_deref().unwrap_or_default();
-
-        let mut start = 0;
-        while start < total_lines {
-            let end = (start + chunk_size).min(total_lines);
-            let context_start = start.saturating_sub(overlap);
-            let context_end = (end + overlap).min(total_lines);
-
-            toast.update(
-                end as f32 / total_lines as f32,
-                format!("LogBERT scoring... ({end}/{total_lines})"),
-            );
-
-            let logs: Vec<String> = (context_start..context_end)
-                .filter_map(|idx| data_source.get_as_log_line(idx).map(|l| l.raw))
-                .collect();
-
-            match client.score_batch(&logs, model_path, vocab_path) {
-                Ok(scores) => {
-                    let scores_offset = start - context_start;
-                    let scores_len = end - start;
-                    let chunk_scores = &scores[scores_offset..scores_offset + scores_len];
-                    // Scale entropy-weighted scores by 6x to match 0-100 range
-                    raw_scores.extend(chunk_scores.iter().map(|&s| f64::from(s) * 6.0));
-                }
-                Err(e) => {
-                    tracing::error!("Sidecar scoring failed at line {start}: {e}");
-                    toast.set_error(format!("Sidecar error: {e}"));
-                    raw_scores.resize(total_lines, 0.0);
-                    break;
-                }
-            }
-
-            start = end;
+        // Quick health check — fast 30 s timeout already set on the HTTP client.
+        if let Err(e) = client.health_check() {
+            tracing::error!("Sidecar health check failed: {e}");
+            toast.set_error(format!("Sidecar not responding: {e}"));
+            return;
         }
 
-        tracing::info!("Sidecar scoring completed for {} lines", raw_scores.len());
+        // ── Build InputLines ─────────────────────────────────────────────────
+        toast.update(0.0, "Preparing lines...");
+        let total_lines = data_source.len();
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
+
+        let mut input_lines: Vec<InputLine> = Vec::with_capacity(total_lines);
+        for idx in 0..total_lines {
+            let Some(log_line) = data_source.get_as_log_line(idx) else {
+                continue;
+            };
+            let template_key = crate::parser::normalize_message(&log_line.message);
+            input_lines.push(InputLine::new(
+                // Protocol caps source_id to u16 (0–65535); internal IDs are u64 but
+                // in practice never exceed that range within a single session.
+                source_id as u16,
+                idx,
+                // Spec requires minimum: 0; chrono returns i64 so clamp negatives.
+                log_line.timestamp.timestamp_millis().max(0) as u64,
+                log_line.message,
+                Some(template_key),
+                file_name.clone(),
+                Some(FT::SLUG.to_string()),
+            ));
+        }
+
+        // ── Score stream ─────────────────────────────────────────────────────
+        toast.update(0.1, format!("Scoring {} lines...", input_lines.len()));
+
+        let norm_versions = crate::core::log_store::all_normalization_versions();
+        // Convert to &str keys as required by score_stream.
+        let norm_versions_ref: std::collections::HashMap<&str, u32> =
+            norm_versions.iter().map(|(&k, &v)| (k, v)).collect();
+
+        let result = match client.score_stream(model_id, &norm_versions_ref, &input_lines) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Sidecar score_stream failed: {e}");
+                toast.set_error(format!("Sidecar scoring error: {e}"));
+                return;
+            }
+        };
+
+        for warning in &result.warnings {
+            tracing::warn!("Sidecar: {warning}");
+        }
+
+        // ── Map scores back to a contiguous Vec<f64> ────────────────────────
+        // Lines absent from `result.scored` were filtered; they receive 0.0.
+        let raw_scores: Vec<f64> = (0..total_lines)
+            .map(|idx| result.scored.get(&idx).map_or(0.0, |e| e.score))
+            .collect();
+
+        tracing::info!(
+            "Sidecar scoring complete: {}/{} lines scored for {}",
+            result.scored.len(),
+            total_lines,
+            path.display()
+        );
         store.set_sidecar_scores(source_id, &raw_scores);
         toast.update(1.0, "ML scoring done!");
     }

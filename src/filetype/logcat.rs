@@ -146,6 +146,10 @@ impl InputFileType for LogcatFileType {
 
     const FILE_EXTENSIONS: &'static [&'static str] = &["txt", "log"];
 
+    /// Version 2: `message()` returns `"TAG: text"` instead of the full
+    /// `"PID TID LEVEL TAG: text"` line, matching the Python training export.
+    const NORMALIZATION_VERSION: u32 = 2;
+
     /// Open a logcat file for pull-based reading.
     ///
     /// Logcat lines carry no year; the current calendar year is used.

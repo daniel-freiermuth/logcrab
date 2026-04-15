@@ -89,6 +89,9 @@ impl InputFileType for BugreportFileType {
 
     const FILE_EXTENSIONS: &'static [&'static str] = &["txt", "zip"];
 
+    /// Version 2: shares logcat's `message()` semantics (`"TAG: text"`).
+    const NORMALIZATION_VERSION: u32 = 2;
+
     fn open(
         path: &::std::path::Path,
         _config: (),

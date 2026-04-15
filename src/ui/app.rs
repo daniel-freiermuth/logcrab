@@ -143,8 +143,7 @@ impl LogCrabApp {
             use_sidecar: self.global_config.use_sidecar_scoring,
             sidecar_host: self.global_config.sidecar_host.clone(),
             sidecar_port: self.global_config.sidecar_port,
-            model_path: self.global_config.selected_model_path.clone(),
-            vocab_path: self.global_config.selected_vocab_path.clone(),
+            model_id: self.global_config.selected_model.clone(),
         });
     }
 
