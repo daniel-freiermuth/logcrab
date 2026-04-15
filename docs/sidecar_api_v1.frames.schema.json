@@ -6,7 +6,7 @@
   "$defs": {
     "line_id": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["source_id", "line_number", "timestamp_unix_ms"],
       "properties": {
         "source_id": {
@@ -26,7 +26,7 @@
     },
     "input_line": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["line_id", "message"],
       "properties": {
         "line_id": {
@@ -51,8 +51,8 @@
     },
     "scored_line": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["line_id", "score"],
+      "additionalProperties": false,
+      "required": ["line_id", "score", "target_is_unk"],
       "properties": {
         "line_id": {
           "$ref": "#/$defs/line_id"
@@ -63,25 +63,31 @@
         "score_kind": {
           "type": "string",
           "default": "anomaly"
+        },
+        "target_is_unk": {
+          "type": "boolean",
+          "description": "True when the line's template was not in the model vocabulary and the [UNK] token embedding was used. The score is still valid but carries less signal."
         }
       }
     },
-    "rejected_line": {
+    "filtered_line": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["line_id", "reason"],
       "properties": {
         "line_id": {
           "$ref": "#/$defs/line_id"
         },
         "reason": {
-          "type": "string"
+          "type": "string",
+          "enum": ["out_of_corpus", "empty_after_normalization"],
+          "description": "Why the model's corpus filter rejected this line."
         }
       }
     },
     "chunk_policy": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": [
         "recommended_lines_per_chunk",
         "max_lines_per_chunk",
@@ -104,8 +110,8 @@
     },
     "summary": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["lines_received", "lines_scored", "lines_rejected"],
+      "additionalProperties": false,
+      "required": ["lines_received", "lines_scored", "lines_filtered"],
       "properties": {
         "lines_received": {
           "type": "integer",
@@ -115,7 +121,7 @@
           "type": "integer",
           "minimum": 0
         },
-        "lines_rejected": {
+        "lines_filtered": {
           "type": "integer",
           "minimum": 0
         }
@@ -123,8 +129,8 @@
     },
     "start_frame": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["type", "api_version", "model_id", "filtering_mode"],
+      "additionalProperties": false,
+      "required": ["type", "api_version", "model_id", "filtering_mode", "normalization_versions"],
       "properties": {
         "type": {
           "const": "start"
@@ -138,12 +144,20 @@
         },
         "filtering_mode": {
           "const": "backend_authoritative"
+        },
+        "normalization_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "Map of filetype slug to the integer version of the normalizer currently in use by this frontend build."
         }
       }
     },
     "lines_frame": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["type", "chunk_index", "lines"],
       "properties": {
         "type": {
@@ -163,7 +177,7 @@
     },
     "end_frame": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["type"],
       "properties": {
         "type": {
@@ -173,7 +187,7 @@
     },
     "accepted_frame": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["type", "api_version", "run_id", "model_id", "chunk_policy"],
       "properties": {
         "type": {
@@ -197,8 +211,8 @@
     },
     "scores_frame": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["type", "chunk_index", "accepted", "rejected"],
+      "additionalProperties": false,
+      "required": ["type", "chunk_index", "scored", "filtered"],
       "properties": {
         "type": {
           "const": "scores"
@@ -207,23 +221,23 @@
           "type": "integer",
           "minimum": 0
         },
-        "accepted": {
+        "scored": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/scored_line"
           }
         },
-        "rejected": {
+        "filtered": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/rejected_line"
+            "$ref": "#/$defs/filtered_line"
           }
         }
       }
     },
     "warning_frame": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["type", "code", "message"],
       "properties": {
         "type": {
@@ -241,7 +255,7 @@
     },
     "error_frame": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["type", "code", "message"],
       "properties": {
         "type": {
@@ -259,7 +273,7 @@
     },
     "complete_frame": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["type", "summary"],
       "properties": {
         "type": {

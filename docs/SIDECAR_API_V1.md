@@ -120,7 +120,8 @@ Example response:
   "models": [
     {
       "id": "logbert-android-errors",
-      "display_name": "LogBERT Android Errors",
+      "name": "Android Errors (WARN/ERROR) — logcat 2026",
+      "architecture": "temporal_logbert",
       "kind": "sequence_anomaly",
       "version": "2026-04-14",
       "status": "ready",
@@ -132,7 +133,10 @@ Example response:
       },
       "training_corpus": {
         "filter_profile": "android-errors-v1",
-        "description": "Android logcat WARN and ERROR lines with parsed message field"
+        "description": "Android logcat WARN and ERROR lines with parsed message field",
+        "normalization_versions": {
+          "logcat": 2
+        }
       },
       "supported_fields": [
         "message",
@@ -170,6 +174,12 @@ Example response:
 - `filter_profiles` are descriptive metadata, not frontend-owned filtering logic.
 - The frontend may show them in the UI to explain what a model will score.
 - The backend remains authoritative for what is accepted.
+- `training_corpus.normalization_versions` maps each filetype slug to the integer version of
+  the logcrab parser/normalizer that was used to produce the training data. The frontend
+  declares its own current versions in the `start` frame. If the frontend's version for a
+  relevant filetype differs from what the model was trained on, the sidecar emits a `warning`
+  frame (code `normalization_version_mismatch`). Because each model within a sidecar can have
+  been trained on data from a different parser generation, versions are per-model, not global.
 
 ## Endpoint: `WS /v1/score-stream`
 
@@ -206,7 +216,11 @@ Example:
   "type": "start",
   "api_version": "1",
   "model_id": "logbert-android-errors",
-  "filtering_mode": "backend_authoritative"
+  "filtering_mode": "backend_authoritative",
+  "normalization_versions": {
+    "logcat": 2,
+    "dlt": 1
+  }
 }
 ```
 
@@ -215,6 +229,10 @@ Fields:
 - `api_version`: protocol version string
 - `model_id`: selected backend model
 - `filtering_mode`: must be `backend_authoritative` in V1
+- `normalization_versions`: map of filetype slug to the integer version of the normalizer
+  (`message()`) currently in use by this frontend build. The sidecar compares these against
+  the values in `training_corpus.normalization_versions` for the selected model. A mismatch
+  on a filetype that the model actually scores triggers a `warning` frame.
 
 ### `lines`
 
@@ -282,7 +300,7 @@ The response stream uses five frame types:
 
 ### `accepted`
 
-Confirms that the run has started and echoes back operational parameters.
+Confirms that the run has started and echoes back operational parameters. (This frame type keeps the name `accepted` — it is the handshake acknowledgement, not a per-line outcome.)
 
 Example:
 
@@ -306,7 +324,21 @@ Example:
 
 Returns per-line outcomes keyed by `line_id`.
 
-Because the backend owns corpus filtering, the response must distinguish accepted and rejected lines explicitly.
+Because the backend owns corpus filtering, the response must distinguish scored and filtered lines explicitly.
+
+Each element of `scored` carries:
+- `score` — the anomaly score produced by the model
+- `score_kind` — always `"anomaly"` in V1
+- `target_is_unk` — `true` when the line's template was not in the model vocabulary and the
+  `[UNK]` token embedding was used instead. The score is still valid, but carries less signal
+  than a fully-known template.
+
+Each element of `filtered` carries a `reason` from the following closed enum:
+
+| `reason` | Meaning |
+|---|---|
+| `out_of_corpus` | Model's corpus filter rejected this line (e.g. wrong filetype for this model) |
+| `empty_after_normalization` | Template normalised to an empty string |
 
 Example:
 
@@ -314,7 +346,7 @@ Example:
 {
   "type": "scores",
   "chunk_index": 0,
-  "accepted": [
+  "scored": [
     {
       "line_id": {
         "source_id": 0,
@@ -322,23 +354,38 @@ Example:
         "timestamp_unix_ms": 1713093201000
       },
       "score": 3.421,
-      "score_kind": "anomaly"
+      "score_kind": "anomaly",
+      "target_is_unk": false
+    },
+    {
+      "line_id": {
+        "source_id": 0,
+        "line_number": 125,
+        "timestamp_unix_ms": 1713093203000
+      },
+      "score": 8.12,
+      "score_kind": "anomaly",
+      "target_is_unk": true
     }
   ],
-  "rejected": [
+  "filtered": [
     {
       "line_id": {
         "source_id": 0,
         "line_number": 124,
         "timestamp_unix_ms": 1713093202000
       },
-      "reason": "filtered_out_by_model_corpus"
+      "reason": "out_of_corpus"
     }
   ]
 }
 ```
 
 This is intentionally explicit. A missing score must never be ambiguous.
+
+`target_is_unk` and `filtered` are orthogonal: a line can be scored with `target_is_unk: true`
+(the model ran with an UNK embedding), and a line can be filtered for reasons unrelated to
+vocabulary coverage.
 
 ### `warning`
 
@@ -382,7 +429,7 @@ Example:
   "summary": {
     "lines_received": 20480,
     "lines_scored": 18200,
-    "lines_rejected": 2280
+    "lines_filtered": 2280
   }
 }
 ```
@@ -394,8 +441,20 @@ V1 treats corpus filtering as model-owned and backend-authoritative.
 That means:
 
 - The Rust frontend sends the full loaded scoring candidate set.
-- The Python sidecar decides which of those lines are within the model's intended corpus.
-- The backend returns accepted lines with scores and rejected lines with explicit reasons.
+- The Python sidecar applies the model's corpus filter before inference.
+- The backend returns scored lines with scores and filtered lines with explicit reasons.
+
+### Corpus filter
+
+Each model ships with a corpus filter alongside its weights. The filter is a simple predicate
+over the input line's fields (typically `filetype`, and optionally message-level heuristics)
+that decides whether the line is within the model's intended training domain.
+
+Examples:
+- An Android logcat model may filter out any line whose `filetype` is not `logcat` or `bugreport`.
+- A kernel model may filter out any line that does not look like a dmesg message.
+
+The corpus filter is not configurable by the end user. It is part of the model artifact.
 
 ### Why not use UI filters
 
@@ -414,7 +473,7 @@ Silent filtering creates ambiguity between:
 - line rejected due to bad input
 - line missing due to protocol error
 
-The protocol therefore requires rejection visibility.
+The protocol therefore requires filter visibility.
 
 ## Ordering and Chunking
 
