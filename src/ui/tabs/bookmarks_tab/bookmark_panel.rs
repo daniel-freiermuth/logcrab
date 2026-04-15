@@ -506,9 +506,12 @@ impl BookmarkPanel {
                 state.store(ui.ctx(), id);
             }
         } else if response.lost_focus() {
-            // Close editor when clicking outside (focus lost) and clean up temp data
+            // Close editor when clicking outside (focus lost) and save the changes
             ui.data_mut(|d| d.remove::<bool>(init_id));
-            events.push(BookmarkPanelEvent::CancelRenaming);
+            events.push(BookmarkPanelEvent::BookmarkRenamed {
+                store_id: *store_id,
+                new_name: bookmark_name_input.clone(),
+            });
         }
 
         // Save on Enter
