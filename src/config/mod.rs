@@ -80,17 +80,10 @@ pub struct GlobalConfig {
     #[serde(default = "default_sidecar_port")]
     pub sidecar_port: u16,
 
-    /// Selected model name for anomaly detection
+    /// Selected model id (slug) for anomaly detection.
+    /// `None` means no model is selected; sidecar scoring will be skipped.
     #[serde(default)]
     pub selected_model: Option<String>,
-
-    /// Path to the selected model checkpoint
-    #[serde(default)]
-    pub selected_model_path: Option<String>,
-
-    /// Path to the selected model vocabulary
-    #[serde(default)]
-    pub selected_vocab_path: Option<String>,
 }
 
 fn default_sidecar_host() -> String {
@@ -116,8 +109,6 @@ impl Default for GlobalConfig {
             sidecar_host: default_sidecar_host(),
             sidecar_port: default_sidecar_port(),
             selected_model: None,
-            selected_model_path: None,
-            selected_vocab_path: None,
         }
     }
 }

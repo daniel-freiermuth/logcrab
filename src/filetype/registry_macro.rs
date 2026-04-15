@@ -203,6 +203,27 @@ macro_rules! register_filetypes {
             exts
         }
 
+        /// Returns the normalisation version for every registered filetype, keyed by slug.
+        ///
+        /// Sent in the `normalization_versions` field of the WebSocket `start` frame so
+        /// the sidecar can detect training/inference mismatches per filetype.
+        pub fn all_normalization_versions() -> ::std::collections::HashMap<&'static str, u32> {
+            let mut map = ::std::collections::HashMap::new();
+            $(
+                map.insert(
+                    <$b_ftype as $crate::filetype::HasSlug>::SLUG,
+                    <$b_ftype as $crate::filetype::InputFileType>::NORMALIZATION_VERSION,
+                );
+            )*
+            $(
+                map.insert(
+                    <$t_ftype as $crate::filetype::HasSlug>::SLUG,
+                    <$t_ftype as $crate::filetype::InputFileType>::NORMALIZATION_VERSION,
+                );
+            )*
+            map
+        }
+
         pub fn try_open_binary(
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
