@@ -70,10 +70,6 @@ paths:
                         version: '2026-04-14'
                         status: ready
                         input_mode: ordered_lines
-                        context_window:
-                          max_lines: 512
-                          stride_default: 128
-                          requires_ordered_input: true
                         training_corpus:
                           filter_profile: android-errors-v1
                           description: Android logcat WARN and ERROR lines with parsed message field
@@ -86,9 +82,8 @@ paths:
                         required_fields:
                           - message
                         chunk_policy:
-                          recommended_lines_per_chunk: 512
-                          max_lines_per_chunk: 1024
-                          overlap_lines: 128
+                          recommended_lines_per_chunk: 2048
+                          max_lines_per_chunk: 65536
                         output:
                           score_kind: anomaly
                           higher_is_more_anomalous: true
@@ -188,7 +183,6 @@ components:
         - version
         - status
         - input_mode
-        - context_window
         - training_corpus
         - supported_fields
         - required_fields
@@ -213,8 +207,6 @@ components:
         input_mode:
           type: string
           enum: [ordered_lines]
-        context_window:
-          $ref: '#/components/schemas/ContextWindow'
         training_corpus:
           $ref: '#/components/schemas/TrainingCorpus'
         supported_fields:
@@ -232,20 +224,6 @@ components:
         output:
           $ref: '#/components/schemas/OutputInfo'
 
-    ContextWindow:
-      type: object
-      additionalProperties: true
-      required: [max_lines, stride_default, requires_ordered_input]
-      properties:
-        max_lines:
-          type: integer
-          minimum: 1
-        stride_default:
-          type: integer
-          minimum: 1
-        requires_ordered_input:
-          type: boolean
-
     TrainingCorpus:
       type: object
       additionalProperties: true
@@ -262,7 +240,6 @@ components:
       required:
         - recommended_lines_per_chunk
         - max_lines_per_chunk
-        - overlap_lines
       properties:
         recommended_lines_per_chunk:
           type: integer
@@ -270,9 +247,6 @@ components:
         max_lines_per_chunk:
           type: integer
           minimum: 1
-        overlap_lines:
-          type: integer
-          minimum: 0
 
     OutputInfo:
       type: object
