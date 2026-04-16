@@ -81,8 +81,7 @@
       "additionalProperties": true,
       "required": [
         "recommended_lines_per_chunk",
-        "max_lines_per_chunk",
-        "overlap_lines"
+        "max_lines_per_chunk"
       ],
       "properties": {
         "recommended_lines_per_chunk": {
@@ -92,10 +91,6 @@
         "max_lines_per_chunk": {
           "type": "integer",
           "minimum": 1
-        },
-        "overlap_lines": {
-          "type": "integer",
-          "minimum": 0
         }
       }
     },

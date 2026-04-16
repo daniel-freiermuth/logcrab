@@ -16,7 +16,7 @@ The goal is to make the contract concrete enough to implement on both sides whil
 - Let the user choose between multiple backend-provided models.
 - Score the full scoring corpus, not the current UI-visible subset.
 - Allow models to define which subset of the loaded corpus they accept.
-- Support large log files without buffering the whole corpus into one HTTP request.
+- Support large log files via chunked transport without changing scoring semantics.
 - Return scores keyed by stable line identifiers so results can be merged back into `LogStore` deterministically.
 - Keep the V1 protocol small enough to implement and debug easily.
 
@@ -125,11 +125,6 @@ Example response:
       "version": "2026-04-14",
       "status": "ready",
       "input_mode": "ordered_lines",
-      "context_window": {
-        "max_lines": 512,
-        "stride_default": 128,
-        "requires_ordered_input": true
-      },
       "training_corpus": {
         "filter_profile": "android-errors-v1",
         "description": "Android logcat WARN and ERROR lines with parsed message field"
@@ -145,9 +140,8 @@ Example response:
         "message"
       ],
       "chunk_policy": {
-        "recommended_lines_per_chunk": 512,
-        "max_lines_per_chunk": 1024,
-        "overlap_lines": 128
+        "recommended_lines_per_chunk": 2048,
+        "max_lines_per_chunk": 65536
       },
       "output": {
         "score_kind": "anomaly",
@@ -295,9 +289,8 @@ Example:
   "run_id": "run_01hsz2j3p6k4n8m",
   "model_id": "logbert-android-errors",
   "chunk_policy": {
-    "recommended_lines_per_chunk": 512,
-    "max_lines_per_chunk": 1024,
-    "overlap_lines": 128
+    "recommended_lines_per_chunk": 2048,
+    "max_lines_per_chunk": 65536
   }
 }
 ```
@@ -430,11 +423,9 @@ The protocol therefore requires rejection visibility.
 
 Chunking is a transport concern, not a scoring-semantic concern.
 
-The scoring run represents one whole corpus. Chunks only exist to avoid huge request bodies and to allow progressive processing.
+The scoring run represents one whole corpus scored as a single sequence. Chunks only exist to avoid sending one enormous WebSocket message. There is no overlap between chunks — each line is sent exactly once.
 
-The backend publishes chunking hints via `GET /v1/models` and echoes them in `accepted`.
-
-The frontend may choose smaller chunks than recommended. It must not exceed the backend-published `max_lines_per_chunk`.
+The backend publishes chunking hints via `GET /v1/models` and echoes them in `accepted`. The frontend may choose smaller chunks than recommended. It must not exceed the backend-published `max_lines_per_chunk`.
 
 ## Error Semantics
 
