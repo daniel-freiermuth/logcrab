@@ -352,11 +352,16 @@ impl LogFileLoader {
 
         // ── Map scores back to a contiguous Vec<f64> ────────────────────────
         // Lines absent from `result.scored` were filtered; they receive 0.0 / false.
+        // Truly-unknown and rare templates are both scored by the model using the [UNK] embedding;
+        // the frontend uses target_is_unk / target_is_rare flags to annotate them in the UI.
         let raw_scores: Vec<f64> = (0..total_lines)
             .map(|idx| result.scored.get(&idx).map_or(0.0, |e| e.score))
             .collect();
         let unk_flags: Vec<bool> = (0..total_lines)
             .map(|idx| result.scored.get(&idx).is_some_and(|e| e.target_is_unk))
+            .collect();
+        let rare_flags: Vec<bool> = (0..total_lines)
+            .map(|idx| result.scored.get(&idx).is_some_and(|e| e.target_is_rare))
             .collect();
         let scored_flags: Vec<bool> = (0..total_lines)
             .map(|idx| result.scored.contains_key(&idx))
@@ -368,7 +373,7 @@ impl LogFileLoader {
             total_lines,
             path.display()
         );
-        store.set_sidecar_scores_with_unk(source_id, &raw_scores, &unk_flags, &scored_flags);
+        store.set_sidecar_scores_with_unk(source_id, &raw_scores, &unk_flags, &rare_flags, &scored_flags);
         toast.update(1.0, "ML scoring done!");
     }
 }
