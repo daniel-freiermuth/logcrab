@@ -931,7 +931,11 @@ impl LogTable {
                 let col = score_to_color(line.sidecar_anomaly_score, dark_mode);
                 let score_str = format!("{:.1}", line.sidecar_anomaly_score);
                 let label = if line.sidecar_score_is_unk {
-                    format!("{score_str} UKN")
+                    if line.sidecar_score_is_rare {
+                        format!("{score_str} RARE")
+                    } else {
+                        format!("{score_str} UKN")
+                    }
                 } else {
                     score_str
                 };
