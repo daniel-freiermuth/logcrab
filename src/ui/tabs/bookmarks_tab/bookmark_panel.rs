@@ -256,7 +256,7 @@ impl BookmarkPanel {
             return;
         };
 
-        let color = if color_by_ml_score && line.sidecar_anomaly_score > 0.0 {
+        let color = if color_by_ml_score && line.sidecar_scored {
             score_to_color(line.sidecar_anomaly_score, dark_mode)
         } else {
             score_to_color(line.anomaly_score, dark_mode)
