@@ -555,7 +555,7 @@ impl LogTable {
         let is_scrolled_to_closest = !is_selected
             && closest_row_index.is_some_and(|closest_row| closest_row == row_index)
             && selected_line_index.is_some();
-        let color = if color_by_ml_score && line.sidecar_anomaly_score > 0.0 {
+        let color = if color_by_ml_score && line.sidecar_scored {
             score_to_color(line.sidecar_anomaly_score, dark_mode)
         } else {
             score_to_color(line.anomaly_score, dark_mode)
@@ -927,9 +927,15 @@ impl LogTable {
                     .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
             }
 
-            let (ml_str, ml_color) = if line.sidecar_anomaly_score > 0.0 {
+            let (ml_str, ml_color) = if line.sidecar_scored {
                 let col = score_to_color(line.sidecar_anomaly_score, dark_mode);
-                (format!("{:.1}", line.sidecar_anomaly_score), col)
+                let score_str = format!("{:.1}", line.sidecar_anomaly_score);
+                let label = if line.sidecar_score_is_unk {
+                    format!("{score_str} UKN")
+                } else {
+                    score_str
+                };
+                (label, col)
             } else {
                 ("-".to_string(), Color32::GRAY)
             };

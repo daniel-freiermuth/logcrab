@@ -56,6 +56,12 @@ pub struct ScoreStore {
     /// Anomaly scores indexed by line position (same length as `lines`).
     /// Default score is 0.0; scores range from 0 to 100.
     scores: ArcSwap<Vec<f64>>,
+    /// Whether each line's score was assigned while the target token was UNK.
+    /// Parallel to `scores`; `false` when not available.
+    unk_flags: ArcSwap<Vec<bool>>,
+    /// Whether each line was actually present in the sidecar's scored set.
+    /// `false` means the line was filtered/excluded by the backend (not in corpus).
+    scored_flags: ArcSwap<Vec<bool>>,
 }
 
 impl ScoreStore {
@@ -63,6 +69,8 @@ impl ScoreStore {
     pub fn new() -> Self {
         Self {
             scores: ArcSwap::new(Arc::new(Vec::new())),
+            unk_flags: ArcSwap::new(Arc::new(Vec::new())),
+            scored_flags: ArcSwap::new(Arc::new(Vec::new())),
         }
     }
 
@@ -71,10 +79,29 @@ impl ScoreStore {
         self.scores.store(Arc::new(scores.to_vec()));
     }
 
+    /// Set scores, UNK flags, and scored flags atomically.
+    pub fn set_all_with_unk(&self, scores: &[f64], unk_flags: &[bool], scored_flags: &[bool]) {
+        self.scores.store(Arc::new(scores.to_vec()));
+        self.unk_flags.store(Arc::new(unk_flags.to_vec()));
+        self.scored_flags.store(Arc::new(scored_flags.to_vec()));
+    }
+
     /// Get the score for a specific line index. Returns 0.0 if out of bounds.
     pub fn get(&self, index: usize) -> f64 {
         let guard = self.scores.load();
         guard.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// Get the UNK flag for a specific line index. Returns `false` if out of bounds.
+    pub fn get_unk(&self, index: usize) -> bool {
+        let guard = self.unk_flags.load();
+        guard.get(index).copied().unwrap_or(false)
+    }
+
+    /// Get the scored flag for a specific line index. Returns `false` if out of bounds.
+    pub fn get_scored(&self, index: usize) -> bool {
+        let guard = self.scored_flags.load();
+        guard.get(index).copied().unwrap_or(false)
     }
 
     /// Resize the internal vec to accommodate new lines (fills with 0.0).
@@ -99,6 +126,8 @@ impl Clone for ScoreStore {
     fn clone(&self) -> Self {
         Self {
             scores: ArcSwap::new(Arc::clone(&self.scores.load())),
+            unk_flags: ArcSwap::new(Arc::clone(&self.unk_flags.load())),
+            scored_flags: ArcSwap::new(Arc::clone(&self.scored_flags.load())),
         }
     }
 }
@@ -592,6 +621,8 @@ where
             line_number: line.line_number(),
             anomaly_score: 0.0, // Scores are stored at LogStore level, populated by get_by_id
             sidecar_anomaly_score: 0.0,
+            sidecar_score_is_unk: false,
+            sidecar_scored: false,
         })
     }
 
@@ -669,6 +700,12 @@ pub struct LogLine {
     pub anomaly_score: f64,
     /// ML sidecar anomaly score in [0, 100]. 0.0 when not available.
     pub sidecar_anomaly_score: f64,
+    /// Whether the sidecar score was assigned while the target token was UNK.
+    /// Only meaningful when `sidecar_anomaly_score > 0.0`.
+    pub sidecar_score_is_unk: bool,
+    /// Whether this line appeared in the sidecar's scored set.
+    /// `false` means the line was excluded by the backend (not in corpus) or no scoring has run.
+    pub sidecar_scored: bool,
 }
 
 impl LogLine {
@@ -954,11 +991,35 @@ impl LogStore {
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
     }
 
+    /// Set ML sidecar scores, UNK flags, and scored flags for a source.
+    pub fn set_sidecar_scores_with_unk(&self, source_id: u64, scores: &[f64], unk_flags: &[bool], scored_flags: &[bool]) {
+        profiling::scope!("LogStore::set_sidecar_scores_with_unk");
+        self.sidecar_scores
+            .entry(source_id)
+            .or_default()
+            .set_all_with_unk(scores, unk_flags, scored_flags);
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
     /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.
     pub fn get_sidecar_score(&self, source_id: u64, line_index: usize) -> f64 {
         self.sidecar_scores
             .get(&source_id)
             .map_or(0.0, |store| store.get(line_index))
+    }
+
+    /// Get whether the sidecar score for a line was assigned while the target was UNK.
+    pub fn get_sidecar_unk(&self, source_id: u64, line_index: usize) -> bool {
+        self.sidecar_scores
+            .get(&source_id)
+            .is_some_and(|store| store.get_unk(line_index))
+    }
+
+    /// Get whether a line was present in the sidecar's scored set (vs filtered/excluded).
+    pub fn get_sidecar_scored(&self, source_id: u64, line_index: usize) -> bool {
+        self.sidecar_scores
+            .get(&source_id)
+            .is_some_and(|store| store.get_scored(line_index))
     }
 
     /// Check whether any sidecar scores are stored for the given source.
@@ -1227,6 +1288,8 @@ impl LogStore {
         // Populate anomaly score from store-level score storage
         line.anomaly_score = self.get_score(id.source_id, id.line_index);
         line.sidecar_anomaly_score = self.get_sidecar_score(id.source_id, id.line_index);
+        line.sidecar_score_is_unk = self.get_sidecar_unk(id.source_id, id.line_index);
+        line.sidecar_scored = self.get_sidecar_scored(id.source_id, id.line_index);
         Some(line)
     }
 }
