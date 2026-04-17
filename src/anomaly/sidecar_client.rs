@@ -52,17 +52,9 @@ pub struct TrainingCorpus {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ContextWindow {
-    pub max_lines: u32,
-    pub stride_default: u32,
-    pub requires_ordered_input: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct ChunkPolicy {
     pub recommended_lines_per_chunk: usize,
     pub max_lines_per_chunk: usize,
-    pub overlap_lines: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,6 +69,7 @@ pub struct ModelInfo {
     /// Stable machine-readable slug, used as `model_id` in the scoring protocol.
     pub id: String,
     /// Human-readable label describing the model and its training domain.
+    #[serde(alias = "display_name")]
     pub name: String,
     /// Model architecture identifier (e.g. `temporal_logbert`).
     pub architecture: String,
@@ -84,10 +77,7 @@ pub struct ModelInfo {
     pub version: String,
     pub status: String,
     pub input_mode: String,
-    pub context_window: ContextWindow,
     pub training_corpus: TrainingCorpus,
-    pub supported_fields: Vec<String>,
-    pub required_fields: Vec<String>,
     pub chunk_policy: ChunkPolicy,
     pub output: OutputInfo,
 }
