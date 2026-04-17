@@ -194,6 +194,7 @@ struct ScoredLine {
     #[allow(dead_code)]
     score_kind: String,
     pub target_is_unk: bool,
+    pub target_is_rare: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,6 +256,7 @@ struct ErrorFrame {
 pub struct ScoreEntry {
     pub score: f64,
     pub target_is_unk: bool,
+    pub target_is_rare: bool,
 }
 
 /// Result of a complete `score_stream` run.
@@ -373,7 +375,7 @@ impl SidecarClient {
                             for s in frame.scored {
                                 result.scored.insert(
                                     s.line_id.line_number,
-                                    ScoreEntry { score: s.score, target_is_unk: s.target_is_unk },
+                                    ScoreEntry { score: s.score, target_is_unk: s.target_is_unk, target_is_rare: s.target_is_rare },
                                 );
                             }
                             // filtered lines are intentionally absent from `scored`; the
