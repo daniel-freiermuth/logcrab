@@ -173,11 +173,11 @@ impl InputFileType for DmesgFileType {
 
     fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
-        let mut buf = String::new();
+        let mut buf = Vec::new();
         let mut eof = false;
         while result.len() < lines_to_read {
             buf.clear();
-            match self.reader.read_line(&mut buf) {
+            match self.reader.read_until(b'\n', &mut buf) {
                 Ok(0) => {
                     eof = true;
                     break;
@@ -185,7 +185,14 @@ impl InputFileType for DmesgFileType {
                 Ok(n) => {
                     self.bytes_read += n as u64;
                     self.line_number += 1;
-                    let raw = buf.trim_end_matches(['\n', '\r']).to_string();
+                    let line_str = String::from_utf8_lossy(&buf);
+                    if std::str::from_utf8(&buf).is_err() {
+                        tracing::warn!(
+                            "Invalid UTF-8 at line {}; replacing broken bytes with U+FFFD",
+                            self.line_number,
+                        );
+                    }
+                    let raw = line_str.trim_end_matches(['\n', '\r']).to_string();
                     if let Some(new_entry) = parse_dmesg_line(raw.clone(), self.line_number) {
                         // New timestamped entry: flush the previous pending one.
                         if let Some(prev) = self.pending.take() {
