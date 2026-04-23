@@ -97,6 +97,29 @@ pub fn detect_header_info(content: &str) -> Option<(i32, i64)> {
     Some((year, boot_time_ms))
 }
 
+/// Schema version for `BugreportFileState` inside the `.crab` slug object.
+///
+/// - v0 (0.35, unversioned): `LogcatFileState` aka `SimpleFileState` — `{"time_offset_ms": N}`
+/// - v1 (0.36+): `BugreportFileState` — `{"state_version": 1, "logcat_offset_ms": N, "dmesg_offset_ms": N}`
+pub const BUGREPORT_STATE_VERSION: u32 = 1;
+
+// ============================================================================
+// BugreportFileState — v1 (legacy, migration only)
+// ============================================================================
+
+/// Deserialization shape for bugreport state written by logcrab 0.35.
+///
+/// At that time `BugreportFileType` used `LogcatFileState` (= `SimpleFileState`)
+/// as its `FileState`, which serialised as `{"time_offset_ms": N}` with no
+/// `state_version` field — hence V0 (unversioned/pre-versioning era).
+/// This struct exists solely so the migration path in
+/// [`BugreportFileState::migrate_from_v0`] is explicit and named.
+#[derive(serde::Deserialize)]
+struct BugreportFileStateV0 {
+    #[serde(default)]
+    time_offset_ms: i64,
+}
+
 // ============================================================================
 // BugreportFileState
 // ============================================================================
@@ -119,6 +142,16 @@ pub struct BugreportFileState {
 }
 
 impl BugreportFileState {
+    /// Migrate a v0 (unversioned) bugreport state into the current format.
+    ///
+    /// v0 only had one time offset (the logcat side). `dmesg_offset_ms` is left
+    /// at 0 so that [`BugreportFileType::open_inner`] will auto-detect the boot
+    /// time from the dumpstate header on first open.
+    fn migrate_from_v0(v0: BugreportFileStateV0) -> Self {
+        let s = Self::default();
+        s.set_logcat_offset_ms(v0.time_offset_ms);
+        s
+    }
     #[inline]
     pub fn logcat_offset_ms(&self) -> i64 {
         self.logcat_offset_ms.load(Ordering::Relaxed)
@@ -189,7 +222,8 @@ impl Clone for BugreportFileState {
 impl serde::Serialize for BugreportFileState {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut state = s.serialize_struct("BugreportFileState", 2)?;
+        let mut state = s.serialize_struct("BugreportFileState", 3)?;
+        state.serialize_field("state_version", &BUGREPORT_STATE_VERSION)?;
         state.serialize_field("logcat_offset_ms", &self.logcat_offset_ms())?;
         state.serialize_field("dmesg_offset_ms", &self.dmesg_offset_ms())?;
         state.end()
@@ -198,24 +232,50 @@ impl serde::Serialize for BugreportFileState {
 
 impl<'de> serde::Deserialize<'de> for BugreportFileState {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // Peek at state_version to pick the right deserialization path.
+        // Values > BUGREPORT_STATE_VERSION are caught upstream in
+        // `CrabFile::load_from_file` before serde is called, so only v1 and v2
+        // reach this branch.
         #[derive(serde::Deserialize)]
-        struct Helper {
-            #[serde(default)]
-            logcat_offset_ms: i64,
-            #[serde(default)]
-            dmesg_offset_ms: i64,
+        struct VersionPeek {
+            #[serde(default)] // absent in v1 → 0, treated as v1
+            state_version: u32,
+            #[serde(flatten)]
+            rest: serde_json::Value,
         }
-        let h = Helper::deserialize(d)?;
-        Ok(Self {
-            logcat_offset_ms: AtomicI64::new(h.logcat_offset_ms),
-            dmesg_offset_ms: AtomicI64::new(h.dmesg_offset_ms),
-            logcat_calibration: Mutex::new(None),
-            dmesg_calibration: Mutex::new(None),
-        })
+        let peeked = VersionPeek::deserialize(d)?;
+        match peeked.state_version {
+            0 => {
+                let v0: BugreportFileStateV0 =
+                    serde_json::from_value(peeked.rest).map_err(serde::de::Error::custom)?;
+                Ok(Self::migrate_from_v0(v0))
+            }
+            _ => {
+                // v1 (current). Any version that somehow slips past the upstream
+                // check is also handled here best-effort.
+                #[derive(serde::Deserialize)]
+                struct V1 {
+                    #[serde(default)]
+                    logcat_offset_ms: i64,
+                    #[serde(default)]
+                    dmesg_offset_ms: i64,
+                }
+                let v1: V1 = serde_json::from_value(peeked.rest)
+                    .map_err(serde::de::Error::custom)?;
+                Ok(Self {
+                    logcat_offset_ms: AtomicI64::new(v1.logcat_offset_ms),
+                    dmesg_offset_ms: AtomicI64::new(v1.dmesg_offset_ms),
+                    logcat_calibration: Mutex::new(None),
+                    dmesg_calibration: Mutex::new(None),
+                })
+            }
+        }
     }
 }
 
 impl LogFileState for BugreportFileState {
+    const MAX_STATE_VERSION: Option<u32> = Some(BUGREPORT_STATE_VERSION);
+
     fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
         use crate::filetype::render_calibration;
 

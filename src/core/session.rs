@@ -28,8 +28,17 @@ use std::path::Path;
 
 use crate::core::log_store::Bookmark;
 
-/// Current version of the .crab file format
-pub const CRAB_FILE_VERSION: u32 = 3;
+/// Current version of the .crab file format.
+///
+/// Version history:
+/// - v2: flat `time_offset_ms` per source
+/// - v3: per-filetype slug keys (e.g. `"bugreport": { ... }`)
+/// - v4: bugreport state gains `state_version` + `dmesg_offset_ms`; per-filetype
+///       state versioning introduced so future filetype changes don't require
+///       bumping this global version. Pre-v4 LogCrab cannot safely write v4+
+///       files (it ignores unknown fields and would silently drop calibration data
+///       on save), so a global bump is required.
+pub const CRAB_FILE_VERSION: u32 = 4;
 
 /// Last legacy format version; files with version ≤ this are parsed as [`CrabFileV2`]
 const CRAB_FILE_V2: u32 = 2;
@@ -163,6 +172,9 @@ struct CrabFileV2 {
 /// Version history:
 /// - v2: flat `time_offset_ms: i64` for source time calibration (see [`CrabFileV2`])
 /// - v3: `file_state` stored under `FT::SLUG` (typed per-source state)
+///
+/// Individual filetype states may carry their own `version` field inside the
+/// slug object to version their schema independently (see e.g. `BugreportFileState`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "<FT::LineType as crate::filetype::LineType>::FileState: serde::Serialize",
@@ -236,6 +248,24 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
         // v3+: remap the per-format slug key to the canonical `file_state` key.
         if let Some(obj) = value.as_object_mut() {
             if let Some(slug_state) = obj.remove(FT::SLUG) {
+                // Check the per-filetype state_version before handing to serde,
+                // so "too new" reaches the caller as a typed error with a good message
+                // rather than being silently swallowed as a missing field.
+                let max_sv = <<FT::LineType as crate::filetype::LineType>::FileState
+                    as crate::filetype::LogFileState>::MAX_STATE_VERSION;
+                if let Some(max_sv) = max_sv {
+                    let state_version = slug_state
+                        .get("state_version")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0) as u32;
+                    if state_version > max_sv {
+                        return Err(SessionError::StateVersionTooNew {
+                            slug: FT::SLUG,
+                            found: state_version,
+                            supported: max_sv,
+                        });
+                    }
+                }
                 obj.insert("file_state".to_string(), slug_state);
             }
         }
@@ -318,6 +348,13 @@ pub enum SessionError {
         found: u32,
         supported: u32,
     },
+    /// A per-filetype `state_version` inside the slug JSON is newer than this build supports.
+    /// The global .crab version is fine; only this source's typed state cannot be read.
+    StateVersionTooNew {
+        slug: &'static str,
+        found: u32,
+        supported: u32,
+    },
 }
 
 impl std::fmt::Display for SessionError {
@@ -330,6 +367,10 @@ impl std::fmt::Display for SessionError {
                 f,
                 ".crab file version {found} is newer than supported version {supported}"
             ),
+            Self::StateVersionTooNew { slug, found, supported } => write!(
+                f,
+                "{slug} state version {found} is newer than supported version {supported}"
+            ),
         }
     }
 }
@@ -341,6 +382,7 @@ impl std::error::Error for SessionError {
             Self::Parse(e) => Some(e),
             Self::Serialize(e) => Some(e),
             Self::VersionTooNew { .. } => None,
+            Self::StateVersionTooNew { .. } => None,
         }
     }
 }

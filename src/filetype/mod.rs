@@ -59,6 +59,18 @@ pub fn render_calibration(
 /// no outer lock; each type is responsible for its own interior mutability.
 /// The default implementation is a no-op so that `()` satisfies the bound.
 pub trait LogFileState: Send + Sync {
+    /// Maximum `state_version` value this build can load from the slug JSON.
+    ///
+    /// When set to `Some(N)`, [`crate::core::session::CrabFile::load_from_file`]
+    /// checks the `state_version` field in the slug object before handing it to
+    /// serde. If the stored value exceeds `N`, loading fails with
+    /// [`crate::core::session::SessionError::StateVersionTooNew`] so the error
+    /// reaches the UI as a toast rather than being swallowed silently.
+    ///
+    /// Types that do not version their own state (e.g. `SimpleFileState`) leave
+    /// this as `None`, which disables the check.
+    const MAX_STATE_VERSION: Option<u32> = None;
+
     /// Drive any open UI window stored in this state.
     ///
     /// Called once per source per frame from `SourceData::render_file_state`.

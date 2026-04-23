@@ -208,6 +208,20 @@ where
                 // Drop `file` here to release the OS lock.
                 (None, None)
             }
+            Err(SessionError::StateVersionTooNew { slug, found, supported }) => {
+                let msg = format!(
+                    ".crab file {}: {slug} state was written by a newer LogCrab \
+                     (state v{found}, app supports up to v{supported}); \
+                     calibration and file state not loaded",
+                    crab_path.display()
+                );
+                tracing::warn!("{msg}");
+                warnings.send(msg);
+                // Drop `file` here to release the OS lock — keeping it would
+                // allow a future save to overwrite the newer state with our
+                // older format, silently destroying the user's calibration.
+                (None, None)
+            }
             Err(e) => {
                 tracing::warn!("Failed to load .crab file {}: {e}", crab_path.display());
                 (Some(file), None)
