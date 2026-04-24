@@ -403,6 +403,14 @@ macro_rules! register_filetypes {
                 }
             }
 
+            /// Return the compile-time filetype slug for this source variant.
+            pub fn filetype_slug(&self) -> &'static str {
+                match self {
+                    $( Self::$b_arm(_) => <$b_ftype as $crate::filetype::HasSlug>::SLUG, )*
+                    $( Self::$t_arm(_) => <$t_ftype as $crate::filetype::HasSlug>::SLUG, )*
+                }
+            }
+
             pub fn has_bookmark(&self, line_index: usize) -> bool {
                 match self {
                     $( Self::$b_arm(s) => s.has_bookmark(line_index), )*

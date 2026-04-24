@@ -79,13 +79,15 @@ The sidecar must treat this identifier as opaque identity. It may inspect fields
 
 ## API Surface
 
-V1 exposes three endpoints:
+V1 exposes four endpoints:
 
 1. `GET /v1/health`
 2. `GET /v1/models`
-3. `WS /v1/score-stream`
+3. `WS  /v1/score-stream`
+4. `POST /v1/samples`
 
-`WS /v1/score-stream` is the primary protocol. It replaces a create-session / append-chunks / finalize lifecycle.
+`WS /v1/score-stream` is the primary scoring protocol. `POST /v1/samples` is an optional
+training-data collection mechanism.
 
 ## Endpoint: `GET /v1/health`
 
@@ -679,4 +681,106 @@ These do not block V1, but should be decided during implementation:
 
 - Should rejected lines be stored as `None`, a richer enum, or a side map in Rust?
 - How much filter profile detail should be exposed to the user versus kept descriptive only?
+
+---
+
+## Endpoint: `POST /v1/samples`
+
+### Purpose
+
+Allow the user to manually label a log source file as a training sample.  When the user
+right-clicks a log line and chooses **Mark as Benign** or **Mark as Anomalous**, the
+frontend submits the full source file (as an array of `InputLine` objects) together with
+the 1-based display line number of the selected line.  The sidecar stores the data on
+disk for later use in model training.
+
+### Prerequisite
+
+The server must be started with `--uploads-dir <dir>`.  If this argument is omitted the
+endpoint returns `503 Service Unavailable`.
+
+### Request
+
+`POST /v1/samples`
+
+Content-Type: `application/json`
+
+```json
+{
+  "api_version": "1",
+  "model_id": "logbert-android-errors",
+  "label": "benign",
+  "classified_line_number": 42,
+  "lines": [
+    {
+      "line_id": { "source_id": 0, "line_number": 0, "timestamp_unix_ms": 1713093200000 },
+      "message": "D/SomeTag: normal startup",
+      "template_key": "D/SomeTag: normal startup",
+      "filetype": "logcat"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `api_version` | `"1"` | Protocol version |
+| `model_id` | string | The model the user was viewing when classifying |
+| `label` | `"benign"` \| `"anomalous"` | User-assigned class |
+| `classified_line_number` | integer | 1-based display line number of the clicked line |
+| `lines` | array of `InputLine` | All lines from the source file, in order |
+
+The `lines` array uses the same `InputLine` format as `WS /v1/score-stream`.
+
+### Response
+
+```json
+{
+  "api_version": "1",
+  "stored": true,
+  "sample_id": "20260424T142033Z_a1b2c3d4"
+}
+```
+
+### Storage Layout
+
+```
+{uploads_dir}/
+  {model_id}/
+    {label}/
+      {timestamp}_{uuid8}.ndjson       — one InputLine JSON object per line
+      {timestamp}_{uuid8}.meta.json    — metadata
+```
+
+The `.meta.json` file contains:
+
+```json
+{
+  "sample_id": "20260424T142033Z_a1b2c3d4",
+  "model_id": "logbert-android-errors",
+  "label": "benign",
+  "classified_line_number": 42,
+  "line_count": 18500,
+  "created_at": "2026-04-24T14:20:33.000000+00:00"
+}
+```
+
+### Error Codes
+
+| HTTP status | Body `error` | Meaning |
+|---|---|---|
+| `400` | `unsupported_version` | `api_version` is not `"1"` |
+| `400` | `missing_model_id` | `model_id` is absent or empty |
+| `400` | `invalid_label` | `label` is not `"benign"` or `"anomalous"` |
+| `503` | `uploads_not_configured` | Server started without `--uploads-dir` |
+
+### Notes
+
+- The server does **not** validate that `model_id` corresponds to a registered model.
+  Samples can be stored for models that are not currently loaded.
+- The `classified_line_number` is stored for human reference only; training pipelines
+  read it from `.meta.json` to understand which line triggered the label.
+- Each upload produces a unique file; concurrent uploads are safe.
+- The endpoint is intentionally simple: it stores raw data without any ML inference.
+  Training pipelines operate on the stored files offline.
 - Should the Rust client use `tungstenite` (sync, matches existing `std::thread` worker pattern) or `tokio-tungstenite` (async)?

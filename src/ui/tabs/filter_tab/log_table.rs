@@ -59,6 +59,11 @@ pub enum LogTableEvent {
     SetTimeZero {
         line_index: StoreID,
     },
+    /// User manually classified this line's source file for ML training.
+    ClassifyLine {
+        line_index: StoreID,
+        label: crate::anomaly::sidecar_client::SampleLabel,
+    },
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -203,6 +208,7 @@ impl LogTable {
         store: &LogStore,
         line_idx: StoreID,
         events: &mut Vec<LogTableEvent>,
+        model_is_active: bool,
     ) {
         response.context_menu(|ui| {
             if ui.button("📑 Toggle Bookmark").clicked() {
@@ -245,6 +251,24 @@ impl LogTable {
             if ui.button("📋 Copy Full Line").clicked() {
                 ui.ctx().copy_text(line.raw);
                 ui.close();
+            }
+
+            if model_is_active {
+                ui.separator();
+                if ui.button("✅ Mark as Benign").clicked() {
+                    events.push(LogTableEvent::ClassifyLine {
+                        line_index: line_idx,
+                        label: crate::anomaly::sidecar_client::SampleLabel::Benign,
+                    });
+                    ui.close();
+                }
+                if ui.button("🚨 Mark as Anomalous").clicked() {
+                    events.push(LogTableEvent::ClassifyLine {
+                        line_index: line_idx,
+                        label: crate::anomaly::sidecar_client::SampleLabel::Anomalous,
+                    });
+                    ui.close();
+                }
             }
         });
     }
@@ -289,6 +313,7 @@ impl LogTable {
         closest_row_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         color_by_ml_score: bool,
+        model_is_active: bool,
     ) -> Vec<LogTableEvent> {
         profiling::scope!("LogTable::render");
 
@@ -324,6 +349,7 @@ impl LogTable {
                     &mut filter.column_widths,
                     filter.timestamp_mode,
                     color_by_ml_score,
+                    model_is_active,
                 );
             });
 
@@ -389,6 +415,7 @@ impl LogTable {
         column_widths: &mut ColumnWidths,
         timestamp_mode: TimestampMode,
         color_by_ml_score: bool,
+        model_is_active: bool,
     ) {
         table
             .header(20.0, |mut header| {
@@ -409,6 +436,7 @@ impl LogTable {
                     dark_mode,
                     timestamp_mode,
                     color_by_ml_score,
+                    model_is_active,
                 );
             });
     }
@@ -467,6 +495,7 @@ impl LogTable {
         dark_mode: bool,
         timestamp_mode: TimestampMode,
         color_by_ml_score: bool,
+        model_is_active: bool,
     ) {
         let visible_lines = filtered_indices.len();
 
@@ -501,6 +530,7 @@ impl LogTable {
                 timestamp_mode,
                 prev_row_timestamp,
                 color_by_ml_score,
+                model_is_active,
             );
 
             prev_row_timestamp = store.adjusted_timestamp(&filtered_indices[row_index]);
@@ -533,6 +563,7 @@ impl LogTable {
         timestamp_mode: TimestampMode,
         prev_row_timestamp: Option<DateTime<Local>>,
         color_by_ml_score: bool,
+        model_is_active: bool,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
         let line_idx = filtered_indices[row_index];
@@ -584,7 +615,7 @@ impl LogTable {
         let row_clicked = merged.clicked();
         let row_middle_clicked = merged.middle_clicked();
 
-        Self::show_line_context_menu(&merged, store, line_idx, events);
+        Self::show_line_context_menu(&merged, store, line_idx, events, model_is_active);
 
         if row_middle_clicked {
             Some(LogTableEvent::BookmarkToggled {

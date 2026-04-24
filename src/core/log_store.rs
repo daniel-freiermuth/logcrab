@@ -824,6 +824,11 @@ pub struct StoreID {
 }
 
 impl StoreID {
+    /// Return the stable source identifier for this line.
+    pub const fn source_id(&self) -> u64 {
+        self.source_id
+    }
+
     /// Compare two `StoreIDs` by their line timestamps.
     ///
     /// When both lines exist in the store, compares by timestamp first,
@@ -1329,6 +1334,33 @@ impl LogStore {
         line.sidecar_score_is_rare = self.get_sidecar_rare(id.source_id, id.line_index);
         line.sidecar_scored = self.get_sidecar_scored(id.source_id, id.line_index);
         Some(line)
+    }
+
+    /// Collect all log lines for `source_id`, together with the source's filetype slug.
+    ///
+    /// Returns `None` if the source is not found.  All lines are returned even if some
+    /// have no parsed timestamp — score fields are populated from the store-level caches.
+    pub fn get_log_lines_for_source_with_slug(
+        &self,
+        source_id: u64,
+    ) -> Option<(&'static str, Vec<LogLine>)> {
+        profiling::scope!("LogStore::get_log_lines_for_source_with_slug");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        let source = sources.get(&source_id)?;
+        let slug = source.filetype_slug();
+        let count = source.len();
+        let lines: Vec<LogLine> = (0..count)
+            .filter_map(|i| {
+                let mut line = source.get_log_line(i)?;
+                line.anomaly_score = self.get_score(source_id, i);
+                line.sidecar_anomaly_score = self.get_sidecar_score(source_id, i);
+                line.sidecar_score_is_unk = self.get_sidecar_unk(source_id, i);
+                line.sidecar_score_is_rare = self.get_sidecar_rare(source_id, i);
+                line.sidecar_scored = self.get_sidecar_scored(source_id, i);
+                Some(line)
+            })
+            .collect();
+        Some((slug, lines))
     }
 }
 

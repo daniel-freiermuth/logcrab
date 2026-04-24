@@ -194,6 +194,8 @@ impl FilterView {
 
         // Render log table
         let closest_row_index = self.state.closest_row_index;
+        let model_is_active = global_config.use_sidecar_scoring
+            && global_config.selected_model.is_some();
         let table_events = {
             profiling::scope!("render_log_table");
             LogTable::render(
@@ -206,6 +208,7 @@ impl FilterView {
                 closest_row_index,
                 all_filter_highlights,
                 global_config.color_by_ml_score,
+                model_is_active,
             )
         };
 
@@ -230,6 +233,75 @@ impl FilterView {
                         },
                         TimestampMode::Relative,
                     );
+                }
+                LogTableEvent::ClassifyLine { line_index, label } => {
+                    let source_id = line_index.source_id();
+                    let classified_line_number = store
+                        .get_by_id(&line_index)
+                        .map(|l| l.line_number)
+                        .unwrap_or(0);
+                    let Some((slug, log_lines)) =
+                        store.get_log_lines_for_source_with_slug(source_id)
+                    else {
+                        tracing::warn!("classify: source {source_id} not found in store");
+                        continue;
+                    };
+                    let Some(sidecar_config) = store.sidecar_config() else {
+                        tracing::warn!("classify: no sidecar config set");
+                        continue;
+                    };
+                    let Some(model_id) = sidecar_config.model_id else {
+                        tracing::warn!("classify: no model selected");
+                        continue;
+                    };
+                    let host = sidecar_config.sidecar_host;
+                    let port = sidecar_config.sidecar_port;
+                    let toast_sender = log_view_state.toast_sender.clone();
+
+                    // Build InputLine list from LogLines for the upload.
+                    let input_lines: Vec<crate::anomaly::sidecar_client::InputLine> = log_lines
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, line)| {
+                            crate::anomaly::sidecar_client::InputLine::new(
+                                0,
+                                idx,
+                                line.timestamp.timestamp_millis().max(0) as u64,
+                                line.message.clone(),
+                                Some(line.template_key()),
+                                None,
+                                Some(slug.to_string()),
+                            )
+                        })
+                        .collect();
+
+                    std::thread::spawn(move || {
+                        let result = (|| -> anyhow::Result<()> {
+                            let client = crate::anomaly::sidecar_client::SidecarClient::connect(
+                                &host, port,
+                            )?;
+                            client.submit_sample(&model_id, label, classified_line_number, &input_lines)?;
+                            Ok(())
+                        })();
+                        match result {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "Classification submitted: {label} for line {classified_line_number}"
+                                );
+                                if let Some(ref sender) = toast_sender {
+                                    sender.send_success(format!(
+                                        "Submitted as {label} sample (line {classified_line_number})"
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Classification upload failed: {e}");
+                                if let Some(ref sender) = toast_sender {
+                                    sender.send(format!("Classification upload failed: {e}"));
+                                }
+                            }
+                        }
+                    });
                 }
             }
         }
