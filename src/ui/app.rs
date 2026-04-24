@@ -130,11 +130,15 @@ impl LogCrabApp {
         let store = LogStore::new();
         // Push sidecar scoring config so background loading threads can use it
         self.apply_sidecar_config_to_store(&store);
-        self.session = Some(CrabSession::new(
+        let mut session = CrabSession::new(
             store,
             self.filter_worker.handle(),
             self.histogram_worker.handle(),
-        ));
+        );
+        // Give the session a toast sender so background threads (e.g. classification
+        // uploads) can surface success/error notifications without blocking the UI.
+        session.state.toast_sender = Some(self.toast_manager.sender());
+        self.session = Some(session);
     }
 
     /// Build a `ScoringConfig` from the current global config and set it on the store.

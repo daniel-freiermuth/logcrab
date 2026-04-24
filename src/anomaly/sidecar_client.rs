@@ -249,6 +249,40 @@ struct ErrorFrame {
     message: String,
 }
 
+// ── Manual classification ─────────────────────────────────────────────────────
+
+/// Label applied by the user when manually classifying a log sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SampleLabel {
+    Benign,
+    Anomalous,
+}
+
+impl SampleLabel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Benign => "benign",
+            Self::Anomalous => "anomalous",
+        }
+    }
+}
+
+impl std::fmt::Display for SampleLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct SubmitSampleRequest<'a> {
+    api_version: &'static str,
+    model_id: &'a str,
+    label: SampleLabel,
+    classified_line_number: usize,
+    lines: &'a [InputLine],
+}
+
 // ── Score stream result ──────────────────────────────────────────────────────
 
 /// Per-line score from the sidecar.
@@ -314,6 +348,34 @@ impl SidecarClient {
         }
         let body: ModelsResponse = resp.json()?;
         Ok(body.models)
+    }
+
+    /// `POST /v1/samples` — submit a manually labelled log sample for future training.
+    ///
+    /// Uploads all `lines` from the source that contains `classified_line_number`, tagged
+    /// with `label`.  The sidecar stores the data under
+    /// `{uploads_dir}/{model_id}/{label}/{timestamp}_{uuid}.ndjson`.
+    pub fn submit_sample(
+        &self,
+        model_id: &str,
+        label: SampleLabel,
+        classified_line_number: usize,
+        lines: &[InputLine],
+    ) -> Result<()> {
+        let url = format!("http://{}:{}/v1/samples", self.host, self.port);
+        let body = SubmitSampleRequest { api_version: "1", model_id, label, classified_line_number, lines };
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .context("submit_sample request failed")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let msg = resp.text().unwrap_or_default();
+            bail!("submit_sample returned {status}: {msg}");
+        }
+        Ok(())
     }
 
     /// `WS /v1/score-stream` — stream lines to the sidecar and collect scores.
