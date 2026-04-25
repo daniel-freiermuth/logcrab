@@ -7,6 +7,7 @@ Follows conventional commits:
 - Other commits bump patch version
 """
 
+import argparse
 import re
 import subprocess
 import sys
@@ -28,6 +29,26 @@ def run(cmd: list[str], check: bool = True, capture: bool = True) -> subprocess.
         print("---", file=sys.stderr)
         raise
     return result
+
+
+def has_remote(name: str) -> bool:
+    """Check if a git remote with the given name is configured."""
+    result = run(["git", "remote"], check=False)
+    return name in result.stdout.strip().split("\n")
+
+
+def get_current_branch() -> str:
+    """Get the name of the current git branch."""
+    result = run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    return result.stdout.strip()
+
+
+def current_branch_tracks_remote(remote: str) -> bool:
+    """Check if the current branch has a tracking branch on the given remote."""
+    result = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], check=False)
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip().startswith(f"{remote}/")
 
 
 def is_dirty() -> bool:
@@ -139,11 +160,11 @@ def create_tag(new_version: str) -> None:
     print(f"Created tag {tag}")
 
 
-def git_push() -> None:
+def git_push(remote: str) -> None:
     """Push commits and tags to remote."""
-    run(["git", "push"], capture=False)
-    run(["git", "push", "--tags"], capture=False)
-    print("Pushed commits and tags to remote")
+    run(["git", "push", remote], capture=False)
+    run(["git", "push", remote, "--tags"], capture=False)
+    print(f"Pushed commits and tags to '{remote}'")
 
 
 def cargo_deb() -> str:
@@ -165,9 +186,50 @@ def cargo_deb() -> str:
 
 
 def main() -> int:
-    # Step 1: Check if directory is dirty
+    parser = argparse.ArgumentParser(description="Bump the LogCrab version.")
+    parser.add_argument(
+        "--skip-deb",
+        action="store_true",
+        help="Skip the cargo deb build step.",
+    )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Skip the git dirty working directory check.",
+    )
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Skip the git push step.",
+    )
+    parser.add_argument(
+        "--remote",
+        default="github",
+        metavar="NAME",
+        help="Name of the git remote to push to (default: github).",
+    )
+    args = parser.parse_args()
+
+    # Step 0: Check current branch is main
+    branch = get_current_branch()
+    if branch != "main":
+        print(f"Error: Must be on 'main' branch to release (currently on '{branch}').")
+        return 1
+
+    if not args.no_push:
+        # Step 0a: Verify the remote exists
+        if not has_remote(args.remote):
+            print(f"Error: No git remote named '{args.remote}' found. Configure it with: git remote add {args.remote} <url>")
+            return 1
+
+        # Step 0b: Verify the current branch tracks the remote
+        if not current_branch_tracks_remote(args.remote):
+            print(f"Error: Current branch has no tracking branch on '{args.remote}'. Set one with: git branch --set-upstream-to={args.remote}/<branch>")
+            return 1
+
+    # Step 2: Check if directory is dirty
     print("Checking git status...")
-    if is_dirty():
+    if not args.allow_dirty and is_dirty():
         print("Error: Working directory is dirty. Please commit or stash changes first.")
         return 1
 
@@ -217,10 +279,12 @@ def main() -> int:
     create_tag(new_version)
 
     # Step 6: Push
-    git_push()
+    if not args.no_push:
+        git_push(args.remote)
 
     # Step 7: Build deb package
-    cargo_deb()
+    if not args.skip_deb:
+        cargo_deb()
 
     print(f"\n✓ Successfully released version {new_version}")
     return 0
