@@ -355,7 +355,7 @@ impl LogFileLoader {
         // Truly-unknown and rare templates are both scored by the model using the [UNK] embedding;
         // the frontend uses target_is_unk / target_is_rare flags to annotate them in the UI.
         let raw_scores: Vec<f64> = (0..total_lines)
-            .map(|idx| result.scored.get(&idx).map_or(0.0, |e| e.score))
+            .map(|idx| result.scored.get(&idx).map_or(0.0, |e| e.score * 10.0))
             .collect();
         let unk_flags: Vec<bool> = (0..total_lines)
             .map(|idx| result.scored.get(&idx).is_some_and(|e| e.target_is_unk))
