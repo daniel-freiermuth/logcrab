@@ -25,6 +25,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::TcpStream;
+use std::sync::mpsc;
 use std::time::Duration;
 use tungstenite::Message;
 
@@ -304,6 +305,134 @@ pub struct ScoreStreamResult {
     pub warnings: Vec<String>,
 }
 
+// ── Explain session types ─────────────────────────────────────────────────────
+
+/// How much the model attended to context line `line_number` when scoring the
+/// target.  Only lines with non-zero weight are returned by the sidecar.
+#[derive(Debug, Clone)]
+pub struct AttentionEntry {
+    pub line_number: usize,
+    pub weight: f32,
+}
+
+/// Result of a single explain request.
+#[derive(Debug, Clone)]
+pub struct ExplainResult {
+    pub target_line_number: usize,
+    /// `false` when the target was filtered out by the model's corpus filter.
+    pub target_in_corpus: bool,
+    /// Cross-entropy loss matching the score-stream value; `None` when not in corpus.
+    pub target_score: Option<f64>,
+    pub target_is_unk: bool,
+    pub target_is_rare: bool,
+    /// Sparse attention entries — only in-corpus context lines with weight > 0.
+    /// Already sorted by weight descending by the sidecar.
+    pub attention: Vec<AttentionEntry>,
+}
+
+// Private deserialization helpers.
+#[derive(Deserialize)]
+struct AttentionEntryRaw {
+    line_number: usize,
+    weight: f64,
+}
+
+#[derive(Deserialize)]
+struct ExplanationFrame {
+    target_line_number: usize,
+    target_in_corpus: bool,
+    target_score: Option<f64>,
+    target_is_unk: bool,
+    target_is_rare: bool,
+    attention: Vec<AttentionEntryRaw>,
+}
+
+/// Handle to the explain phase of a live score-stream WebSocket session.
+///
+/// The WebSocket connection is kept alive in a background thread.
+/// Dropping this struct closes the connection and exits the thread.
+pub struct ExplainSession {
+    request_tx: mpsc::SyncSender<usize>,
+    result_rx: mpsc::Receiver<ExplainResult>,
+}
+
+impl ExplainSession {
+    fn spawn(ws: tungstenite::WebSocket<TcpStream>) -> Self {
+        let (req_tx, req_rx) = mpsc::sync_channel::<usize>(1);
+        let (res_tx, res_rx) = mpsc::sync_channel::<ExplainResult>(4);
+        std::thread::spawn(move || Self::run_loop(ws, req_rx, res_tx));
+        Self { request_tx: req_tx, result_rx: res_rx }
+    }
+
+    /// Request an explanation for `target_line_number`.
+    /// Returns `false` if the session has already ended or the queue is full.
+    pub fn request(&self, target_line_number: usize) -> bool {
+        self.request_tx.try_send(target_line_number).is_ok()
+    }
+
+    /// Poll for a completed explanation without blocking.
+    pub fn try_recv(&self) -> Option<ExplainResult> {
+        self.result_rx.try_recv().ok()
+    }
+
+    fn run_loop(
+        mut ws: tungstenite::WebSocket<TcpStream>,
+        req_rx: mpsc::Receiver<usize>,
+        res_tx: mpsc::SyncSender<ExplainResult>,
+    ) {
+        loop {
+            // Block until the UI requests an explanation (or session is dropped).
+            let Ok(target_ln) = req_rx.recv() else {
+                // All senders dropped — send close frame and exit.
+                let _ = ws.send(Message::Text(r#"{"type":"close"}"#.into()));
+                break;
+            };
+
+            let frame = serde_json::json!({
+                "type": "explain",
+                "target_line_number": target_ln,
+            });
+            if ws.send(Message::Text(frame.to_string().into())).is_err() {
+                break;
+            }
+
+            // Read until we get the explanation response for this request.
+            loop {
+                match ws.read() {
+                    Ok(Message::Text(text)) => {
+                        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                            break;
+                        };
+                        if v["type"] == "explanation" {
+                            if let Ok(f) = serde_json::from_value::<ExplanationFrame>(v) {
+                                let result = ExplainResult {
+                                    target_line_number: f.target_line_number,
+                                    target_in_corpus: f.target_in_corpus,
+                                    target_score: f.target_score,
+                                    target_is_unk: f.target_is_unk,
+                                    target_is_rare: f.target_is_rare,
+                                    attention: f.attention.into_iter().map(|e| AttentionEntry {
+                                        line_number: e.line_number,
+                                        weight: e.weight as f32,
+                                    }).collect(),
+                                };
+                                let _ = res_tx.send(result);
+                            }
+                            break;
+                        }
+                        // Ignore other frame types (e.g. stray warnings).
+                    }
+                    Ok(Message::Ping(data)) => {
+                        let _ = ws.send(Message::Pong(data));
+                    }
+                    Ok(Message::Close(_)) | Err(_) => return,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 // ── SidecarClient ────────────────────────────────────────────────────────────
 
 /// Client for the LogBERT sidecar — V1 protocol.
@@ -388,6 +517,35 @@ impl SidecarClient {
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
     ) -> Result<ScoreStreamResult> {
+        let (result, _ws) = self.open_score_stream_ws(model_id, normalization_versions, lines)?;
+        Ok(result)
+    }
+
+    /// Like [`score_stream`], but keeps the WebSocket open for on-demand attention
+    /// explanations after scoring completes.
+    ///
+    /// Returns the scores plus an [`ExplainSession`] that the caller can use to
+    /// request per-line attention weights without re-sending the input lines.
+    /// The WebSocket connection is held alive in a background thread until the
+    /// `ExplainSession` is dropped.
+    pub fn score_stream_with_explain(
+        &self,
+        model_id: &str,
+        normalization_versions: &HashMap<&str, u32>,
+        lines: &[InputLine],
+    ) -> Result<(ScoreStreamResult, ExplainSession)> {
+        let (result, ws) = self.open_score_stream_ws(model_id, normalization_versions, lines)?;
+        Ok((result, ExplainSession::spawn(ws)))
+    }
+
+    /// Internal: open a WebSocket, run the full scoring protocol, and return
+    /// both the results and the still-open WebSocket (ready for the explain phase).
+    fn open_score_stream_ws(
+        &self,
+        model_id: &str,
+        normalization_versions: &HashMap<&str, u32>,
+        lines: &[InputLine],
+    ) -> Result<(ScoreStreamResult, tungstenite::WebSocket<TcpStream>)> {
         let addr = format!("{}:{}", self.host, self.port);
         let tcp = TcpStream::connect(&addr)
             .with_context(|| format!("TCP connect to {addr} failed"))?;
@@ -481,7 +639,7 @@ impl SidecarClient {
             }
         }
 
-        Ok(result)
+        Ok((result, ws))
     }
 }
 
