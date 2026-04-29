@@ -106,8 +106,41 @@ fn render_content(
         }
     });
 
+    // ── Top predicted templates ───────────────────────────────────────────────
+    if !result.top_templates.is_empty() {
+        ui.separator();
+        ui.label(RichText::new("Top predicted templates").strong());
+        ui.add_space(2.0);
+
+        let max_prob = result
+            .top_templates
+            .first()
+            .map_or(1.0_f32, |e| e.probability)
+            .max(f32::EPSILON);
+
+        egui::Grid::new("templates_grid")
+            .striped(true)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Prob").strong());
+                ui.label(RichText::new("Template").strong());
+                ui.end_row();
+
+                for entry in &result.top_templates {
+                    let normalized = entry.probability / max_prob;
+                    ui.add(
+                        egui::ProgressBar::new(normalized)
+                            .desired_width(80.0)
+                            .text(format!("{:.1}%", entry.probability * 100.0)),
+                    );
+                    let tmpl: String = entry.template.chars().take(120).collect();
+                    ui.add(egui::Label::new(RichText::new(tmpl).monospace()).wrap());
+                    ui.end_row();
+                }
+            });
+    }
+
     if result.attention.is_empty() {
-        ui.label("No attention entries returned.");
         return;
     }
 
