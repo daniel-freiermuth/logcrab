@@ -315,6 +315,14 @@ pub struct AttentionEntry {
     pub weight: f32,
 }
 
+/// A template the model predicted was likely at the masked position,
+/// together with its softmax probability.
+#[derive(Debug, Clone)]
+pub struct TemplateEntry {
+    pub template: String,
+    pub probability: f32,
+}
+
 /// Result of a single explain request.
 #[derive(Debug, Clone)]
 pub struct ExplainResult {
@@ -328,6 +336,8 @@ pub struct ExplainResult {
     /// Sparse attention entries — only in-corpus context lines with weight > 0.
     /// Already sorted by weight descending by the sidecar.
     pub attention: Vec<AttentionEntry>,
+    /// Top-K templates predicted at the masked position, sorted by probability descending.
+    pub top_templates: Vec<TemplateEntry>,
 }
 
 // Private deserialization helpers.
@@ -338,6 +348,12 @@ struct AttentionEntryRaw {
 }
 
 #[derive(Deserialize)]
+struct TemplateEntryRaw {
+    template: String,
+    probability: f64,
+}
+
+#[derive(Deserialize)]
 struct ExplanationFrame {
     target_line_number: usize,
     target_in_corpus: bool,
@@ -345,6 +361,7 @@ struct ExplanationFrame {
     target_is_unk: bool,
     target_is_rare: bool,
     attention: Vec<AttentionEntryRaw>,
+    top_templates: Vec<TemplateEntryRaw>,
 }
 
 /// Handle to the explain phase of a live score-stream WebSocket session.
@@ -414,6 +431,10 @@ impl ExplainSession {
                                     attention: f.attention.into_iter().map(|e| AttentionEntry {
                                         line_number: e.line_number,
                                         weight: e.weight as f32,
+                                    }).collect(),
+                                    top_templates: f.top_templates.into_iter().map(|e| TemplateEntry {
+                                        template: e.template,
+                                        probability: e.probability as f32,
                                     }).collect(),
                                 };
                                 let _ = res_tx.send(result);
