@@ -43,7 +43,7 @@ pub struct HealthResponse {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrainingCorpus {
     pub filter_profile: String,
     pub description: String,
@@ -51,20 +51,20 @@ pub struct TrainingCorpus {
     pub normalization_versions: HashMap<String, u32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkPolicy {
     pub recommended_lines_per_chunk: usize,
     pub max_lines_per_chunk: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputInfo {
     pub score_kind: String,
     pub higher_is_more_anomalous: bool,
     pub supports_explanations: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     /// Stable machine-readable slug, used as `model_id` in the scoring protocol.
     pub id: String,

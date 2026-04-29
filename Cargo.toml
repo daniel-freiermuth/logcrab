@@ -41,6 +41,10 @@ path = "src/main.rs"
 name = "logcrab-export"
 path = "src/bin/logcrab-export.rs"
 
+[[bin]]
+name = "logcrab-mcp"
+path = "src/bin/logcrab-mcp.rs"
+
 [features]
 default = []
 profiling = ["ram-profiling", "cpu-profiling"]
@@ -76,8 +80,10 @@ dhat = { version = "0.3", optional = true }
 anyhow = "1"
 profiling = { version = "1.0", default-features = false }
 tracy-client = { version = "0.18.4", optional = true }
-tokio = { version = "1.49.0", features = ["sync"] }
+tokio = { version = "1.49.0", features = ["sync", "rt-multi-thread", "macros", "io-std"] }
 tungstenite = "0.26"
+rmcp = { version = "1.5", features = ["server", "macros", "transport-io", "schemars"] }
+schemars = "1"
 fs2 = "0.4"
 indexmap = { version = "2", features = ["rayon"] }
 
