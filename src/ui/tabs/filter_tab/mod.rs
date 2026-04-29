@@ -59,6 +59,14 @@ pub struct FilterView {
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
     filter_bar: FilterBar,
+    /// Whether the attention panel window is visible.
+    show_attention_panel: bool,
+    /// The line the user last requested an explanation for.
+    attention_target: Option<StoreID>,
+    /// The most recent result returned by the sidecar explain session.
+    attention_result: Option<crate::anomaly::sidecar_client::ExplainResult>,
+    /// `true` while an explain request is in flight.
+    attention_pending: bool,
 }
 
 impl FilterView {
@@ -68,6 +76,10 @@ impl FilterView {
             state,
             change_filtername_window: None,
             filter_bar: FilterBar::new(),
+            show_attention_panel: false,
+            attention_target: None,
+            attention_result: None,
+            attention_pending: false,
         }
     }
 
@@ -234,6 +246,15 @@ impl FilterView {
                         TimestampMode::Relative,
                     );
                 }
+                LogTableEvent::ExplainAttention { line_index } => {
+                    let source_id = line_index.source_id();
+                    let target_ln = store.get_by_id(&line_index).map(|l| l.line_number).unwrap_or(0);
+                    if store.request_explanation(source_id, target_ln) {
+                        self.attention_target = Some(line_index);
+                        self.attention_pending = true;
+                        self.show_attention_panel = true;
+                    }
+                }
                 LogTableEvent::ClassifyLine { line_index, label } => {
                     let source_id = line_index.source_id();
                     let classified_line_number = store
@@ -304,6 +325,32 @@ impl FilterView {
                     });
                 }
             }
+        }
+
+        // ── Poll for explain results ──────────────────────────────────────────
+        if self.attention_pending {
+            if let Some(source_id) = self.attention_target.map(|t| t.source_id()) {
+                if let Some(result) = store.poll_explanation(source_id) {
+                    if Some(result.target_line_number)
+                        == self.attention_target.and_then(|t| store.get_by_id(&t).map(|l| l.line_number))
+                    {
+                        self.attention_result = Some(result);
+                        self.attention_pending = false;
+                    }
+                }
+            }
+        }
+
+        // ── Render attention panel ────────────────────────────────────────────
+        if self.show_attention_panel {
+            crate::ui::windows::render_attention_panel(
+                ui.ctx(),
+                &mut self.show_attention_panel,
+                store,
+                self.attention_target,
+                self.attention_result.as_ref(),
+                self.attention_pending,
+            );
         }
 
         events

@@ -767,6 +767,9 @@ pub struct LogStore {
     /// Sidecar scoring configuration, set once during session creation.
     /// Read by background loading threads to decide if sidecar scoring should run.
     sidecar_config: RwLock<Option<crate::core::log_file::ScoringConfig>>,
+    /// Active explain sessions keyed by `source_id`.
+    /// One session per scored file; dropped (closing the WebSocket) when the source is removed.
+    explain_sessions: Mutex<HashMap<u64, crate::anomaly::sidecar_client::ExplainSession>>,
 }
 
 impl std::fmt::Debug for LogStore {
@@ -780,6 +783,7 @@ impl std::fmt::Debug for LogStore {
             .field("scores_count", &self.scores.len())
             .field("sidecar_scores_count", &self.sidecar_scores.len())
             .field("sidecar_enabled", &self.sidecar_config.read().map(|c| c.is_some()).unwrap_or(false))
+            .field("explain_sessions", &self.explain_sessions.lock().map(|g| g.len()).unwrap_or(0))
             .finish()
     }
 }
@@ -798,6 +802,8 @@ impl Clone for LogStore {
                     .expect("sidecar_config lock poisoned")
                     .clone(),
             ),
+            // Explain sessions are live resources — clones start with no sessions.
+            explain_sessions: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -827,6 +833,11 @@ impl StoreID {
     /// Return the stable source identifier for this line.
     pub const fn source_id(&self) -> u64 {
         self.source_id
+    }
+
+    /// Construct a `StoreID` directly from a source identifier and line index.
+    pub const fn make(source_id: u64, line_index: usize) -> Self {
+        Self { source_id, line_index }
     }
 
     /// Compare two `StoreIDs` by their line timestamps.
@@ -863,6 +874,7 @@ impl LogStore {
             scores: DashMap::new(),
             sidecar_scores: DashMap::new(),
             sidecar_config: RwLock::new(None),
+            explain_sessions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -985,8 +997,12 @@ impl LogStore {
         let removed = sources.swap_remove(&source_id)?;
         let path = removed.file_path().to_path_buf();
         drop(sources);
-        // Also remove scores for this source
+        // Also remove scores and explain session for this source
         self.scores.remove(&source_id);
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .remove(&source_id);
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
         tracing::info!("Removed source: {}", path.display());
         Some(path)
@@ -1034,6 +1050,35 @@ impl LogStore {
             .or_default()
             .set_all_with_unk(scores, unk_flags, rare_flags, scored_flags);
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
+    /// Store the explain session for the given `source_id`.
+    /// Replaces any previous session for that source (dropping it, which closes the connection).
+    pub fn set_explain_session(&self, source_id: u64, session: crate::anomaly::sidecar_client::ExplainSession) {
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .insert(source_id, session);
+    }
+
+    /// Request an attention explanation for `target_line_number` on the session for `source_id`.
+    /// Returns `false` if there is no session for that source or the request queue is full.
+    pub fn request_explanation(&self, source_id: u64, target_line_number: usize) -> bool {
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .get(&source_id)
+            .is_some_and(|s| s.request(target_line_number))
+    }
+
+    /// Poll for a completed explanation on the session for `source_id` without blocking.
+    /// Returns `None` if no result is available yet or there is no session for that source.
+    pub fn poll_explanation(&self, source_id: u64) -> Option<crate::anomaly::sidecar_client::ExplainResult> {
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .get(&source_id)
+            .and_then(|s| s.try_recv())
     }
 
     /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.

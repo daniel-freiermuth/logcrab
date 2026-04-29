@@ -64,6 +64,10 @@ pub enum LogTableEvent {
         line_index: StoreID,
         label: crate::anomaly::sidecar_client::SampleLabel,
     },
+    /// User requested an attention explanation for this ML-scored line.
+    ExplainAttention {
+        line_index: StoreID,
+    },
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -268,6 +272,14 @@ impl LogTable {
                         label: crate::anomaly::sidecar_client::SampleLabel::Anomalous,
                     });
                     ui.close();
+                }
+                if line.sidecar_scored {
+                    if ui.button("🔍 Show Attention").clicked() {
+                        events.push(LogTableEvent::ExplainAttention {
+                            line_index: line_idx,
+                        });
+                        ui.close();
+                    }
                 }
             }
         });

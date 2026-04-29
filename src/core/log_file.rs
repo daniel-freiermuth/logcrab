@@ -363,8 +363,11 @@ impl LogFileLoader {
         let norm_versions_ref: std::collections::HashMap<&str, u32> =
             norm_versions.iter().map(|(&k, &v)| (k, v)).collect();
 
-        let result = match client.score_stream(model_id, &norm_versions_ref, &input_lines) {
-            Ok(r) => r,
+        let result = match client.score_stream_with_explain(model_id, &norm_versions_ref, &input_lines) {
+            Ok((r, session)) => {
+                store.set_explain_session(source_id, session);
+                r
+            }
             Err(e) => {
                 tracing::error!("Sidecar score_stream failed: {e}");
                 toast.set_error(format!("Sidecar scoring error: {e}"));
