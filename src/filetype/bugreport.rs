@@ -385,20 +385,6 @@ impl LineType for BugreportLogLine {
         }
     }
 
-    fn anomaly_score(&self) -> f64 {
-        match self {
-            BugreportLogLine::Logcat(l) => l.anomaly_score,
-            BugreportLogLine::Dmesg(l) => l.anomaly_score,
-        }
-    }
-
-    fn set_anomaly_score(&mut self, score: f64) {
-        match self {
-            BugreportLogLine::Logcat(l) => l.anomaly_score = score,
-            BugreportLogLine::Dmesg(l) => l.anomaly_score = score,
-        }
-    }
-
     fn egui_render_context_menu(
         &self,
         ui: &mut Ui,
