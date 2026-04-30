@@ -586,8 +586,12 @@ impl LogTable {
         let is_scrolled_to_closest = !is_selected
             && closest_row_index.is_some_and(|closest_row| closest_row == row_index)
             && selected_line_index.is_some();
-        let color = if color_by_ml_score && line.sidecar_scored {
-            score_to_color(line.sidecar_anomaly_score, dark_mode)
+        let color = if color_by_ml_score {
+            if line.sidecar_scored {
+                score_to_color(line.sidecar_anomaly_score, dark_mode)
+            } else {
+                score_to_color(0.0, dark_mode)
+            }
         } else {
             score_to_color(line.anomaly_score, dark_mode)
         };

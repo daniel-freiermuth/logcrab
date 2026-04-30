@@ -256,8 +256,12 @@ impl BookmarkPanel {
             return;
         };
 
-        let color = if color_by_ml_score && line.sidecar_scored {
-            score_to_color(line.sidecar_anomaly_score, dark_mode)
+        let color = if color_by_ml_score {
+            if line.sidecar_scored {
+                score_to_color(line.sidecar_anomaly_score, dark_mode)
+            } else {
+                score_to_color(0.0, dark_mode)
+            }
         } else {
             score_to_color(line.anomaly_score, dark_mode)
         };
