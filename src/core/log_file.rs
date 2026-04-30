@@ -162,17 +162,52 @@ impl LogFileLoader {
 
     /// Score all lines in `data_source` and persist the results.
     ///
-    /// Iterates directly over the typed source so no intermediate `Vec<LogLine>` is
-    /// allocated.  Each [`LogLine`] DTO is built under a single lock acquisition
-    /// via [`SourceData::get_as_log_line`].
-    ///
-    /// Scores are stored in `store` (not `data_source`) because scores are analysis
-    /// metadata separate from the raw log data.
+    /// Heuristic scoring and sidecar (ML) scoring run in parallel when the
+    /// sidecar is configured.  Each scorer stores results independently in `store`.
     fn score_lines<FT>(
         data_source: &Arc<SourceData<FT>>,
         path: &Path,
         toast: &ProgressToastHandle,
         start_time: std::time::Instant,
+        store: &Arc<LogStore>,
+        source_id: u64,
+    ) where
+        FT: InputFileType,
+        FT::LineType: Clone,
+    {
+        let sidecar_config = store.sidecar_config().filter(|c| c.use_sidecar);
+
+        std::thread::scope(|s| {
+            // ── Sidecar scoring (spawned first so it can overlap with heuristics) ──
+            let sidecar_handle = sidecar_config.map(|config| {
+                let ds = Arc::clone(data_source);
+                let st = Arc::clone(store);
+                let t = toast.clone();
+                let p = path.to_path_buf();
+                s.spawn(move || {
+                    Self::score_with_sidecar(&ds, &p, &t, &st, source_id, &config);
+                })
+            });
+
+            // ── Heuristic scoring (runs on current thread) ───────────────────────
+            Self::score_heuristic(data_source, path, toast, store, source_id);
+
+            // Wait for sidecar if it was spawned.
+            if let Some(handle) = sidecar_handle {
+                if let Err(e) = handle.join() {
+                    tracing::error!("Sidecar scoring thread panicked: {e:?}");
+                }
+            }
+        });
+
+        tracing::info!("Total processing time: {:?}", start_time.elapsed());
+    }
+
+    /// Run the local heuristic scoring pipeline.
+    fn score_heuristic<FT>(
+        data_source: &Arc<SourceData<FT>>,
+        path: &Path,
+        toast: &ProgressToastHandle,
         store: &Arc<LogStore>,
         source_id: u64,
     ) where
@@ -198,7 +233,6 @@ impl LogFileLoader {
                 if data_source.is_cancelled() {
                     tracing::info!("Anomaly scoring cancelled for {}", path.display());
                     toast.set_error("Scoring cancelled".to_string());
-                    toast.dismiss();
                     return;
                 }
                 let progress = idx as f32 / total_lines as f32;
@@ -248,14 +282,6 @@ impl LogFileLoader {
             "Anomaly scoring took {score_duration:?} for {}",
             path.display()
         );
-        tracing::info!("Total processing time: {:?}", start_time.elapsed());
-
-        // Run sidecar scoring if configured
-        if let Some(config) = store.sidecar_config() {
-            if config.use_sidecar {
-                Self::score_with_sidecar(data_source, path, toast, store, source_id, &config);
-            }
-        }
     }
 
     /// Score lines using the LogBERT sidecar server — V1 WebSocket protocol.
