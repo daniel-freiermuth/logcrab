@@ -182,10 +182,11 @@ impl LogFileLoader {
             let sidecar_handle = sidecar_config.map(|config| {
                 let ds = Arc::clone(data_source);
                 let st = Arc::clone(store);
-                let t = toast.clone();
+                let sidecar_toast = toast.spawn_sibling("ML Scoring", "Connecting to sidecar...");
                 let p = path.to_path_buf();
                 s.spawn(move || {
-                    Self::score_with_sidecar(&ds, &p, &t, &st, source_id, &config);
+                    Self::score_with_sidecar(&ds, &p, &sidecar_toast, &st, source_id, &config);
+                    sidecar_toast.dismiss();
                 })
             });
 
@@ -306,7 +307,7 @@ impl LogFileLoader {
         };
 
         tracing::info!("Starting sidecar scoring with model {model_id}");
-        toast.set_title("LogBERT Sidecar Scoring");
+        toast.set_title(&format!("ML Scoring ({model_id})"));
         toast.update(0.0, "Connecting to sidecar...");
 
         let client = match SidecarClient::connect(&config.sidecar_host, config.sidecar_port) {
@@ -363,7 +364,33 @@ impl LogFileLoader {
         let norm_versions_ref: std::collections::HashMap<&str, u32> =
             norm_versions.iter().map(|(&k, &v)| (k, v)).collect();
 
-        let result = match client.score_stream_with_explain(model_id, &norm_versions_ref, &input_lines) {
+        // Use the streaming variant so scores appear in the UI as GPU batches complete.
+        let store_cb = Arc::clone(store);
+        let toast_cb = toast.clone();
+        let result = match client.score_stream_streaming(
+            model_id,
+            &norm_versions_ref,
+            &input_lines,
+            &mut |partial_result, total| {
+                // Rebuild full-length vecs from the partial result and push to the store.
+                let raw_scores: Vec<f64> = (0..total_lines)
+                    .map(|idx| partial_result.scored.get(&idx).map_or(0.0, |e| e.score * 10.0))
+                    .collect();
+                let unk_flags: Vec<bool> = (0..total_lines)
+                    .map(|idx| partial_result.scored.get(&idx).is_some_and(|e| e.target_is_unk))
+                    .collect();
+                let rare_flags: Vec<bool> = (0..total_lines)
+                    .map(|idx| partial_result.scored.get(&idx).is_some_and(|e| e.target_is_rare))
+                    .collect();
+                let scored_flags: Vec<bool> = (0..total_lines)
+                    .map(|idx| partial_result.scored.contains_key(&idx))
+                    .collect();
+                store_cb.set_sidecar_scores_with_unk(source_id, &raw_scores, &unk_flags, &rare_flags, &scored_flags);
+
+                let progress = partial_result.scored.len() as f32 / total as f32;
+                toast_cb.update(0.1 + progress * 0.9, format!("ML scoring... ({}/{})", partial_result.scored.len(), total));
+            },
+        ) {
             Ok((r, session)) => {
                 store.set_explain_session(source_id, session);
                 r
@@ -379,10 +406,7 @@ impl LogFileLoader {
             tracing::warn!("Sidecar: {warning}");
         }
 
-        // ── Map scores back to a contiguous Vec<f64> ────────────────────────
-        // Lines absent from `result.scored` were filtered; they receive 0.0 / false.
-        // Truly-unknown and rare templates are both scored by the model using the [UNK] embedding;
-        // the frontend uses target_is_unk / target_is_rare flags to annotate them in the UI.
+        // Final store update with the complete result set.
         let raw_scores: Vec<f64> = (0..total_lines)
             .map(|idx| result.scored.get(&idx).map_or(0.0, |e| e.score * 10.0))
             .collect();

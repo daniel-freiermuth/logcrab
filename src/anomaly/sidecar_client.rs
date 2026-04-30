@@ -538,7 +538,7 @@ impl SidecarClient {
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
     ) -> Result<ScoreStreamResult> {
-        let (result, _ws) = self.open_score_stream_ws(model_id, normalization_versions, lines)?;
+        let (result, _ws) = self.open_score_stream_ws(model_id, normalization_versions, lines, &mut |_, _| {})?;
         Ok(result)
     }
 
@@ -555,17 +555,45 @@ impl SidecarClient {
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
-        let (result, ws) = self.open_score_stream_ws(model_id, normalization_versions, lines)?;
+        let (result, ws) = self.open_score_stream_ws(model_id, normalization_versions, lines, &mut |_, _| {})?;
+        Ok((result, ExplainSession::spawn(ws)))
+    }
+
+    /// Like [`score_stream_with_explain`], but invokes `on_scores` after each
+    /// `scores` frame arrives from the sidecar. This lets the caller
+    /// incrementally apply results (e.g. update the UI store) as GPU batches
+    /// complete on the server side.
+    ///
+    /// The callback receives `(&ScoreStreamResult, lines_total)` where
+    /// `lines_total` is the total number of input lines for progress calculation.
+    pub fn score_stream_streaming(
+        &self,
+        model_id: &str,
+        normalization_versions: &HashMap<&str, u32>,
+        lines: &[InputLine],
+        on_scores: &mut dyn FnMut(&ScoreStreamResult, usize),
+    ) -> Result<(ScoreStreamResult, ExplainSession)> {
+        let total = lines.len();
+        let (result, ws) = self.open_score_stream_ws(
+            model_id,
+            normalization_versions,
+            lines,
+            &mut |result, _| on_scores(result, total),
+        )?;
         Ok((result, ExplainSession::spawn(ws)))
     }
 
     /// Internal: open a WebSocket, run the full scoring protocol, and return
     /// both the results and the still-open WebSocket (ready for the explain phase).
+    ///
+    /// `on_frame` is called after each `scores` frame is processed, receiving
+    /// a reference to the accumulated result so far and the chunk_index.
     fn open_score_stream_ws(
         &self,
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
+        on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
     ) -> Result<(ScoreStreamResult, tungstenite::WebSocket<TcpStream>)> {
         let addr = format!("{}:{}", self.host, self.port);
         let tcp = TcpStream::connect(&addr)
@@ -613,6 +641,7 @@ impl SidecarClient {
                         Some("scores") => {
                             let frame: ScoresFrame = serde_json::from_value(envelope)
                                 .context("failed to parse scores frame")?;
+                            let chunk_index = frame.chunk_index;
                             for s in frame.scored {
                                 result.scored.insert(
                                     s.line_id.line_number,
@@ -622,6 +651,7 @@ impl SidecarClient {
                             // filtered lines are intentionally absent from `scored`; the
                             // caller assigns them score 0.0.
                             let _ = frame.filtered; // acknowledged, not stored
+                            on_frame(&result, chunk_index);
                         }
                         Some("warning") => {
                             let frame: WarningFrame = serde_json::from_value(envelope)

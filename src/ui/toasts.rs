@@ -98,21 +98,48 @@ impl ToastSender {
 #[derive(Clone)]
 pub struct ProgressToastHandle {
     state: Arc<RwLock<ProgressToastState>>,
+    /// Shared list of active progress toasts — kept so we can spawn sibling toasts.
+    progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
     ctx: egui::Context,
 }
 
 impl ProgressToastHandle {
-    fn new(ctx: egui::Context, title: String, message: String) -> Self {
+    fn new(
+        ctx: egui::Context,
+        progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
+        title: String,
+        message: String,
+    ) -> Self {
+        let state = Arc::new(RwLock::new(ProgressToastState {
+            title,
+            message,
+            progress: Some(0.0),
+            dismissed_at: None,
+            error: None,
+        }));
+        if let Ok(mut handles) = progress_handles.lock() {
+            handles.push(Arc::clone(&state));
+        }
         Self {
-            state: Arc::new(RwLock::new(ProgressToastState {
-                title,
-                message,
-                progress: Some(0.0),
-                dismissed_at: None,
-                error: None,
-            })),
+            state,
+            progress_handles,
             ctx,
         }
+    }
+
+    /// Create a new sibling progress toast that renders alongside this one.
+    /// Can be called from any thread.
+    pub fn spawn_sibling(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) -> ProgressToastHandle {
+        ProgressToastHandle::new(
+            self.ctx.clone(),
+            Arc::clone(&self.progress_handles),
+            title.into(),
+            message.into(),
+        )
     }
 
     /// Update the progress and message
@@ -195,15 +222,12 @@ impl ToastManager {
         title: impl Into<String>,
         message: impl Into<String>,
     ) -> ProgressToastHandle {
-        let ctx = self.ctx.clone();
-        let handle = ProgressToastHandle::new(ctx, title.into(), message.into());
-
-        // Store reference to state for rendering
-        if let Ok(mut handles) = self.progress_handles.lock() {
-            handles.push(Arc::clone(&handle.state));
-        }
-
-        handle
+        ProgressToastHandle::new(
+            self.ctx.clone(),
+            Arc::clone(&self.progress_handles),
+            title.into(),
+            message.into(),
+        )
     }
 
     /// Return a [`ToastSender`] that can enqueue toasts from any thread.
