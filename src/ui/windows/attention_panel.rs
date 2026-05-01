@@ -118,26 +118,36 @@ fn render_content(
             .map_or(1.0_f32, |e| e.probability)
             .max(f32::EPSILON);
 
-        egui::Grid::new("templates_grid")
+        ui.push_id("templates_table", |ui| { TableBuilder::new(ui)
             .striped(true)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Prob").strong());
-                ui.label(RichText::new("Template").strong());
-                ui.end_row();
-
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::initial(130.0).at_least(80.0))
+            .column(Column::remainder().at_least(100.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| { ui.label(RichText::new("Prob").strong()); });
+                header.col(|ui| { ui.label(RichText::new("Template").strong()); });
+            })
+            .body(|mut body| {
                 for entry in &result.top_templates {
-                    let normalized = entry.probability / max_prob;
-                    ui.add(
-                        egui::ProgressBar::new(normalized)
-                            .desired_width(80.0)
-                            .text(format!("{:.1}%", entry.probability * 100.0)),
-                    );
-                    let tmpl: String = entry.template.chars().take(120).collect();
-                    ui.add(egui::Label::new(RichText::new(tmpl).monospace()).wrap());
-                    ui.end_row();
+                    body.row(18.0, |mut row| {
+                        row.col(|ui| {
+                            let normalized = entry.probability / max_prob;
+                            ui.add(
+                                egui::ProgressBar::new(normalized)
+                                    .desired_width(ui.available_width())
+                                    .text(format!("{:.1}%", entry.probability * 100.0)),
+                            );
+                        });
+                        row.col(|ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(entry.template.clone()).monospace())
+                                    .wrap_mode(egui::TextWrapMode::Truncate),
+                            );
+                        });
+                    });
                 }
-            });
+            }); });
     }
 
     if result.attention.is_empty() {
@@ -164,40 +174,49 @@ fn render_content(
         .map_or(1.0_f32, |e| e.weight)
         .max(f32::EPSILON);
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("attention_grid")
-            .striped(true)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                // Header
-                ui.label(RichText::new("Line").strong());
-                ui.label(RichText::new("Weight").strong());
-                ui.label(RichText::new("Message").strong());
-                ui.end_row();
-
-                for entry in result.attention.iter().take(MAX_ENTRIES) {
+    ui.push_id("attention_table", |ui| { TableBuilder::new(ui)
+        .striped(true)
+        .resizable(true)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::auto().at_least(50.0))
+        .column(Column::initial(130.0).at_least(80.0))
+        .column(Column::remainder().at_least(100.0))
+        .header(20.0, |mut header| {
+            header.col(|ui| { ui.label(RichText::new("Line").strong()); });
+            header.col(|ui| { ui.label(RichText::new("Weight").strong()); });
+            header.col(|ui| { ui.label(RichText::new("Message").strong()); });
+        })
+        .body(|mut body| {
+            for entry in result.attention.iter().take(MAX_ENTRIES) {
+                body.row(18.0, |mut row| {
                     let sid = StoreID::make(source_id, entry.line_number);
                     let msg = store
                         .get_by_id(&sid)
-                        .map(|l| l.message.chars().take(80).collect::<String>())
+                        .map(|l| l.message.clone())
                         .unwrap_or_else(|| format!("<line {}>", entry.line_number));
 
-                    ui.label(entry.line_number.to_string());
+                    row.col(|ui| { ui.label(entry.line_number.to_string()); });
 
                     // Attention bar
-                    let normalized = entry.weight / max_weight;
-                    let fill = weight_color(normalized);
-                    ui.add(
-                        egui::ProgressBar::new(normalized)
-                            .desired_width(120.0)
-                            .fill(fill),
-                    );
+                    row.col(|ui| {
+                        let normalized = entry.weight / max_weight;
+                        let fill = weight_color(normalized);
+                        ui.add(
+                            egui::ProgressBar::new(normalized)
+                                .desired_width(ui.available_width())
+                                .fill(fill),
+                        );
+                    });
 
-                    ui.add(egui::Label::new(RichText::new(msg).monospace()).wrap());
-                    ui.end_row();
-                }
-            });
-    });
+                    row.col(|ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(msg).monospace())
+                                .wrap_mode(egui::TextWrapMode::Truncate),
+                        );
+                    });
+                });
+            }
+        }); });
 }
 
 /// Map a normalized attention weight (0 → 1) to a color: gray → orange → red.
