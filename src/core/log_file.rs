@@ -192,6 +192,8 @@ impl LogFileLoader {
 
             // ── Heuristic scoring (runs on current thread) ───────────────────────
             Self::score_heuristic(data_source, path, toast, store, source_id);
+            // Dismiss the heuristic toast immediately; the sidecar has its own sibling toast.
+            toast.dismiss();
 
             // Wait for sidecar if it was spawned.
             if let Some(handle) = sidecar_handle {
