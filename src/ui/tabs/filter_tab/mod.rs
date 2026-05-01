@@ -261,8 +261,8 @@ impl FilterView {
                         .get_by_id(&line_index)
                         .map(|l| l.line_number)
                         .unwrap_or(0);
-                    let Some((slug, log_lines)) =
-                        store.get_log_lines_for_source_with_slug(source_id)
+                    let Some(input_lines) =
+                        store.get_sidecar_input_lines_for_source(source_id)
                     else {
                         tracing::warn!("classify: source {source_id} not found in store");
                         continue;
@@ -278,23 +278,6 @@ impl FilterView {
                     let host = sidecar_config.sidecar_host;
                     let port = sidecar_config.sidecar_port;
                     let toast_sender = log_view_state.toast_sender.clone();
-
-                    // Build InputLine list from LogLines for the upload.
-                    let input_lines: Vec<crate::anomaly::sidecar_client::InputLine> = log_lines
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, line)| {
-                            crate::anomaly::sidecar_client::InputLine::new(
-                                0,
-                                idx,
-                                line.timestamp.timestamp_millis().max(0) as u64,
-                                line.message.clone(),
-                                Some(line.template_key()),
-                                None,
-                                Some(slug.to_string()),
-                            )
-                        })
-                        .collect();
 
                     std::thread::spawn(move || {
                         let result = (|| -> anyhow::Result<()> {

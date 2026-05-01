@@ -524,6 +524,18 @@ macro_rules! register_filetypes {
                 }
             }
 
+            /// Returns the canonical sidecar `(timestamp_ms, message)` for a single line.
+            ///
+            /// Calls `LineType::message()` — the format-specific canonical text used by
+            /// `logcrab-export` and expected by the sidecar vocab — rather than the UI
+            /// `display_message()`.  Returns `None` when `id` is out of range.
+            pub fn get_sidecar_message(&self, id: usize) -> Option<(u64, String)> {
+                match self {
+                    $( Self::$b_arm(s) => s.get_sidecar_message(id), )*
+                    $( Self::$t_arm(s) => s.get_sidecar_message(id), )*
+                }
+            }
+
             /// Filter lines by display-message and raw text in timestamp order.
             ///
             /// Predicate receives `(display_message, raw)` — the display message includes

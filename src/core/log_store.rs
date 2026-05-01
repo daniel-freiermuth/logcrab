@@ -1402,31 +1402,34 @@ impl LogStore {
         Some(line)
     }
 
-    /// Collect all log lines for `source_id`, together with the source's filetype slug.
+    /// Collect the sidecar `InputLine`s for a source — using the canonical `message()`
+    /// (not `display_message()`) so they match what `logcrab-export` / training produces.
     ///
-    /// Returns `None` if the source is not found.  All lines are returned even if some
-    /// have no parsed timestamp — score fields are populated from the store-level caches.
-    pub fn get_log_lines_for_source_with_slug(
+    /// Returns `None` when the source is not found.
+    pub fn get_sidecar_input_lines_for_source(
         &self,
         source_id: u64,
-    ) -> Option<(&'static str, Vec<LogLine>)> {
-        profiling::scope!("LogStore::get_log_lines_for_source_with_slug");
+    ) -> Option<Vec<crate::anomaly::sidecar_client::InputLine>> {
         let sources = self.sources.read().expect("sources lock poisoned");
         let source = sources.get(&source_id)?;
         let slug = source.filetype_slug();
         let count = source.len();
-        let lines: Vec<LogLine> = (0..count)
+        let lines: Vec<crate::anomaly::sidecar_client::InputLine> = (0..count)
             .filter_map(|i| {
-                let mut line = source.get_log_line(i)?;
-                line.anomaly_score = self.get_score(source_id, i);
-                line.sidecar_anomaly_score = self.get_sidecar_score(source_id, i);
-                line.sidecar_score_is_unk = self.get_sidecar_unk(source_id, i);
-                line.sidecar_score_is_rare = self.get_sidecar_rare(source_id, i);
-                line.sidecar_scored = self.get_sidecar_scored(source_id, i);
-                Some(line)
+                let (ts_ms, message) = source.get_sidecar_message(i)?;
+                let template_key = crate::parser::normalize_message(&message);
+                Some(crate::anomaly::sidecar_client::InputLine::new(
+                    0,
+                    i,
+                    ts_ms,
+                    message,
+                    Some(template_key),
+                    None,
+                    Some(slug.to_string()),
+                ))
             })
             .collect();
-        Some((slug, lines))
+        Some(lines)
     }
 }
 
