@@ -332,6 +332,9 @@ impl LogFileLoader {
         }
 
         // ── Build InputLines ─────────────────────────────────────────────────
+        // Skip template_key pre-computation — the sidecar runs its own extractor
+        // server-side, so the client hint is redundant and costs O(N) CPU time
+        // before the socket even opens.
         toast.update(0.0, "Preparing lines...");
         let total_lines = data_source.len();
         let file_name = path
@@ -343,7 +346,6 @@ impl LogFileLoader {
             let Some((ts_ms, message)) = data_source.get_sidecar_message(idx) else {
                 continue;
             };
-            let template_key = crate::parser::normalize_message(&message);
             input_lines.push(InputLine::new(
                 // Protocol caps source_id to u16 (0–65535); internal IDs are u64 but
                 // in practice never exceed that range within a single session.
@@ -351,7 +353,7 @@ impl LogFileLoader {
                 idx,
                 ts_ms,
                 message,
-                Some(template_key),
+                None, // template_key: let the sidecar extract it
                 file_name.clone(),
                 Some(FT::SLUG.to_string()),
             ));
