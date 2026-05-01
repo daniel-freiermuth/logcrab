@@ -652,13 +652,17 @@ impl SidecarClient {
         // or a Mutex.  After all frames are sent we switch to 600 s so we wait
         // patiently for the server to finish GPU scoring.
         tcp.set_write_timeout(None)?;
-        tcp.set_read_timeout(Some(Duration::from_millis(1)))?;
+        // Leave read timeout unset for the handshake; we'll configure it below.
 
         let ws_url = format!("ws://{}:{}/v1/score-stream", self.host, self.port);
         let (mut ws, _) = tungstenite::client(ws_url, tcp)
             .context("WebSocket handshake failed")?;
         let n_chunks = (lines.len() + LINES_PER_CHUNK - 1) / LINES_PER_CHUNK;
         tracing::info!("WebSocket handshake done — sending {} lines ({n_chunks} chunks)", lines.len());
+
+        // 1 ms non-blocking read during the send phase (acts like try_read).
+        // Switched to 600 s once all frames are sent.
+        ws.get_ref().set_read_timeout(Some(Duration::from_millis(1)))?;
 
         // ── Send phase: stream all frames, opportunistically reading responses ─
         // tungstenite preserves internal read state across WouldBlock/TimedOut
