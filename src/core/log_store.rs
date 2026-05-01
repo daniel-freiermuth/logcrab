@@ -653,6 +653,27 @@ where
         })
     }
 
+    /// Returns the canonical sidecar message and timestamp (ms) for a single line.
+    ///
+    /// Unlike `get_as_log_line`, this calls `LineType::message()` which returns the
+    /// format-specific canonical text (e.g. for logcat: just `TAG: text`, without the
+    /// PID/TID/level prefix that `display_message` includes).  This is the string that
+    /// must be sent to the sidecar because the training vocab was built from the same
+    /// `message()` output via `logcrab-export`.
+    ///
+    /// Returns `None` when `line_index` is out of range.
+    pub fn get_sidecar_message(&self, line_index: usize) -> Option<(u64, String)> {
+        let lines = self.lines.read().expect("lines lock poisoned");
+        let config = self.config.read().expect("config lock poisoned");
+        let file_state = &*self.file_state;
+        let line = lines.get(line_index)?;
+        let ts_ms = line
+            .timestamp(&*config, file_state)
+            .timestamp_millis()
+            .max(0) as u64;
+        Some((ts_ms, line.message()))
+    }
+
     /// Filter lines by their *display message* and *raw* string, in timestamp order.
     ///
     /// Unlike `filter_sorted_mapped`, the predicate receives the display message produced

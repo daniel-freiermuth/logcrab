@@ -338,18 +338,17 @@ impl LogFileLoader {
 
         let mut input_lines: Vec<InputLine> = Vec::with_capacity(total_lines);
         for idx in 0..total_lines {
-            let Some(log_line) = data_source.get_as_log_line(idx) else {
+            let Some((ts_ms, message)) = data_source.get_sidecar_message(idx) else {
                 continue;
             };
-            let template_key = crate::parser::normalize_message(&log_line.message);
+            let template_key = crate::parser::normalize_message(&message);
             input_lines.push(InputLine::new(
                 // Protocol caps source_id to u16 (0–65535); internal IDs are u64 but
                 // in practice never exceed that range within a single session.
                 source_id as u16,
                 idx,
-                // Spec requires minimum: 0; chrono returns i64 so clamp negatives.
-                log_line.timestamp.timestamp_millis().max(0) as u64,
-                log_line.message,
+                ts_ms,
+                message,
                 Some(template_key),
                 file_name.clone(),
                 Some(FT::SLUG.to_string()),
