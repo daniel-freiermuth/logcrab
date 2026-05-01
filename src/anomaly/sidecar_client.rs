@@ -364,6 +364,16 @@ struct ExplanationFrame {
     top_templates: Vec<TemplateEntryRaw>,
 }
 
+/// Status returned by [`ExplainSession::poll_status`].
+pub enum ExplainPollStatus {
+    /// The result is not ready yet.
+    Pending,
+    /// A result arrived.
+    Ready(ExplainResult),
+    /// The background WebSocket thread has exited; no further results will arrive.
+    Dead,
+}
+
 /// Handle to the explain phase of a live score-stream WebSocket session.
 ///
 /// The WebSocket connection is kept alive in a background thread.
@@ -390,6 +400,16 @@ impl ExplainSession {
     /// Poll for a completed explanation without blocking.
     pub fn try_recv(&self) -> Option<ExplainResult> {
         self.result_rx.try_recv().ok()
+    }
+
+    /// Poll the session and return a rich status so callers can detect when
+    /// the background WebSocket thread has exited.
+    pub fn poll_status(&self) -> ExplainPollStatus {
+        match self.result_rx.try_recv() {
+            Ok(result) => ExplainPollStatus::Ready(result),
+            Err(mpsc::TryRecvError::Empty) => ExplainPollStatus::Pending,
+            Err(mpsc::TryRecvError::Disconnected) => ExplainPollStatus::Dead,
+        }
     }
 
     fn run_loop(

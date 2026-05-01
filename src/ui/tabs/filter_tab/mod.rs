@@ -68,6 +68,8 @@ pub struct FilterView {
     attention_result: Option<crate::anomaly::sidecar_client::ExplainResult>,
     /// `true` while an explain request is in flight.
     attention_pending: bool,
+    /// Set when the explain session's WebSocket closes unexpectedly.
+    attention_error: Option<String>,
 }
 
 impl FilterView {
@@ -81,6 +83,7 @@ impl FilterView {
             attention_target: None,
             attention_result: None,
             attention_pending: false,
+            attention_error: None,
         }
     }
 
@@ -253,7 +256,13 @@ impl FilterView {
                     if store.request_explanation(source_id, target_ln) {
                         self.attention_target = Some(line_index);
                         self.attention_pending = true;
+                        self.attention_error = None;
                         self.show_attention_panel = true;
+                    } else {
+                        // Session is closed or was never opened.
+                        if let Some(ref sender) = log_view_state.toast_sender {
+                            sender.send("Attention not available: sidecar session is closed".to_string());
+                        }
                     }
                 }
                 LogTableEvent::ClassifyLine { line_index, label } => {
@@ -312,13 +321,20 @@ impl FilterView {
         // ── Poll for explain results ──────────────────────────────────────────
         if self.attention_pending {
             if let Some(source_id) = self.attention_target.map(|t| t.source_id()) {
-                if let Some(result) = store.poll_explanation(source_id) {
-                    if Some(result.target_line_number)
-                        == self.attention_target.and_then(|t| store.get_by_id(&t).map(|l| l.line_number))
+                use crate::anomaly::sidecar_client::ExplainPollStatus;
+                match store.poll_explain_status(source_id) {
+                    ExplainPollStatus::Ready(result)
+                        if Some(result.target_line_number)
+                            == self.attention_target.and_then(|t| store.get_by_id(&t).map(|l| l.line_number)) =>
                     {
                         self.attention_result = Some(result);
                         self.attention_pending = false;
                     }
+                    ExplainPollStatus::Dead => {
+                        self.attention_pending = false;
+                        self.attention_error = Some("Sidecar connection lost".to_string());
+                    }
+                    _ => {}
                 }
             }
         }
@@ -331,8 +347,7 @@ impl FilterView {
                 store,
                 self.attention_target,
                 self.attention_result.as_ref(),
-                self.attention_pending,
-            );
+                self.attention_pending,                self.attention_error.as_deref(),            );
         }
 
         events

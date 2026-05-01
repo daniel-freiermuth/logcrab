@@ -1102,6 +1102,17 @@ impl LogStore {
             .and_then(|s| s.try_recv())
     }
 
+    /// Poll the explain session with a richer status that distinguishes "still pending"
+    /// from "the WebSocket thread has exited".
+    pub fn poll_explain_status(&self, source_id: u64) -> crate::anomaly::sidecar_client::ExplainPollStatus {
+        use crate::anomaly::sidecar_client::ExplainPollStatus;
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .get(&source_id)
+            .map_or(ExplainPollStatus::Dead, |s| s.poll_status())
+    }
+
     /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.
     pub fn get_sidecar_score(&self, source_id: u64, line_index: usize) -> f64 {
         self.sidecar_scores

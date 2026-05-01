@@ -19,6 +19,7 @@
 use crate::anomaly::sidecar_client::ExplainResult;
 use crate::core::log_store::{LogStore, StoreID};
 use egui::{Color32, RichText, Ui};
+use egui_extras::{Column, TableBuilder};
 
 /// Maximum number of attention entries shown in the panel.
 const MAX_ENTRIES: usize = 30;
@@ -28,7 +29,8 @@ const MAX_ENTRIES: usize = 30;
 /// - `open`       — toggled to `false` when the user closes the window.
 /// - `target`     — the `StoreID` of the line the user right-clicked.
 /// - `result`     — the latest `ExplainResult` from the sidecar, if any.
-/// - `is_pending` — `true` while a request is in flight.
+/// - `is_pending`     — `true` while a request is in flight.
+/// - `session_error`  — set when the WebSocket closed while pending.
 pub fn render_attention_panel(
     ctx: &egui::Context,
     open: &mut bool,
@@ -36,6 +38,7 @@ pub fn render_attention_panel(
     target: Option<StoreID>,
     result: Option<&ExplainResult>,
     is_pending: bool,
+    session_error: Option<&str>,
 ) {
     egui::Window::new("Attention Weights")
         .collapsible(false)
@@ -44,7 +47,7 @@ pub fn render_attention_panel(
         .default_height(480.0)
         .open(open)
         .show(ctx, |ui| {
-            render_content(ui, store, target, result, is_pending);
+            render_content(ui, store, target, result, is_pending, session_error);
         });
 }
 
@@ -54,6 +57,7 @@ fn render_content(
     target: Option<StoreID>,
     result: Option<&ExplainResult>,
     is_pending: bool,
+    session_error: Option<&str>,
 ) {
     // ── Target line preview ───────────────────────────────────────────────────
     if let Some(t) = target {
@@ -80,7 +84,14 @@ fn render_content(
         });
         return;
     }
-
+    // ── Session error (WebSocket closed while pending) ────────────────────
+    if let Some(err) = session_error {
+        ui.label(
+            RichText::new(format!("⚠ {err}"))
+                .color(Color32::from_rgb(200, 80, 60)),
+        );
+        return;
+    }
     // ── No result yet (panel just opened, before first click) ─────────────────
     let Some(result) = result else {
         ui.label("Right-click a scored line → Show Attention");
