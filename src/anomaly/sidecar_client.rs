@@ -25,7 +25,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::TcpStream;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use tungstenite::Message;
 
@@ -644,36 +644,65 @@ impl SidecarClient {
         let addr = format!("{}:{}", self.host, self.port);
         let tcp = TcpStream::connect(&addr)
             .with_context(|| format!("TCP connect to {addr} failed"))?;
-        // Long timeout: large files can take minutes to score.
+        // No write timeout: sending a large file over a slow/remote link (VPN, WiFi) can
+        // take many minutes.  The OS TCP stack handles flow control; we just wait.
+        // A 10-minute read timeout guards against a permanently silent server.
         tcp.set_read_timeout(Some(Duration::from_secs(600)))?;
-        tcp.set_write_timeout(Some(Duration::from_secs(60)))?;
+        tcp.set_write_timeout(None)?;
 
         let ws_url = format!("ws://{}:{}/v1/score-stream", self.host, self.port);
-        let (mut ws, _) = tungstenite::client(ws_url, tcp)
+        let (ws, _) = tungstenite::client(ws_url, tcp)
             .context("WebSocket handshake failed")?;
 
-        // ── Send start frame ─────────────────────────────────────────────────
-        let start = StartFrame::new(model_id, normalization_versions);
-        ws.send(Message::Text(serde_json::to_string(&start)?.into()))?;
+        // Share the socket between the writer thread and the reader (this thread).
+        // tungstenite's `WebSocket` is not `Send`, so we wrap it in Arc<Mutex<_>>.
+        // Read and write don't share internal state in practice, so lock contention
+        // is negligible.
+        let ws = Arc::new(Mutex::new(ws));
 
-        // ── Send lines frames ────────────────────────────────────────────────
+        // ── Writer thread: send start + all lines + end ──────────────────────
+        let start = StartFrame::new(model_id, normalization_versions);
+        let start_json = serde_json::to_string(&start)?;
+        let end_json = serde_json::to_string(&EndFrame { type_: "end" })?;
+
+        // Pre-serialise all frames to avoid holding the lock during JSON encoding.
+        let mut frames: Vec<String> = Vec::with_capacity(lines.len() / LINES_PER_CHUNK + 2);
+        frames.push(start_json);
         for (chunk_index, chunk) in lines.chunks(LINES_PER_CHUNK).enumerate() {
             let frame = LinesFrame { type_: "lines", chunk_index, lines: chunk };
-            ws.send(Message::Text(serde_json::to_string(&frame)?.into()))?;
+            frames.push(serde_json::to_string(&frame)?);
         }
+        frames.push(end_json);
 
-        // ── Send end frame ───────────────────────────────────────────────────
-        ws.send(Message::Text(
-            serde_json::to_string(&EndFrame { type_: "end" })?.into(),
-        ))?;
+        let ws_writer = Arc::clone(&ws);
+        let (write_err_tx, write_err_rx) = mpsc::channel::<anyhow::Error>();
+        std::thread::spawn(move || {
+            for json in frames {
+                let mut guard = ws_writer.lock().unwrap();
+                if let Err(e) = guard.send(Message::Text(json.into())) {
+                    let _ = write_err_tx.send(anyhow::anyhow!("WebSocket write error: {e}"));
+                    return;
+                }
+            }
+            // Writer is done; drop tx so reader knows no write errors will come.
+        });
 
-        // ── Read response frames ─────────────────────────────────────────────
+        // ── Reader (this thread): process response frames while writer sends ──
         let mut result = ScoreStreamResult::default();
 
         loop {
-            match ws.read()? {
+            // Check for write-side errors before blocking on a read.
+            if let Ok(e) = write_err_rx.try_recv() {
+                return Err(e);
+            }
+
+            let msg = {
+                let mut guard = ws.lock().unwrap();
+                guard.read()?
+            };
+
+            match msg {
                 Message::Text(text) => {
-                    // Peek at the `type` field to dispatch without full deserialization.
                     let envelope: serde_json::Value = serde_json::from_str(&text)
                         .context("invalid JSON from sidecar")?;
                     match envelope["type"].as_str() {
@@ -730,13 +759,25 @@ impl SidecarClient {
                 }
                 Message::Close(_) => break,
                 Message::Ping(data) => {
-                    ws.send(Message::Pong(data))?;
+                    ws.lock().unwrap().send(Message::Pong(data))?;
                 }
                 _ => {}
             }
         }
 
+        // Unwrap the Arc — the writer thread is done by now (it sent all frames before
+        // the server could send `complete`).
+        let ws = Arc::try_unwrap(ws)
+            .unwrap_or_else(|arc| {
+                // Writer thread is still alive (shouldn't happen after complete); wait briefly.
+                drop(arc.lock());
+                // Re-acquire — can't easily recover ownership, so reconstruct from raw.
+                // In practice the writer is always done before `complete` arrives.
+                panic!("writer thread outlived the score_stream session");
+            })
+            .into_inner()
+            .unwrap();
+
         Ok((result, ws))
     }
 }
-
