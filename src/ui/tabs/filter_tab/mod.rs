@@ -37,6 +37,7 @@ use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
 use egui::Ui;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Events that can be emitted by the filter view
 #[derive(Debug, Clone)]
@@ -261,12 +262,6 @@ impl FilterView {
                         .get_by_id(&line_index)
                         .map(|l| l.line_number)
                         .unwrap_or(0);
-                    let Some(input_lines) =
-                        store.get_sidecar_input_lines_for_source(source_id)
-                    else {
-                        tracing::warn!("classify: source {source_id} not found in store");
-                        continue;
-                    };
                     let Some(sidecar_config) = store.sidecar_config() else {
                         tracing::warn!("classify: no sidecar config set");
                         continue;
@@ -278,9 +273,13 @@ impl FilterView {
                     let host = sidecar_config.sidecar_host;
                     let port = sidecar_config.sidecar_port;
                     let toast_sender = log_view_state.toast_sender.clone();
+                    let store_arc = Arc::clone(&log_view_state.store);
 
                     std::thread::spawn(move || {
                         let result = (|| -> anyhow::Result<()> {
+                            let input_lines = store_arc
+                                .get_sidecar_input_lines_for_source(source_id)
+                                .ok_or_else(|| anyhow::anyhow!("source {source_id} not found"))?;
                             let client = crate::anomaly::sidecar_client::SidecarClient::connect(
                                 &host, port,
                             )?;
