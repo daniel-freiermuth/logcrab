@@ -25,7 +25,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::TcpStream;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::mpsc;
 use std::time::Duration;
 use tungstenite::Message;
 
@@ -645,155 +645,162 @@ impl SidecarClient {
         tracing::info!("Connecting to sidecar at {addr}");
         let tcp = TcpStream::connect(&addr)
             .with_context(|| format!("TCP connect to {addr} failed"))?;
-        // No write timeout: sending a large file over a slow/remote link (VPN, WiFi) can
-        // take many minutes.  The OS TCP stack handles flow control; we just wait.
-        // A 10-minute read timeout guards against a permanently silent server.
-        tcp.set_read_timeout(Some(Duration::from_secs(600)))?;
+        // No write timeout: the OS handles flow control; we block freely.
+        // During the send phase we use a short read timeout (1 ms) so that
+        // ws.read() acts like try_read() — returning immediately when there is
+        // nothing yet — letting us interleave sends and reads without threads
+        // or a Mutex.  After all frames are sent we switch to 600 s so we wait
+        // patiently for the server to finish GPU scoring.
         tcp.set_write_timeout(None)?;
+        tcp.set_read_timeout(Some(Duration::from_millis(1)))?;
 
         let ws_url = format!("ws://{}:{}/v1/score-stream", self.host, self.port);
-        let (ws, _) = tungstenite::client(ws_url, tcp)
+        let (mut ws, _) = tungstenite::client(ws_url, tcp)
             .context("WebSocket handshake failed")?;
-        tracing::info!("WebSocket handshake done — sending {} lines ({} chunks)", lines.len(), lines.chunks(LINES_PER_CHUNK).len());
+        let n_chunks = (lines.len() + LINES_PER_CHUNK - 1) / LINES_PER_CHUNK;
+        tracing::info!("WebSocket handshake done — sending {} lines ({n_chunks} chunks)", lines.len());
 
-        // Share the socket between the writer thread and the reader (this thread).
-        // tungstenite's `WebSocket` is not `Send`, so we wrap it in Arc<Mutex<_>>.
-        // Read and write don't share internal state in practice, so lock contention
-        // is negligible.
-        let ws = Arc::new(Mutex::new(ws));
-
-        // ── Writer thread: send start + all lines + end ──────────────────────
-        let start = StartFrame::new(model_id, normalization_versions);
-        let start_json = serde_json::to_string(&start)?;
-        let end_json = serde_json::to_string(&EndFrame { type_: "end" })?;
-
-        // Pre-serialise all frames to avoid holding the lock during JSON encoding.
-        let mut frames: Vec<String> = Vec::with_capacity(lines.len() / LINES_PER_CHUNK + 2);
-        frames.push(start_json);
-        for (chunk_index, chunk) in lines.chunks(LINES_PER_CHUNK).enumerate() {
-            let frame = LinesFrame { type_: "lines", chunk_index, lines: chunk };
-            frames.push(serde_json::to_string(&frame)?);
-        }
-        frames.push(end_json);
-
-        let ws_writer = Arc::clone(&ws);
-        let (write_err_tx, write_err_rx) = mpsc::channel::<anyhow::Error>();
-        let total_frames = frames.len();
-        std::thread::spawn(move || {
-            for (i, json) in frames.into_iter().enumerate() {
-                if i == 0 {
-                    tracing::debug!("writer: sending start frame");
-                } else if i == total_frames - 1 {
-                    tracing::debug!("writer: sending end frame");
-                } else if i % 500 == 0 {
-                    tracing::info!("writer: sent {i}/{total_frames} frames");
-                }
-                let mut guard = ws_writer.lock().unwrap();
-                if let Err(e) = guard.send(Message::Text(json.into())) {
-                    let _ = write_err_tx.send(anyhow::anyhow!("WebSocket write error: {e}"));
-                    return;
-                }
-            }
-            tracing::info!("writer: all {total_frames} frames sent");
-            // Writer is done; drop tx so reader knows no write errors will come.
-        });
-
-        // ── Reader (this thread): process response frames while writer sends ──
+        // ── Send phase: stream all frames, opportunistically reading responses ─
+        // tungstenite preserves internal read state across WouldBlock/TimedOut
+        // errors, so it is safe to call read() speculatively between sends.
         let mut result = ScoreStreamResult::default();
 
-        loop {
-            // Check for write-side errors before blocking on a read.
-            if let Ok(e) = write_err_rx.try_recv() {
-                return Err(e);
+        let start = StartFrame::new(model_id, normalization_versions);
+        ws.send(Message::Text(serde_json::to_string(&start)?.into()))?;
+        tracing::debug!("sent start frame");
+
+        for (chunk_index, chunk) in lines.chunks(LINES_PER_CHUNK).enumerate() {
+            let frame = LinesFrame { type_: "lines", chunk_index, lines: chunk };
+            ws.send(Message::Text(serde_json::to_string(&frame)?.into()))?;
+            if chunk_index % 500 == 499 {
+                tracing::info!("sent {}/{n_chunks} chunks", chunk_index + 1);
             }
+            // Opportunistic read: consume any scores frames the server has
+            // already produced while we were uploading.
+            Self::drain_nonblocking(&mut ws, &mut result, on_frame)?;
+        }
 
-            let msg = {
-                let mut guard = ws.lock().unwrap();
-                guard.read()?
-            };
+        ws.send(Message::Text(serde_json::to_string(&EndFrame { type_: "end" })?.into()))?;
+        tracing::info!("all {n_chunks} chunks + end frame sent — waiting for complete");
 
-            match msg {
+        // ── Read phase: switch to long timeout and consume remaining responses ─
+        ws.get_ref().set_read_timeout(Some(Duration::from_secs(600)))?;
+
+        loop {
+            match ws.read()? {
                 Message::Text(text) => {
-                    let envelope: serde_json::Value = serde_json::from_str(&text)
-                        .context("invalid JSON from sidecar")?;
-                    match envelope["type"].as_str() {
-                        Some("accepted") => {
-                            if let Ok(f) = serde_json::from_value::<AcceptedFrame>(envelope) {
-                                tracing::info!(run_id = %f.run_id, "sidecar accepted the run");
-                            } else {
-                                tracing::info!("sidecar accepted the run");
-                            }
-                        }
-                        Some("scores") => {
-                            let frame: ScoresFrame = serde_json::from_value(envelope)
-                                .context("failed to parse scores frame")?;
-                            let chunk_index = frame.chunk_index;
-                            let newly_scored = frame.scored.len();
-                            for s in frame.scored {
-                                result.scored.insert(
-                                    s.line_id.line_number,
-                                    ScoreEntry { score: s.score, target_is_unk: s.target_is_unk, target_is_rare: s.target_is_rare },
-                                );
-                            }
-                            // filtered lines are intentionally absent from `scored`; the
-                            // caller assigns them score 0.0.
-                            let _ = frame.filtered; // acknowledged, not stored
-                            tracing::info!(
-                                "scores frame #{chunk_index}: +{newly_scored} scored, {} total so far",
-                                result.scored.len()
-                            );
-                            on_frame(&result, chunk_index);
-                        }
-                        Some("warning") => {
-                            let frame: WarningFrame = serde_json::from_value(envelope)
-                                .context("failed to parse warning frame")?;
-                            tracing::warn!("sidecar warning [{}]: {}", frame.code, frame.message);
-                            result.warnings.push(format!("[{}] {}", frame.code, frame.message));
-                        }
-                        Some("complete") => {
-                            if let Ok(f) = serde_json::from_value::<CompleteFrame>(envelope) {
-                                tracing::info!(
-                                    lines_received = f.summary.lines_received,
-                                    lines_scored = f.summary.lines_scored,
-                                    lines_filtered = f.summary.lines_filtered,
-                                    "sidecar signalled complete",
-                                );
-                            } else {
-                                tracing::info!("sidecar signalled complete");
-                            }
-                            break;
-                        }
-                        Some("error") => {
-                            let frame: ErrorFrame = serde_json::from_value(envelope)
-                                .context("failed to parse error frame")?;
-                            bail!("sidecar error [{}]: {}", frame.code, frame.message);
-                        }
-                        other => {
-                            tracing::warn!("unknown frame type from sidecar: {other:?}");
-                        }
+                    if Self::handle_text(&text, &mut result, on_frame)? == ReadAction::Break {
+                        break;
                     }
                 }
                 Message::Close(_) => break,
-                Message::Ping(data) => {
-                    ws.lock().unwrap().send(Message::Pong(data))?;
-                }
+                Message::Ping(data) => ws.send(Message::Pong(data))?,
                 _ => {}
             }
         }
 
-        // Unwrap the Arc — the writer thread is done by now (it sent all frames before
-        // the server could send `complete`).
-        let ws = Arc::try_unwrap(ws)
-            .unwrap_or_else(|arc| {
-                // Writer thread is still alive (shouldn't happen after complete); wait briefly.
-                drop(arc.lock());
-                // Re-acquire — can't easily recover ownership, so reconstruct from raw.
-                // In practice the writer is always done before `complete` arrives.
-                panic!("writer thread outlived the score_stream session");
-            })
-            .into_inner()
-            .unwrap();
-
         Ok((result, ws))
     }
+
+    /// Drain any immediately-available inbound WebSocket messages, ignoring
+    /// `WouldBlock`/`TimedOut` (i.e. nothing ready yet).
+    fn drain_nonblocking(
+        ws: &mut tungstenite::WebSocket<TcpStream>,
+        result: &mut ScoreStreamResult,
+        on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
+    ) -> Result<()> {
+        loop {
+            match ws.read() {
+                Ok(Message::Text(text)) => {
+                    Self::handle_text(&text, result, on_frame)?;
+                }
+                Ok(Message::Ping(data)) => ws.send(Message::Pong(data))?,
+                Ok(Message::Close(_)) => bail!("sidecar closed connection during send phase"),
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(e))
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    return Ok(()); // nothing ready — continue sending
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
+    /// Parse and act on a text WebSocket frame.  Returns `Break` when a
+    /// `complete` frame is received (only expected in the read phase).
+    fn handle_text(
+        text: &str,
+        result: &mut ScoreStreamResult,
+        on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
+    ) -> Result<ReadAction> {
+        let envelope: serde_json::Value =
+            serde_json::from_str(text).context("invalid JSON from sidecar")?;
+        match envelope["type"].as_str() {
+            Some("accepted") => {
+                if let Ok(f) = serde_json::from_value::<AcceptedFrame>(envelope) {
+                    tracing::info!(run_id = %f.run_id, "sidecar accepted the run");
+                } else {
+                    tracing::info!("sidecar accepted the run");
+                }
+            }
+            Some("scores") => {
+                let frame: ScoresFrame = serde_json::from_value(envelope)
+                    .context("failed to parse scores frame")?;
+                let chunk_index = frame.chunk_index;
+                let newly_scored = frame.scored.len();
+                for s in frame.scored {
+                    result.scored.insert(
+                        s.line_id.line_number,
+                        ScoreEntry {
+                            score: s.score,
+                            target_is_unk: s.target_is_unk,
+                            target_is_rare: s.target_is_rare,
+                        },
+                    );
+                }
+                let _ = frame.filtered; // absent from `scored`; callers assign score 0.0
+                tracing::info!(
+                    "scores frame #{chunk_index}: +{newly_scored} scored, {} total so far",
+                    result.scored.len()
+                );
+                on_frame(result, chunk_index);
+            }
+            Some("warning") => {
+                let frame: WarningFrame = serde_json::from_value(envelope)
+                    .context("failed to parse warning frame")?;
+                tracing::warn!("sidecar warning [{}]: {}", frame.code, frame.message);
+                result.warnings.push(format!("[{}] {}", frame.code, frame.message));
+            }
+            Some("complete") => {
+                if let Ok(f) = serde_json::from_value::<CompleteFrame>(envelope) {
+                    tracing::info!(
+                        lines_received = f.summary.lines_received,
+                        lines_scored = f.summary.lines_scored,
+                        lines_filtered = f.summary.lines_filtered,
+                        "sidecar signalled complete",
+                    );
+                } else {
+                    tracing::info!("sidecar signalled complete");
+                }
+                return Ok(ReadAction::Break);
+            }
+            Some("error") => {
+                let frame: ErrorFrame = serde_json::from_value(envelope)
+                    .context("failed to parse error frame")?;
+                bail!("sidecar error [{}]: {}", frame.code, frame.message);
+            }
+            other => {
+                tracing::warn!("unknown frame type from sidecar: {other:?}");
+            }
+        }
+        Ok(ReadAction::Continue)
+    }
+}
+
+#[derive(PartialEq)]
+enum ReadAction {
+    Continue,
+    Break,
 }
