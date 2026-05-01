@@ -397,12 +397,38 @@ impl ExplainSession {
         req_rx: mpsc::Receiver<usize>,
         res_tx: mpsc::SyncSender<ExplainResult>,
     ) {
+        // Short read timeout so we can interleave WebSocket keepalive handling
+        // with waiting for explain requests from the UI thread.
+        let _ = ws.get_ref().set_read_timeout(Some(Duration::from_secs(5)));
+
         loop {
-            // Block until the UI requests an explanation (or session is dropped).
-            let Ok(target_ln) = req_rx.recv() else {
-                // All senders dropped — send close frame and exit.
-                let _ = ws.send(Message::Text(r#"{"type":"close"}"#.into()));
-                break;
+            // Poll for a pending explain request while servicing WebSocket
+            // control frames (Ping→Pong, Close) that arrive in the meantime.
+            let target_ln = loop {
+                match req_rx.try_recv() {
+                    Ok(ln) => break ln,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        // All senders dropped — send close frame and exit.
+                        let _ = ws.send(Message::Text(r#"{"type":"close"}"#.into()));
+                        return;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+                // No request yet — service incoming WebSocket frames.
+                match ws.read() {
+                    Ok(Message::Ping(data)) => {
+                        let _ = ws.send(Message::Pong(data));
+                    }
+                    Ok(Message::Close(_)) => return,
+                    Ok(_) => {} // unexpected data frame while idle — ignore
+                    Err(tungstenite::Error::Io(e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        // Read timeout elapsed — go back and poll the channel.
+                    }
+                    Err(_) => return, // connection lost
+                }
             };
 
             let frame = serde_json::json!({
