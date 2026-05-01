@@ -642,6 +642,7 @@ impl SidecarClient {
         on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
     ) -> Result<(ScoreStreamResult, tungstenite::WebSocket<TcpStream>)> {
         let addr = format!("{}:{}", self.host, self.port);
+        tracing::info!("Connecting to sidecar at {addr}");
         let tcp = TcpStream::connect(&addr)
             .with_context(|| format!("TCP connect to {addr} failed"))?;
         // No write timeout: sending a large file over a slow/remote link (VPN, WiFi) can
@@ -653,6 +654,7 @@ impl SidecarClient {
         let ws_url = format!("ws://{}:{}/v1/score-stream", self.host, self.port);
         let (ws, _) = tungstenite::client(ws_url, tcp)
             .context("WebSocket handshake failed")?;
+        tracing::info!("WebSocket handshake done — sending {} lines ({} chunks)", lines.len(), lines.chunks(LINES_PER_CHUNK).len());
 
         // Share the socket between the writer thread and the reader (this thread).
         // tungstenite's `WebSocket` is not `Send`, so we wrap it in Arc<Mutex<_>>.
@@ -676,14 +678,23 @@ impl SidecarClient {
 
         let ws_writer = Arc::clone(&ws);
         let (write_err_tx, write_err_rx) = mpsc::channel::<anyhow::Error>();
+        let total_frames = frames.len();
         std::thread::spawn(move || {
-            for json in frames {
+            for (i, json) in frames.into_iter().enumerate() {
+                if i == 0 {
+                    tracing::debug!("writer: sending start frame");
+                } else if i == total_frames - 1 {
+                    tracing::debug!("writer: sending end frame");
+                } else if i % 500 == 0 {
+                    tracing::info!("writer: sent {i}/{total_frames} frames");
+                }
                 let mut guard = ws_writer.lock().unwrap();
                 if let Err(e) = guard.send(Message::Text(json.into())) {
                     let _ = write_err_tx.send(anyhow::anyhow!("WebSocket write error: {e}"));
                     return;
                 }
             }
+            tracing::info!("writer: all {total_frames} frames sent");
             // Writer is done; drop tx so reader knows no write errors will come.
         });
 
@@ -708,15 +719,16 @@ impl SidecarClient {
                     match envelope["type"].as_str() {
                         Some("accepted") => {
                             if let Ok(f) = serde_json::from_value::<AcceptedFrame>(envelope) {
-                                tracing::debug!(run_id = %f.run_id, "sidecar accepted the run");
+                                tracing::info!(run_id = %f.run_id, "sidecar accepted the run");
                             } else {
-                                tracing::debug!("sidecar accepted the run");
+                                tracing::info!("sidecar accepted the run");
                             }
                         }
                         Some("scores") => {
                             let frame: ScoresFrame = serde_json::from_value(envelope)
                                 .context("failed to parse scores frame")?;
                             let chunk_index = frame.chunk_index;
+                            let newly_scored = frame.scored.len();
                             for s in frame.scored {
                                 result.scored.insert(
                                     s.line_id.line_number,
@@ -726,6 +738,10 @@ impl SidecarClient {
                             // filtered lines are intentionally absent from `scored`; the
                             // caller assigns them score 0.0.
                             let _ = frame.filtered; // acknowledged, not stored
+                            tracing::info!(
+                                "scores frame #{chunk_index}: +{newly_scored} scored, {} total so far",
+                                result.scored.len()
+                            );
                             on_frame(&result, chunk_index);
                         }
                         Some("warning") => {
@@ -736,14 +752,14 @@ impl SidecarClient {
                         }
                         Some("complete") => {
                             if let Ok(f) = serde_json::from_value::<CompleteFrame>(envelope) {
-                                tracing::debug!(
+                                tracing::info!(
                                     lines_received = f.summary.lines_received,
                                     lines_scored = f.summary.lines_scored,
                                     lines_filtered = f.summary.lines_filtered,
                                     "sidecar signalled complete",
                                 );
                             } else {
-                                tracing::debug!("sidecar signalled complete");
+                                tracing::info!("sidecar signalled complete");
                             }
                             break;
                         }

@@ -341,6 +341,7 @@ impl LogFileLoader {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned());
 
+        let t_prepare = std::time::Instant::now();
         let mut input_lines: Vec<InputLine> = Vec::with_capacity(total_lines);
         for idx in 0..total_lines {
             let Some((ts_ms, message)) = data_source.get_sidecar_message(idx) else {
@@ -358,6 +359,11 @@ impl LogFileLoader {
                 Some(FT::SLUG.to_string()),
             ));
         }
+        tracing::info!(
+            "Prepared {} input lines in {:.1}s",
+            input_lines.len(),
+            t_prepare.elapsed().as_secs_f32()
+        );
 
         // ── Score stream ─────────────────────────────────────────────────────
         toast.update(0.1, format!("Scoring {} lines...", input_lines.len()));
