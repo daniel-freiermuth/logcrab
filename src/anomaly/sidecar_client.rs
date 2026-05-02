@@ -610,21 +610,23 @@ impl SidecarClient {
     /// incrementally apply results (e.g. update the UI store) as GPU batches
     /// complete on the server side.
     ///
-    /// The callback receives `(&ScoreStreamResult, lines_total)` where
-    /// `lines_total` is the total number of input lines for progress calculation.
+    /// The callback receives `(new_entries, &ScoreStreamResult, lines_total)`:
+    ///   - `new_entries`: the scored lines from *this frame only* (line_number → ScoreEntry)
+    ///   - `&ScoreStreamResult`: the full accumulated result so far
+    ///   - `lines_total`: the total number of input lines for progress calculation
     pub fn score_stream_streaming(
         &self,
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
-        on_scores: &mut dyn FnMut(&ScoreStreamResult, usize),
+        on_scores: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult, usize),
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
         let total = lines.len();
         let (result, ws) = self.open_score_stream_ws(
             model_id,
             normalization_versions,
             lines,
-            &mut |result, _| on_scores(result, total),
+            &mut |new_entries, result| on_scores(new_entries, result, total),
         )?;
         Ok((result, ExplainSession::spawn(ws)))
     }
@@ -633,13 +635,14 @@ impl SidecarClient {
     /// both the results and the still-open WebSocket (ready for the explain phase).
     ///
     /// `on_frame` is called after each `scores` frame is processed, receiving
-    /// a reference to the accumulated result so far and the chunk_index.
+    /// a reference to the newly-scored entries from this frame and the full
+    /// accumulated result so far.
     fn open_score_stream_ws(
         &self,
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
-        on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
+        on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
     ) -> Result<(ScoreStreamResult, tungstenite::WebSocket<TcpStream>)> {
         let addr = format!("{}:{}", self.host, self.port);
         tracing::info!("Connecting to sidecar at {addr}");
@@ -722,7 +725,7 @@ impl SidecarClient {
     fn drain_nonblocking(
         ws: &mut tungstenite::WebSocket<TcpStream>,
         result: &mut ScoreStreamResult,
-        on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
+        on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
     ) -> Result<ReadAction> {
         loop {
             match ws.read() {
@@ -750,7 +753,7 @@ impl SidecarClient {
     fn handle_text(
         text: &str,
         result: &mut ScoreStreamResult,
-        on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
+        on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
     ) -> Result<ReadAction> {
         let envelope: serde_json::Value =
             serde_json::from_str(text).context("invalid JSON from sidecar")?;
@@ -767,22 +770,24 @@ impl SidecarClient {
                     .context("failed to parse scores frame")?;
                 let chunk_index = frame.chunk_index;
                 let newly_scored = frame.scored.len();
+                // Collect new entries before inserting so we can pass them to the callback.
+                let mut new_entries: HashMap<usize, ScoreEntry> =
+                    HashMap::with_capacity(frame.scored.len());
                 for s in frame.scored {
-                    result.scored.insert(
-                        s.line_id.line_number,
-                        ScoreEntry {
-                            score: s.score,
-                            target_is_unk: s.target_is_unk,
-                            target_is_rare: s.target_is_rare,
-                        },
-                    );
+                    let entry = ScoreEntry {
+                        score: s.score,
+                        target_is_unk: s.target_is_unk,
+                        target_is_rare: s.target_is_rare,
+                    };
+                    new_entries.insert(s.line_id.line_number, entry.clone());
+                    result.scored.insert(s.line_id.line_number, entry);
                 }
                 let _ = frame.filtered; // absent from `scored`; callers assign score 0.0
                 tracing::info!(
                     "scores frame #{chunk_index}: +{newly_scored} scored, {} total so far",
                     result.scored.len()
                 );
-                on_frame(result, chunk_index);
+                on_frame(&new_entries, result);
             }
             Some("warning") => {
                 let frame: WarningFrame = serde_json::from_value(envelope)

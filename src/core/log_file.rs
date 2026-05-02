@@ -376,24 +376,27 @@ impl LogFileLoader {
         // Use the streaming variant so scores appear in the UI as GPU batches complete.
         let store_cb = Arc::clone(store);
         let toast_cb = toast.clone();
+        // Incrementally-maintained score vectors — updated in-place each frame
+        // rather than rebuilt from scratch.  Building 4 × 2.7M-entry vectors on
+        // every frame (O(N) HashMap lookups) was the primary receive bottleneck.
+        let mut raw_scores: Vec<f64> = vec![0.0; total_lines];
+        let mut unk_flags: Vec<bool> = vec![false; total_lines];
+        let mut rare_flags: Vec<bool> = vec![false; total_lines];
+        let mut scored_flags: Vec<bool> = vec![false; total_lines];
         let result = match client.score_stream_streaming(
             model_id,
             &norm_versions_ref,
             &input_lines,
-            &mut |partial_result, total| {
-                // Rebuild full-length vecs from the partial result and push to the store.
-                let raw_scores: Vec<f64> = (0..total_lines)
-                    .map(|idx| partial_result.scored.get(&idx).map_or(0.0, |e| e.score * 10.0))
-                    .collect();
-                let unk_flags: Vec<bool> = (0..total_lines)
-                    .map(|idx| partial_result.scored.get(&idx).is_some_and(|e| e.target_is_unk))
-                    .collect();
-                let rare_flags: Vec<bool> = (0..total_lines)
-                    .map(|idx| partial_result.scored.get(&idx).is_some_and(|e| e.target_is_rare))
-                    .collect();
-                let scored_flags: Vec<bool> = (0..total_lines)
-                    .map(|idx| partial_result.scored.contains_key(&idx))
-                    .collect();
+            &mut |new_entries, partial_result, total| {
+                // Patch only the lines that changed this frame.
+                for (&idx, entry) in new_entries {
+                    if idx < total_lines {
+                        raw_scores[idx] = entry.score * 10.0;
+                        unk_flags[idx] = entry.target_is_unk;
+                        rare_flags[idx] = entry.target_is_rare;
+                        scored_flags[idx] = true;
+                    }
+                }
                 store_cb.set_sidecar_scores_with_unk(source_id, &raw_scores, &unk_flags, &rare_flags, &scored_flags);
 
                 let progress = partial_result.scored.len() as f32 / total as f32;
