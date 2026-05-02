@@ -419,7 +419,8 @@ impl ExplainSession {
     ) {
         // Short read timeout so we can interleave WebSocket keepalive handling
         // with waiting for explain requests from the UI thread.
-        let _ = ws.get_ref().set_read_timeout(Some(Duration::from_secs(5)));
+        // 50 ms keeps UI latency low while not busy-polling.
+        let _ = ws.get_ref().set_read_timeout(Some(Duration::from_millis(50)));
 
         loop {
             // Poll for a pending explain request while servicing WebSocket
