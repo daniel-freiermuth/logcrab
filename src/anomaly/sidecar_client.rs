@@ -673,6 +673,7 @@ impl SidecarClient {
         ws.send(Message::Text(serde_json::to_string(&start)?.into()))?;
         tracing::debug!("sent start frame");
 
+        let mut complete_in_send_phase = false;
         for (chunk_index, chunk) in lines.chunks(LINES_PER_CHUNK).enumerate() {
             let frame = LinesFrame { type_: "lines", chunk_index, lines: chunk };
             ws.send(Message::Text(serde_json::to_string(&frame)?.into()))?;
@@ -681,25 +682,32 @@ impl SidecarClient {
             }
             // Opportunistic read: consume any scores frames the server has
             // already produced while we were uploading.
-            Self::drain_nonblocking(&mut ws, &mut result, on_frame)?;
+            if Self::drain_nonblocking(&mut ws, &mut result, on_frame)? == ReadAction::Break {
+                complete_in_send_phase = true;
+                break;
+            }
         }
 
-        ws.send(Message::Text(serde_json::to_string(&EndFrame { type_: "end" })?.into()))?;
-        tracing::info!("all {n_chunks} chunks + end frame sent — waiting for complete");
+        if complete_in_send_phase {
+            tracing::info!("complete received during send phase — skipping remaining chunks");
+        } else {
+            ws.send(Message::Text(serde_json::to_string(&EndFrame { type_: "end" })?.into()))?;
+            tracing::info!("all {n_chunks} chunks + end frame sent — waiting for complete");
 
-        // ── Read phase: switch to long timeout and consume remaining responses ─
-        ws.get_ref().set_read_timeout(Some(Duration::from_secs(600)))?;
+            // ── Read phase: switch to long timeout and consume remaining responses ─
+            ws.get_ref().set_read_timeout(Some(Duration::from_secs(600)))?;
 
-        loop {
-            match ws.read()? {
-                Message::Text(text) => {
-                    if Self::handle_text(&text, &mut result, on_frame)? == ReadAction::Break {
-                        break;
+            loop {
+                match ws.read()? {
+                    Message::Text(text) => {
+                        if Self::handle_text(&text, &mut result, on_frame)? == ReadAction::Break {
+                            break;
+                        }
                     }
+                    Message::Close(_) => break,
+                    Message::Ping(data) => ws.send(Message::Pong(data))?,
+                    _ => {}
                 }
-                Message::Close(_) => break,
-                Message::Ping(data) => ws.send(Message::Pong(data))?,
-                _ => {}
             }
         }
 
@@ -708,15 +716,20 @@ impl SidecarClient {
 
     /// Drain any immediately-available inbound WebSocket messages, ignoring
     /// `WouldBlock`/`TimedOut` (i.e. nothing ready yet).
+    ///
+    /// Returns `Ok(ReadAction::Break)` if a `complete` frame was received,
+    /// signalling that scoring finished early and the send loop should stop.
     fn drain_nonblocking(
         ws: &mut tungstenite::WebSocket<TcpStream>,
         result: &mut ScoreStreamResult,
         on_frame: &mut dyn FnMut(&ScoreStreamResult, usize),
-    ) -> Result<()> {
+    ) -> Result<ReadAction> {
         loop {
             match ws.read() {
                 Ok(Message::Text(text)) => {
-                    Self::handle_text(&text, result, on_frame)?;
+                    if Self::handle_text(&text, result, on_frame)? == ReadAction::Break {
+                        return Ok(ReadAction::Break);
+                    }
                 }
                 Ok(Message::Ping(data)) => ws.send(Message::Pong(data))?,
                 Ok(Message::Close(_)) => bail!("sidecar closed connection during send phase"),
@@ -725,7 +738,7 @@ impl SidecarClient {
                     if e.kind() == std::io::ErrorKind::WouldBlock
                         || e.kind() == std::io::ErrorKind::TimedOut =>
                 {
-                    return Ok(()); // nothing ready — continue sending
+                    return Ok(ReadAction::Continue); // nothing ready — continue sending
                 }
                 Err(e) => return Err(e.into()),
             }
