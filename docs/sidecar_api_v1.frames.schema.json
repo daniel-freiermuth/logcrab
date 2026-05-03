@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logcrab.local/schemas/sidecar_api_v1.frames.schema.json",
+  "title": "LogCrab Sidecar API V1 WebSocket Frames",
+  "description": "Frame-level schema for request and response WebSocket messages used by WS /v1/score-stream.",
+  "$defs": {
+    "line_id": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "line_number", "timestamp_unix_ms"],
+      "properties": {
+        "source_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "line_number": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp_unix_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "input_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line_id", "message"],
+      "properties": {
+        "line_id": {
+          "$ref": "#/$defs/line_id"
+        },
+        "message": {
+          "type": "string"
+        },
+        "template_key": {
+          "type": "string",
+          "description": "Optional debug hint. Python re-derives the canonical template_key from message."
+        },
+        "source_file": {
+          "type": "string",
+          "description": "Original filename of the log source."
+        },
+        "filetype": {
+          "type": "string",
+          "description": "Detected file type, e.g. logcat, dlt, generic, dmesg."
+        }
+      }
+    },
+    "scored_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line_id", "score", "target_is_unk"],
+      "properties": {
+        "line_id": {
+          "$ref": "#/$defs/line_id"
+        },
+        "score": {
+          "type": "number"
+        },
+        "score_kind": {
+          "type": "string",
+          "default": "anomaly"
+        },
+        "target_is_unk": {
+          "type": "boolean",
+          "description": "True when the line's template was not in the model vocabulary and the [UNK] token embedding was used. The score is still valid but carries less signal."
+        }
+      }
+    },
+    "filtered_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line_id", "reason"],
+      "properties": {
+        "line_id": {
+          "$ref": "#/$defs/line_id"
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["out_of_corpus", "empty_after_normalization"],
+          "description": "Why the model's corpus filter rejected this line."
+        }
+      }
+    },
+    "chunk_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recommended_lines_per_chunk",
+        "max_lines_per_chunk"
+      ],
+      "properties": {
+        "recommended_lines_per_chunk": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_lines_per_chunk": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines_received", "lines_scored", "lines_filtered"],
+      "properties": {
+        "lines_received": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines_scored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines_filtered": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "start_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "api_version", "model_id", "filtering_mode", "normalization_versions"],
+      "properties": {
+        "type": {
+          "const": "start"
+        },
+        "api_version": {
+          "const": "1"
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filtering_mode": {
+          "const": "backend_authoritative"
+        },
+        "normalization_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "Map of filetype slug to the integer version of the normalizer currently in use by this frontend build."
+        }
+      }
+    },
+    "lines_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "chunk_index", "lines"],
+      "properties": {
+        "type": {
+          "const": "lines"
+        },
+        "chunk_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/input_line"
+          }
+        }
+      }
+    },
+    "end_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "const": "end"
+        }
+      }
+    },
+    "accepted_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "api_version", "run_id", "model_id", "chunk_policy"],
+      "properties": {
+        "type": {
+          "const": "accepted"
+        },
+        "api_version": {
+          "const": "1"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chunk_policy": {
+          "$ref": "#/$defs/chunk_policy"
+        }
+      }
+    },
+    "scores_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "chunk_index", "scored", "filtered"],
+      "properties": {
+        "type": {
+          "const": "scores"
+        },
+        "chunk_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scored": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scored_line"
+          }
+        },
+        "filtered": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/filtered_line"
+          }
+        }
+      }
+    },
+    "warning_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": {
+          "const": "warning"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "error_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "complete_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "summary"],
+      "properties": {
+        "type": {
+          "const": "complete"
+        },
+        "summary": {
+          "$ref": "#/$defs/summary"
+        }
+      }
+    },
+    "request_frame": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/start_frame"
+        },
+        {
+          "$ref": "#/$defs/lines_frame"
+        },
+        {
+          "$ref": "#/$defs/end_frame"
+        }
+      ]
+    },
+    "response_frame": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/accepted_frame"
+        },
+        {
+          "$ref": "#/$defs/scores_frame"
+        },
+        {
+          "$ref": "#/$defs/warning_frame"
+        },
+        {
+          "$ref": "#/$defs/error_frame"
+        },
+        {
+          "$ref": "#/$defs/complete_frame"
+        }
+      ]
+    }
+  },
+  "description": "Root validates any single frame object. Use #/$defs/request_frame or #/$defs/response_frame for directional validation.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request_frame"
+    },
+    {
+      "$ref": "#/$defs/response_frame"
+    }
+  ]
+}
