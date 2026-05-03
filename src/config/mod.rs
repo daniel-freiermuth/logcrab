@@ -81,6 +81,35 @@ pub struct GlobalConfig {
     /// downgrade it.
     #[serde(skip)]
     pub read_only: bool,
+
+    /// Use LogBERT sidecar for anomaly scoring (default: false)
+    #[serde(default)]
+    pub use_sidecar_scoring: bool,
+
+    /// Color logs by ML score instead of legacy scorer (default: false)
+    #[serde(default)]
+    pub color_by_ml_score: bool,
+
+    /// Sidecar server host
+    #[serde(default = "default_sidecar_host")]
+    pub sidecar_host: String,
+
+    /// Sidecar server port
+    #[serde(default = "default_sidecar_port")]
+    pub sidecar_port: u16,
+
+    /// Selected model id (slug) for anomaly detection.
+    /// `None` means no model is selected; sidecar scoring will be skipped.
+    #[serde(default)]
+    pub selected_model: Option<String>,
+}
+
+fn default_sidecar_host() -> String {
+    crate::anomaly::sidecar_client::SidecarClient::default_host().to_string()
+}
+
+const fn default_sidecar_port() -> u16 {
+    crate::anomaly::sidecar_client::SidecarClient::default_port()
 }
 
 impl Default for GlobalConfig {
@@ -95,6 +124,11 @@ impl Default for GlobalConfig {
             last_filters_directory: None,
             file_config: crate::core::log_store::GlobalFileConfig::default(),
             show_bookmarks_in_timeline: false,
+            use_sidecar_scoring: false,
+            color_by_ml_score: false,
+            sidecar_host: default_sidecar_host(),
+            sidecar_port: default_sidecar_port(),
+            selected_model: None,
         }
     }
 }
