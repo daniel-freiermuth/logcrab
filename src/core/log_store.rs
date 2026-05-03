@@ -40,9 +40,116 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use arc_swap::ArcSwap;
+use dashmap::DashMap;
+
 /// Global counter for generating unique source IDs.
 /// Source IDs are stable across the lifetime of a source, even when other sources are removed.
 static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Lock-free storage for anomaly scores.
+///
+/// Uses `ArcSwap` for atomic pointer swaps — readers never block, and writers
+/// simply build a new `Vec<f64>` and swap it in atomically. This avoids the
+/// need for a write lock on `lines` when updating scores.
+pub struct ScoreStore {
+    /// Anomaly scores indexed by line position (same length as `lines`).
+    /// Default score is 0.0; scores range from 0 to 100.
+    scores: ArcSwap<Vec<f64>>,
+    /// Whether each line's score was assigned while the target token was UNK.
+    /// Parallel to `scores`; `false` when not available.
+    unk_flags: ArcSwap<Vec<bool>>,
+    /// Whether each line's target was a rare template (seen < min_count times).
+    /// Subset of `unk_flags`; `false` when not available or when target is truly unknown.
+    rare_flags: ArcSwap<Vec<bool>>,
+    /// Whether each line was actually present in the sidecar's scored set.
+    /// `false` means the line was filtered/excluded by the backend (not in corpus).
+    scored_flags: ArcSwap<Vec<bool>>,
+}
+
+impl ScoreStore {
+    /// Create a new empty score store.
+    pub fn new() -> Self {
+        Self {
+            scores: ArcSwap::new(Arc::new(Vec::new())),
+            unk_flags: ArcSwap::new(Arc::new(Vec::new())),
+            rare_flags: ArcSwap::new(Arc::new(Vec::new())),
+            scored_flags: ArcSwap::new(Arc::new(Vec::new())),
+        }
+    }
+
+    /// Set all scores atomically. The provided slice is copied into a new `Arc`.
+    pub fn set_all(&self, scores: &[f64]) {
+        self.scores.store(Arc::new(scores.to_vec()));
+    }
+
+    /// Set scores, UNK flags, rare flags, and scored flags atomically.
+    pub fn set_all_with_unk(&self, scores: &[f64], unk_flags: &[bool], rare_flags: &[bool], scored_flags: &[bool]) {
+        self.scores.store(Arc::new(scores.to_vec()));
+        self.unk_flags.store(Arc::new(unk_flags.to_vec()));
+        self.rare_flags.store(Arc::new(rare_flags.to_vec()));
+        self.scored_flags.store(Arc::new(scored_flags.to_vec()));
+    }
+
+    /// Get the score for a specific line index. Returns 0.0 if out of bounds.
+    pub fn get(&self, index: usize) -> f64 {
+        let guard = self.scores.load();
+        guard.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// Get the UNK flag for a specific line index. Returns `false` if out of bounds.
+    pub fn get_unk(&self, index: usize) -> bool {
+        let guard = self.unk_flags.load();
+        guard.get(index).copied().unwrap_or(false)
+    }
+
+    /// Get the rare flag for a specific line index. Returns `false` if out of bounds.
+    pub fn get_rare(&self, index: usize) -> bool {
+        let guard = self.rare_flags.load();
+        guard.get(index).copied().unwrap_or(false)
+    }
+
+    /// Get the scored flag for a specific line index. Returns `false` if out of bounds.
+    pub fn get_scored(&self, index: usize) -> bool {
+        let guard = self.scored_flags.load();
+        guard.get(index).copied().unwrap_or(false)
+    }
+
+    /// Resize the internal vec to accommodate new lines (fills with 0.0).
+    /// Called when lines are appended to keep scores in sync.
+    pub fn resize(&self, new_len: usize) {
+        let current = self.scores.load();
+        if current.len() < new_len {
+            let mut new_scores: Vec<f64> = (**current).clone();
+            new_scores.resize(new_len, 0.0);
+            self.scores.store(Arc::new(new_scores));
+        }
+    }
+}
+
+impl Default for ScoreStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for ScoreStore {
+    fn clone(&self) -> Self {
+        Self {
+            scores: ArcSwap::new(Arc::clone(&self.scores.load())),
+            unk_flags: ArcSwap::new(Arc::clone(&self.unk_flags.load())),
+            rare_flags: ArcSwap::new(Arc::clone(&self.rare_flags.load())),
+            scored_flags: ArcSwap::new(Arc::clone(&self.scored_flags.load())),
+        }
+    }
+}
+
+impl std::fmt::Debug for ScoreStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let guard = self.scores.load();
+        write!(f, "ScoreStore({} scores)", guard.len())
+    }
+}
 
 /// A single log source with its lines, wrapped in `RwLock` for thread-safe access
 pub struct SourceData<FT>
@@ -509,21 +616,6 @@ where
         self.bump_version();
     }
 
-    /// Set anomaly scores for lines (indexed by position in the vector)
-    /// Scores vec should be same length as lines
-    pub fn set_scores(&self, scores: &[f64]) {
-        profiling::scope!("SourceData::set_scores");
-        profiling::scope!("SourceData::lines::write");
-        let mut guard = self.lines.write().expect("lines lock poisoned");
-        for (idx, &score) in scores.iter().enumerate() {
-            if let Some(line) = guard.get_mut(idx) {
-                line.set_anomaly_score(score);
-            }
-        }
-        drop(guard);
-        self.bump_version();
-    }
-
     /// Get the number of lines
     pub fn len(&self) -> usize {
         profiling::scope!("SourceData::lines::read");
@@ -553,8 +645,33 @@ where
             message: line.display_message(&*config, file_state),
             raw: line.raw(),
             line_number: line.line_number(),
-            anomaly_score: line.anomaly_score(),
+            anomaly_score: 0.0, // Scores are stored at LogStore level, populated by get_by_id
+            sidecar_anomaly_score: 0.0,
+            sidecar_score_is_unk: false,
+            sidecar_score_is_rare: false,
+            sidecar_scored: false,
         })
+    }
+
+    /// Returns the canonical sidecar message and timestamp (ms) for a single line.
+    ///
+    /// Unlike `get_as_log_line`, this calls `LineType::message()` which returns the
+    /// format-specific canonical text (e.g. for logcat: just `TAG: text`, without the
+    /// PID/TID/level prefix that `display_message` includes).  This is the string that
+    /// must be sent to the sidecar because the training vocab was built from the same
+    /// `message()` output via `logcrab-export`.
+    ///
+    /// Returns `None` when `line_index` is out of range.
+    pub fn get_sidecar_message(&self, line_index: usize) -> Option<(u64, String)> {
+        let lines = self.lines.read().expect("lines lock poisoned");
+        let config = self.config.read().expect("config lock poisoned");
+        let file_state = &*self.file_state;
+        let line = lines.get(line_index)?;
+        let ts_ms = line
+            .timestamp(&*config, file_state)
+            .timestamp_millis()
+            .max(0) as u64;
+        Some((ts_ms, line.message()))
     }
 
     /// Filter lines by their *display message* and *raw* string, in timestamp order.
@@ -629,6 +746,17 @@ pub struct LogLine {
     pub line_number: usize,
     /// Anomaly score in [0, 100].
     pub anomaly_score: f64,
+    /// ML sidecar anomaly score in [0, 100]. 0.0 when not available.
+    pub sidecar_anomaly_score: f64,
+    /// Whether the sidecar score was assigned while the target token was UNK.
+    /// Only meaningful when `sidecar_anomaly_score > 0.0`.
+    pub sidecar_score_is_unk: bool,
+    /// Whether the sidecar score's target was a rare template (seen < min_count times).
+    /// Only meaningful when `sidecar_score_is_unk` is true.
+    pub sidecar_score_is_rare: bool,
+    /// Whether this line appeared in the sidecar's scored set.
+    /// `false` means the line was excluded by the backend (not in corpus) or no scoring has run.
+    pub sidecar_scored: bool,
 }
 
 impl LogLine {
@@ -644,7 +772,6 @@ impl LogLine {
 ///
 /// Thread-safe: can be shared across threads with Arc<LogStore>
 /// Uses `IndexMap` for O(1) source lookup by ID while maintaining insertion order.
-#[derive(Debug)]
 pub struct LogStore {
     /// Sources indexed by their stable `source_id` for O(1) lookup.
     /// `IndexMap` maintains insertion order for consistent UI display.
@@ -652,6 +779,34 @@ pub struct LogStore {
     /// Version counter that increments when sources are added or removed.
     /// This ensures cache invalidation even when line counts happen to sum to the same value.
     sources_version: AtomicU64,
+    /// Anomaly scores keyed by `source_id`. Each source has its own `ScoreStore`.
+    /// Stored at `LogStore` level (not `SourceData`) because scores are analysis metadata.
+    scores: DashMap<u64, ScoreStore>,
+    /// ML sidecar anomaly scores keyed by `source_id`.
+    /// Parallel to `scores` but populated by the LogBERT sidecar service.
+    sidecar_scores: DashMap<u64, ScoreStore>,
+    /// Sidecar scoring configuration, set once during session creation.
+    /// Read by background loading threads to decide if sidecar scoring should run.
+    sidecar_config: RwLock<Option<crate::core::log_file::ScoringConfig>>,
+    /// Active explain sessions keyed by `source_id`.
+    /// One session per scored file; dropped (closing the WebSocket) when the source is removed.
+    explain_sessions: Mutex<HashMap<u64, crate::anomaly::sidecar_client::ExplainSession>>,
+}
+
+impl std::fmt::Debug for LogStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogStore")
+            .field(
+                "sources_count",
+                &self.sources.read().map(|s| s.len()).unwrap_or(0),
+            )
+            .field("sources_version", &self.sources_version)
+            .field("scores_count", &self.scores.len())
+            .field("sidecar_scores_count", &self.sidecar_scores.len())
+            .field("sidecar_enabled", &self.sidecar_config.read().map(|c| c.is_some()).unwrap_or(false))
+            .field("explain_sessions", &self.explain_sessions.lock().map(|g| g.len()).unwrap_or(0))
+            .finish()
+    }
 }
 
 impl Clone for LogStore {
@@ -660,6 +815,16 @@ impl Clone for LogStore {
         Self {
             sources: RwLock::new(self.sources.read().expect("sources lock poisoned").clone()),
             sources_version: AtomicU64::new(self.sources_version.load(AtomicOrdering::SeqCst)),
+            scores: self.scores.clone(),
+            sidecar_scores: self.sidecar_scores.clone(),
+            sidecar_config: RwLock::new(
+                self.sidecar_config
+                    .read()
+                    .expect("sidecar_config lock poisoned")
+                    .clone(),
+            ),
+            // Explain sessions are live resources — clones start with no sessions.
+            explain_sessions: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -686,6 +851,21 @@ pub struct StoreID {
 }
 
 impl StoreID {
+    /// Return the stable source identifier for this line.
+    pub const fn source_id(&self) -> u64 {
+        self.source_id
+    }
+
+    /// Return the 0-based line index within this source.
+    pub const fn line_index_within_source(&self) -> usize {
+        self.line_index
+    }
+
+    /// Construct a `StoreID` directly from a source identifier and line index.
+    pub const fn make(source_id: u64, line_index: usize) -> Self {
+        Self { source_id, line_index }
+    }
+
     /// Compare two `StoreIDs` by their line timestamps.
     ///
     /// When both lines exist in the store, compares by timestamp first,
@@ -717,6 +897,10 @@ impl LogStore {
         Arc::new(Self {
             sources: RwLock::new(IndexMap::new()),
             sources_version: AtomicU64::new(1),
+            scores: DashMap::new(),
+            sidecar_scores: DashMap::new(),
+            sidecar_config: RwLock::new(None),
+            explain_sessions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -839,9 +1023,145 @@ impl LogStore {
         let removed = sources.swap_remove(&source_id)?;
         let path = removed.file_path().to_path_buf();
         drop(sources);
+        // Also remove scores and explain session for this source
+        self.scores.remove(&source_id);
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .remove(&source_id);
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
         tracing::info!("Removed source: {}", path.display());
         Some(path)
+    }
+
+    // ========================================================================
+    // Anomaly Score Management
+    // ========================================================================
+
+    /// Set anomaly scores for a source. Scores are indexed by line position.
+    ///
+    /// This is lock-free for readers — scores are swapped atomically.
+    pub fn set_scores(&self, source_id: u64, scores: &[f64]) {
+        profiling::scope!("LogStore::set_scores");
+        self.scores
+            .entry(source_id)
+            .or_default()
+            .set_all(scores);
+        // Bump version so UI knows to refresh
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
+    /// Get the anomaly score for a specific line. Returns 0.0 if not found.
+    pub fn get_score(&self, source_id: u64, line_index: usize) -> f64 {
+        self.scores
+            .get(&source_id)
+            .map_or(0.0, |store| store.get(line_index))
+    }
+
+    /// Set ML sidecar scores for a source.
+    pub fn set_sidecar_scores(&self, source_id: u64, scores: &[f64]) {
+        profiling::scope!("LogStore::set_sidecar_scores");
+        self.sidecar_scores
+            .entry(source_id)
+            .or_default()
+            .set_all(scores);
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
+    /// Set ML sidecar scores, UNK flags, rare flags, and scored flags for a source.
+    pub fn set_sidecar_scores_with_unk(&self, source_id: u64, scores: &[f64], unk_flags: &[bool], rare_flags: &[bool], scored_flags: &[bool]) {
+        profiling::scope!("LogStore::set_sidecar_scores_with_unk");
+        self.sidecar_scores
+            .entry(source_id)
+            .or_default()
+            .set_all_with_unk(scores, unk_flags, rare_flags, scored_flags);
+        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
+    /// Store the explain session for the given `source_id`.
+    /// Replaces any previous session for that source (dropping it, which closes the connection).
+    pub fn set_explain_session(&self, source_id: u64, session: crate::anomaly::sidecar_client::ExplainSession) {
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .insert(source_id, session);
+    }
+
+    /// Request an attention explanation for `target_line_number` on the session for `source_id`.
+    /// Returns `false` if there is no session for that source or the request queue is full.
+    pub fn request_explanation(&self, source_id: u64, target_line_number: usize) -> bool {
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .get(&source_id)
+            .is_some_and(|s| s.request(target_line_number))
+    }
+
+    /// Poll for a completed explanation on the session for `source_id` without blocking.
+    /// Returns `None` if no result is available yet or there is no session for that source.
+    pub fn poll_explanation(&self, source_id: u64) -> Option<crate::anomaly::sidecar_client::ExplainResult> {
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .get(&source_id)
+            .and_then(|s| s.try_recv())
+    }
+
+    /// Poll the explain session with a richer status that distinguishes "still pending"
+    /// from "the WebSocket thread has exited".
+    pub fn poll_explain_status(&self, source_id: u64) -> crate::anomaly::sidecar_client::ExplainPollStatus {
+        use crate::anomaly::sidecar_client::ExplainPollStatus;
+        self.explain_sessions
+            .lock()
+            .expect("explain_sessions lock poisoned")
+            .get(&source_id)
+            .map_or(ExplainPollStatus::Dead, |s| s.poll_status())
+    }
+
+    /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.
+    pub fn get_sidecar_score(&self, source_id: u64, line_index: usize) -> f64 {
+        self.sidecar_scores
+            .get(&source_id)
+            .map_or(0.0, |store| store.get(line_index))
+    }
+
+    /// Get whether the sidecar score for a line was assigned while the target was UNK.
+    pub fn get_sidecar_unk(&self, source_id: u64, line_index: usize) -> bool {
+        self.sidecar_scores
+            .get(&source_id)
+            .is_some_and(|store| store.get_unk(line_index))
+    }
+
+    /// Get whether the sidecar score's target was a rare template.
+    pub fn get_sidecar_rare(&self, source_id: u64, line_index: usize) -> bool {
+        self.sidecar_scores
+            .get(&source_id)
+            .is_some_and(|store| store.get_rare(line_index))
+    }
+
+    /// Get whether a line was present in the sidecar's scored set (vs filtered/excluded).
+    pub fn get_sidecar_scored(&self, source_id: u64, line_index: usize) -> bool {
+        self.sidecar_scores
+            .get(&source_id)
+            .is_some_and(|store| store.get_scored(line_index))
+    }
+
+    /// Check whether any sidecar scores are stored for the given source.
+    pub fn has_sidecar_scores(&self, source_id: u64) -> bool {
+        self.sidecar_scores.contains_key(&source_id)
+    }
+
+    /// Set the sidecar scoring configuration for this store.
+    pub fn set_sidecar_config(&self, config: crate::core::log_file::ScoringConfig) {
+        *self.sidecar_config.write().expect("sidecar_config lock poisoned") = Some(config);
+    }
+
+    /// Retrieve a clone of the sidecar scoring configuration (if set).
+    pub fn sidecar_config(&self) -> Option<crate::core::log_file::ScoringConfig> {
+        self.sidecar_config
+            .read()
+            .expect("sidecar_config lock poisoned")
+            .clone()
     }
 
     // ========================================================================
@@ -1088,7 +1408,44 @@ impl LogStore {
     pub fn get_by_id(&self, id: &StoreID) -> Option<LogLine> {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources.get(&id.source_id)?.get_log_line(id.line_index)
+        let mut line = sources.get(&id.source_id)?.get_log_line(id.line_index)?;
+        // Populate anomaly score from store-level score storage
+        line.anomaly_score = self.get_score(id.source_id, id.line_index);
+        line.sidecar_anomaly_score = self.get_sidecar_score(id.source_id, id.line_index);
+        line.sidecar_score_is_unk = self.get_sidecar_unk(id.source_id, id.line_index);
+        line.sidecar_score_is_rare = self.get_sidecar_rare(id.source_id, id.line_index);
+        line.sidecar_scored = self.get_sidecar_scored(id.source_id, id.line_index);
+        Some(line)
+    }
+
+    /// Collect the sidecar `InputLine`s for a source — using the canonical `message()`
+    /// (not `display_message()`) so they match what `logcrab-export` / training produces.
+    ///
+    /// Returns `None` when the source is not found.
+    pub fn get_sidecar_input_lines_for_source(
+        &self,
+        source_id: u64,
+    ) -> Option<Vec<crate::anomaly::sidecar_client::InputLine>> {
+        let sources = self.sources.read().expect("sources lock poisoned");
+        let source = sources.get(&source_id)?;
+        let slug = source.filetype_slug();
+        let count = source.len();
+        let lines: Vec<crate::anomaly::sidecar_client::InputLine> = (0..count)
+            .filter_map(|i| {
+                let (ts_ms, message) = source.get_sidecar_message(i)?;
+                let template_key = crate::parser::normalize_message(&message);
+                Some(crate::anomaly::sidecar_client::InputLine::new(
+                    0,
+                    i,
+                    ts_ms,
+                    message,
+                    Some(template_key),
+                    None,
+                    Some(slug.to_string()),
+                ))
+            })
+            .collect();
+        Some(lines)
     }
 }
 
