@@ -391,7 +391,7 @@ impl LogFileLoader {
                 // Patch only the lines that changed this frame.
                 for (&idx, entry) in new_entries {
                     if idx < total_lines {
-                        raw_scores[idx] = entry.score * 10.0;
+                        raw_scores[idx] = entry.score * 5.0;
                         unk_flags[idx] = entry.target_is_unk;
                         rare_flags[idx] = entry.target_is_rare;
                         scored_flags[idx] = true;
@@ -420,7 +420,7 @@ impl LogFileLoader {
 
         // Final store update with the complete result set.
         let raw_scores: Vec<f64> = (0..total_lines)
-            .map(|idx| result.scored.get(&idx).map_or(0.0, |e| e.score * 10.0))
+            .map(|idx| result.scored.get(&idx).map_or(0.0, |e| e.score * 5.0))
             .collect();
         let unk_flags: Vec<bool> = (0..total_lines)
             .map(|idx| result.scored.get(&idx).is_some_and(|e| e.target_is_unk))
