@@ -95,6 +95,15 @@ After installation, LogCrab will appear in your application launcher and can ope
    - Detects sudden severity transitions
    - Tracks log level patterns over time
 
+## Design Docs
+
+- [docs/ARCHITECTURE_MULTI_SOURCE.md](docs/ARCHITECTURE_MULTI_SOURCE.md)
+- [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
+- [docs/OPTIMIZATION_ROADMAP.md](docs/OPTIMIZATION_ROADMAP.md)
+- [docs/SIDECAR_API_V1.md](docs/SIDECAR_API_V1.md)
+- [docs/sidecar_api_v1.openapi.yaml](docs/sidecar_api_v1.openapi.yaml)
+- [docs/sidecar_api_v1.frames.schema.json](docs/sidecar_api_v1.frames.schema.json)
+
 ## Related tools and inspiration
 
 ### Chipmunk

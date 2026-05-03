@@ -92,6 +92,7 @@ impl BookmarksView {
         scroll_to_row: Option<usize>,
         closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
+        color_by_ml_score: bool,
     ) -> Vec<BookmarkPanelEvent> {
         BookmarkPanel::render(
             ui,
@@ -102,6 +103,7 @@ impl BookmarksView {
             scroll_to_row,
             closest_bookmark_index,
             all_filter_highlights,
+            color_by_ml_score,
         )
     }
 
@@ -121,6 +123,7 @@ impl BookmarksView {
         ui: &mut Ui,
         data_state: &mut SessionState,
         all_filter_highlights: &[FilterHighlight],
+        color_by_ml_score: bool,
     ) {
         // Check if Enter was pressed this frame (when not editing)
         if self.edited_store_id.is_none() {
@@ -150,6 +153,7 @@ impl BookmarksView {
             scroll_to_row,
             closest_bookmark_index,
             all_filter_highlights,
+            color_by_ml_score,
         );
 
         // Handle events
@@ -322,7 +326,7 @@ impl LogCrabTab for BookmarksView {
 
         ui.separator();
 
-        self.render_bookmarks(ui, data_state, all_filter_highlights);
+        self.render_bookmarks(ui, data_state, all_filter_highlights, global_config.color_by_ml_score);
     }
 
     fn process_events(

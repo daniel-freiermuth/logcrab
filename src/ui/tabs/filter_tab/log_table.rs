@@ -59,6 +59,15 @@ pub enum LogTableEvent {
     SetTimeZero {
         line_index: StoreID,
     },
+    /// User manually classified this line's source file for ML training.
+    ClassifyLine {
+        line_index: StoreID,
+        label: crate::anomaly::sidecar_client::SampleLabel,
+    },
+    /// User requested an attention explanation for this ML-scored line.
+    ExplainAttention {
+        line_index: StoreID,
+    },
 }
 
 /// Convert anomaly score to color with continuous gradient
@@ -203,6 +212,7 @@ impl LogTable {
         store: &LogStore,
         line_idx: StoreID,
         events: &mut Vec<LogTableEvent>,
+        model_is_active: bool,
     ) {
         response.context_menu(|ui| {
             if ui.button("📑 Toggle Bookmark").clicked() {
@@ -246,6 +256,32 @@ impl LogTable {
                 ui.ctx().copy_text(line.raw);
                 ui.close();
             }
+
+            if model_is_active {
+                ui.separator();
+                if ui.button("✅ Mark as Benign").clicked() {
+                    events.push(LogTableEvent::ClassifyLine {
+                        line_index: line_idx,
+                        label: crate::anomaly::sidecar_client::SampleLabel::Benign,
+                    });
+                    ui.close();
+                }
+                if ui.button("🚨 Mark as Anomalous").clicked() {
+                    events.push(LogTableEvent::ClassifyLine {
+                        line_index: line_idx,
+                        label: crate::anomaly::sidecar_client::SampleLabel::Anomalous,
+                    });
+                    ui.close();
+                }
+                if line.sidecar_scored {
+                    if ui.button("🔍 Show Attention").clicked() {
+                        events.push(LogTableEvent::ExplainAttention {
+                            line_index: line_idx,
+                        });
+                        ui.close();
+                    }
+                }
+            }
         });
     }
 }
@@ -258,6 +294,7 @@ pub struct ColumnWidths {
     pub timestamp: f32,
     pub message: f32,
     pub score: f32,
+    pub ml_score: f32,
 }
 
 impl Default for ColumnWidths {
@@ -268,6 +305,7 @@ impl Default for ColumnWidths {
             timestamp: 175.0,
             message: 0.0, // Will be calculated
             score: 70.0,
+            ml_score: 70.0,
         }
     }
 }
@@ -286,6 +324,8 @@ impl LogTable {
         scroll_to_row: Option<usize>,
         closest_row_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
+        color_by_ml_score: bool,
+        model_is_active: bool,
     ) -> Vec<LogTableEvent> {
         profiling::scope!("LogTable::render");
 
@@ -320,6 +360,8 @@ impl LogTable {
                     dark_mode,
                     &mut filter.column_widths,
                     filter.timestamp_mode,
+                    color_by_ml_score,
+                    model_is_active,
                 );
             });
 
@@ -360,7 +402,8 @@ impl LogTable {
                     .resizable(true)
                     .clip(true),
             ) // Message
-            .column(Column::auto().clip(true)); // Score
+            .column(Column::auto().clip(true)) // Score
+            .column(Column::auto().clip(true)); // ML Score
 
         if let Some(row_idx) = scroll_to_row {
             table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
@@ -383,6 +426,8 @@ impl LogTable {
         dark_mode: bool,
         column_widths: &mut ColumnWidths,
         timestamp_mode: TimestampMode,
+        color_by_ml_score: bool,
+        model_is_active: bool,
     ) {
         table
             .header(20.0, |mut header| {
@@ -402,6 +447,8 @@ impl LogTable {
                     events,
                     dark_mode,
                     timestamp_mode,
+                    color_by_ml_score,
+                    model_is_active,
                 );
             });
     }
@@ -440,6 +487,10 @@ impl LogTable {
             column_widths.score = ui.available_width();
             ui.strong("Score");
         });
+        header.col(|ui| {
+            column_widths.ml_score = ui.available_width();
+            ui.strong("ML Score");
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -455,6 +506,8 @@ impl LogTable {
         events: &mut Vec<LogTableEvent>,
         dark_mode: bool,
         timestamp_mode: TimestampMode,
+        color_by_ml_score: bool,
+        model_is_active: bool,
     ) {
         let visible_lines = filtered_indices.len();
 
@@ -488,6 +541,8 @@ impl LogTable {
                 dark_mode,
                 timestamp_mode,
                 prev_row_timestamp,
+                color_by_ml_score,
+                model_is_active,
             );
 
             prev_row_timestamp = store.adjusted_timestamp(&filtered_indices[row_index]);
@@ -519,6 +574,8 @@ impl LogTable {
         dark_mode: bool,
         timestamp_mode: TimestampMode,
         prev_row_timestamp: Option<DateTime<Local>>,
+        color_by_ml_score: bool,
+        model_is_active: bool,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
         let line_idx = filtered_indices[row_index];
@@ -531,6 +588,7 @@ impl LogTable {
             row.col(|_| {});
             row.col(|_| {});
             row.col(|_| {}); // Score column
+            row.col(|_| {}); // ML Score column
             return None;
         };
 
@@ -540,7 +598,15 @@ impl LogTable {
         let is_scrolled_to_closest = !is_selected
             && closest_row_index.is_some_and(|closest_row| closest_row == row_index)
             && selected_line_index.is_some();
-        let color = score_to_color(line.anomaly_score, dark_mode);
+        let color = if color_by_ml_score {
+            if line.sidecar_scored {
+                score_to_color(line.sidecar_anomaly_score, dark_mode)
+            } else {
+                score_to_color(0.0, dark_mode)
+            }
+        } else {
+            score_to_color(line.anomaly_score, dark_mode)
+        };
         let source_name = store.get_source_name(&line_idx);
 
         let column_response = Self::render_all_columns(
@@ -565,7 +631,7 @@ impl LogTable {
         let row_clicked = merged.clicked();
         let row_middle_clicked = merged.middle_clicked();
 
-        Self::show_line_context_menu(&merged, store, line_idx, events);
+        Self::show_line_context_menu(&merged, store, line_idx, events, model_is_active);
 
         if row_middle_clicked {
             Some(LogTableEvent::BookmarkToggled {
@@ -649,6 +715,14 @@ impl LogTable {
                 is_scrolled_to_closest,
                 is_bookmarked,
                 color,
+                dark_mode,
+            ),
+            Self::render_ml_score_column(
+                row,
+                line,
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
                 dark_mode,
             ),
         ];
@@ -874,6 +948,49 @@ impl LogTable {
 
             let anomaly_str = format!("{:.1}", line.anomaly_score);
             let text = RichText::new(anomaly_str).strong().color(color);
+            response = Some(ui.add(egui::Label::new(text).sense(egui::Sense::click())));
+        });
+        response.expect("column always renders")
+    }
+
+    #[allow(clippy::fn_params_excessive_bools)]
+    fn render_ml_score_column(
+        row: &mut egui_extras::TableRow,
+        line: &LogLine,
+        is_selected: bool,
+        is_scrolled_to_closest: bool,
+        is_bookmarked: bool,
+        dark_mode: bool,
+    ) -> egui::Response {
+        let mut response: Option<egui::Response> = None;
+        row.col(|ui| {
+            if let Some(bg_color) = compute_row_background_color(
+                is_selected,
+                is_scrolled_to_closest,
+                is_bookmarked,
+                dark_mode,
+            ) {
+                ui.painter()
+                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
+            }
+
+            let (ml_str, ml_color) = if line.sidecar_scored {
+                let col = score_to_color(line.sidecar_anomaly_score, dark_mode);
+                let score_str = format!("{:.1}", line.sidecar_anomaly_score);
+                let label = if line.sidecar_score_is_unk {
+                    if line.sidecar_score_is_rare {
+                        format!("{score_str} RARE")
+                    } else {
+                        format!("{score_str} UKN")
+                    }
+                } else {
+                    score_str
+                };
+                (label, col)
+            } else {
+                ("-".to_string(), Color32::GRAY)
+            };
+            let text = RichText::new(ml_str).strong().color(ml_color);
             response = Some(ui.add(egui::Label::new(text).sense(egui::Sense::click())));
         });
         response.expect("column always renders")

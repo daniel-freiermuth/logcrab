@@ -37,6 +37,7 @@ use crate::ui::tabs::LogCrabTab;
 use crate::ui::windows::ChangeFilternameWindow;
 use egui::Ui;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Events that can be emitted by the filter view
 #[derive(Debug, Clone)]
@@ -59,6 +60,16 @@ pub struct FilterView {
     state: FilterState,
     change_filtername_window: Option<ChangeFilternameWindow>,
     filter_bar: FilterBar,
+    /// Whether the attention panel window is visible.
+    show_attention_panel: bool,
+    /// The line the user last requested an explanation for.
+    attention_target: Option<StoreID>,
+    /// The most recent result returned by the sidecar explain session.
+    attention_result: Option<crate::anomaly::sidecar_client::ExplainResult>,
+    /// `true` while an explain request is in flight.
+    attention_pending: bool,
+    /// Set when the explain session's WebSocket closes unexpectedly.
+    attention_error: Option<String>,
 }
 
 impl FilterView {
@@ -68,6 +79,11 @@ impl FilterView {
             state,
             change_filtername_window: None,
             filter_bar: FilterBar::new(),
+            show_attention_panel: false,
+            attention_target: None,
+            attention_result: None,
+            attention_pending: false,
+            attention_error: None,
         }
     }
 
@@ -194,6 +210,8 @@ impl FilterView {
 
         // Render log table
         let closest_row_index = self.state.closest_row_index;
+        let model_is_active = global_config.use_sidecar_scoring
+            && global_config.selected_model.is_some();
         let table_events = {
             profiling::scope!("render_log_table");
             LogTable::render(
@@ -205,6 +223,8 @@ impl FilterView {
                 scroll_to_row,
                 closest_row_index,
                 all_filter_highlights,
+                global_config.color_by_ml_score,
+                model_is_active,
             )
         };
 
@@ -230,7 +250,106 @@ impl FilterView {
                         TimestampMode::Relative,
                     );
                 }
+                LogTableEvent::ExplainAttention { line_index } => {
+                    let source_id = line_index.source_id();
+                    // Use the 0-based line index that matches line_id.line_number
+                    // in the scoring protocol, NOT the 1-based LogLine.line_number.
+                    let target_ln = line_index.line_index_within_source();
+                    if store.request_explanation(source_id, target_ln) {
+                        self.attention_target = Some(line_index);
+                        self.attention_pending = true;
+                        self.attention_error = None;
+                        self.show_attention_panel = true;
+                    } else {
+                        // Session is closed or was never opened.
+                        if let Some(ref sender) = log_view_state.toast_sender {
+                            sender.send("Attention not available: sidecar session is closed".to_string());
+                        }
+                    }
+                }
+                LogTableEvent::ClassifyLine { line_index, label } => {
+                    let source_id = line_index.source_id();
+                    let classified_line_number = store
+                        .get_by_id(&line_index)
+                        .map(|l| l.line_number)
+                        .unwrap_or(0);
+                    let Some(sidecar_config) = store.sidecar_config() else {
+                        tracing::warn!("classify: no sidecar config set");
+                        continue;
+                    };
+                    let Some(model_id) = sidecar_config.model_id else {
+                        tracing::warn!("classify: no model selected");
+                        continue;
+                    };
+                    let host = sidecar_config.sidecar_host;
+                    let port = sidecar_config.sidecar_port;
+                    let toast_sender = log_view_state.toast_sender.clone();
+                    let store_arc = Arc::clone(&log_view_state.store);
+
+                    std::thread::spawn(move || {
+                        let result = (|| -> anyhow::Result<()> {
+                            let input_lines = store_arc
+                                .get_sidecar_input_lines_for_source(source_id)
+                                .ok_or_else(|| anyhow::anyhow!("source {source_id} not found"))?;
+                            let client = crate::anomaly::sidecar_client::SidecarClient::connect(
+                                &host, port,
+                            )?;
+                            client.submit_sample(&model_id, label, classified_line_number, &input_lines)?;
+                            Ok(())
+                        })();
+                        match result {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "Classification submitted: {label} for line {classified_line_number}"
+                                );
+                                if let Some(ref sender) = toast_sender {
+                                    sender.send_success(format!(
+                                        "Submitted as {label} sample (line {classified_line_number})"
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Classification upload failed: {e}");
+                                if let Some(ref sender) = toast_sender {
+                                    sender.send(format!("Classification upload failed: {e}"));
+                                }
+                            }
+                        }
+                    });
+                }
             }
+        }
+
+        // ── Poll for explain results ──────────────────────────────────────────
+        if self.attention_pending {
+            if let Some(source_id) = self.attention_target.map(|t| t.source_id()) {
+                use crate::anomaly::sidecar_client::ExplainPollStatus;
+                match store.poll_explain_status(source_id) {
+                    ExplainPollStatus::Ready(result)
+                        if Some(result.target_line_number)
+                            == self.attention_target.map(|t| t.line_index_within_source()) =>
+                    {
+                        self.attention_result = Some(result);
+                        self.attention_pending = false;
+                    }
+                    ExplainPollStatus::Dead => {
+                        self.attention_pending = false;
+                        self.attention_error = Some("Sidecar connection lost".to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // ── Render attention panel ────────────────────────────────────────────
+        if self.show_attention_panel {
+            crate::ui::windows::render_attention_panel(
+                ui.ctx(),
+                &mut self.show_attention_panel,
+                store,
+                self.attention_target,
+                self.attention_result.as_ref(),
+                self.attention_pending,                self.attention_error.as_deref(),            );
         }
 
         events

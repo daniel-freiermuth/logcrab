@@ -68,6 +68,12 @@ pub struct SessionState {
 
     /// Pending conversion request: filter data to convert to highlight
     pub pending_filter_to_highlight: Option<FilterToHighlightData>,
+
+    /// Sender for showing toast notifications from background threads.
+    ///
+    /// Set by the app after session creation so background classification threads
+    /// can report success or failure without blocking the UI.
+    pub toast_sender: Option<crate::ui::ToastSender>,
 }
 
 /// Data needed to convert a filter to a highlight
@@ -100,6 +106,7 @@ impl SessionState {
             highlights: Vec::new(),
             pending_highlight_to_filter: None,
             pending_filter_to_highlight: None,
+            toast_sender: None,
         }
     }
 
