@@ -76,7 +76,11 @@ pub(super) fn try_parse_rfcomm(l2cap_payload: &[u8]) -> Option<String> {
             "DLCI=0".to_string()
         }
     } else {
-        let direction = if cr_bit == 1 { "Initiator" } else { "Responder" };
+        let direction = if cr_bit == 1 {
+            "Initiator"
+        } else {
+            "Responder"
+        };
 
         if frame_type == "UIH" && length > 0 {
             let pf_bit = (control >> 4) & 0x01;
@@ -86,8 +90,8 @@ pub(super) fn try_parse_rfcomm(l2cap_payload: &[u8]) -> Option<String> {
                 data_offset
             };
 
-            let payload_end = (data_offset + length as usize)
-                .min(l2cap_payload.len().saturating_sub(1));
+            let payload_end =
+                (data_offset + length as usize).min(l2cap_payload.len().saturating_sub(1));
             if actual_data_offset < payload_end {
                 let payload = &l2cap_payload[actual_data_offset..payload_end];
                 if let Some(hfp_info) = super::hfp::try_parse_hfp_at_command(payload) {

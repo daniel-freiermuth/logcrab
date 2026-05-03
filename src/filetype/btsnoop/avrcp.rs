@@ -70,7 +70,11 @@ fn parse_avc_frame(data: &[u8]) -> String {
             // Pass Through
             if data.len() >= 5 {
                 let operation_id = data[3] & 0x7F;
-                let state = if data[3] & 0x80 != 0 { "Released" } else { "Pressed" };
+                let state = if data[3] & 0x80 != 0 {
+                    "Released"
+                } else {
+                    "Pressed"
+                };
                 let op_name = get_passthrough_operation(operation_id);
                 format!("AVRCP {ctype_str} {opcode_str} {op_name} {state}")
             } else {
@@ -261,7 +265,12 @@ fn truncate_utf8(s: &str, max_chars: usize) -> String {
     }
 }
 
-fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usize) -> Option<String> {
+fn parse_avrcp_pdu_params(
+    pdu_id: u8,
+    ctype: u8,
+    params: &[u8],
+    _param_len: usize,
+) -> Option<String> {
     let is_response = ctype >= 0x08;
 
     match pdu_id {
@@ -292,8 +301,8 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
         0x11 => {
             if is_response && !params.is_empty() {
                 let count = params[0] as usize;
-                if params.len() >= 1 + count {
-                    let attrs: Vec<&str> = params[1..1 + count]
+                if params.len() > count {
+                    let attrs: Vec<&str> = params[1..=count]
                         .iter()
                         .map(|&id| get_player_app_attr_name(id))
                         .collect();
@@ -335,7 +344,11 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
                         ))
                     })
                     .collect();
-                if pairs.is_empty() { None } else { Some(pairs.join(" ")) }
+                if pairs.is_empty() {
+                    None
+                } else {
+                    Some(pairs.join(" "))
+                }
             } else {
                 let attrs: Vec<&str> = (0..count)
                     .filter_map(|i| params.get(1 + i).map(|&id| get_player_app_attr_name(id)))
@@ -361,7 +374,11 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
                     ))
                 })
                 .collect();
-            if pairs.is_empty() { None } else { Some(pairs.join(" ")) }
+            if pairs.is_empty() {
+                None
+            } else {
+                Some(pairs.join(" "))
+            }
         }
         // InformBatteryStatus
         0x18 => {
@@ -415,14 +432,18 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
                         break;
                     }
                 }
-                if result.is_empty() { None } else { Some(result.join(" ")) }
+                if result.is_empty() {
+                    None
+                } else {
+                    Some(result.join(" "))
+                }
             } else {
                 if params.len() < 9 {
                     return None;
                 }
                 let uid = u64::from_be_bytes([
-                    params[0], params[1], params[2], params[3],
-                    params[4], params[5], params[6], params[7],
+                    params[0], params[1], params[2], params[3], params[4], params[5], params[6],
+                    params[7],
                 ]);
                 let num_attrs = params[8] as usize;
                 let track = if uid == 0 {
@@ -436,9 +457,14 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
                     let attr_names: Vec<&str> = (0..num_attrs)
                         .filter_map(|i| {
                             let off = 9 + i * 4;
-                            if params.len() < off + 4 { return None; }
+                            if params.len() < off + 4 {
+                                return None;
+                            }
                             let id = u32::from_be_bytes([
-                                params[off], params[off + 1], params[off + 2], params[off + 3],
+                                params[off],
+                                params[off + 1],
+                                params[off + 2],
+                                params[off + 3],
                             ]);
                             Some(get_element_attr_name(id))
                         })
@@ -452,8 +478,7 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
             if params.len() >= 9 {
                 let song_length_ms =
                     u32::from_be_bytes([params[0], params[1], params[2], params[3]]);
-                let song_pos_ms =
-                    u32::from_be_bytes([params[4], params[5], params[6], params[7]]);
+                let song_pos_ms = u32::from_be_bytes([params[4], params[5], params[6], params[7]]);
                 let play_status = match params[8] {
                     0x00 => "STOPPED",
                     0x01 => "PLAYING",
@@ -483,15 +508,13 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
             let event_id = *params.first()?;
             let event_name = get_avrcp_notification_event(event_id);
             if is_response {
-                let extra =
-                    decode_notification_response(event_id, params.get(1..).unwrap_or(&[]));
+                let extra = decode_notification_response(event_id, params.get(1..).unwrap_or(&[]));
                 match extra {
                     Some(e) => Some(format!("Event={event_name} {e}")),
                     None => Some(format!("Event={event_name}")),
                 }
             } else if event_id == 0x05 && params.len() >= 5 {
-                let interval_ms =
-                    u32::from_be_bytes([params[1], params[2], params[3], params[4]]);
+                let interval_ms = u32::from_be_bytes([params[1], params[2], params[3], params[4]]);
                 Some(format!("Event={event_name} Interval={interval_ms}ms"))
             } else {
                 Some(format!("Event={event_name}"))
@@ -505,7 +528,7 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
         // SetAbsoluteVolume
         0x50 => {
             let raw = *params.first()? & 0x7F;
-            let pct = (raw as u32 * 100) / 127;
+            let pct = (u32::from(raw) * 100) / 127;
             Some(format!("Volume={pct}% (0x{raw:02X})"))
         }
         // SetAddressedPlayer
@@ -556,10 +579,8 @@ fn parse_avrcp_pdu_params(pdu_id: u8, ctype: u8, params: &[u8], _param_len: usiz
             } else {
                 let scope = get_folder_scope_name(*params.first()?);
                 if params.len() >= 9 {
-                    let start =
-                        u32::from_be_bytes([params[1], params[2], params[3], params[4]]);
-                    let end =
-                        u32::from_be_bytes([params[5], params[6], params[7], params[8]]);
+                    let start = u32::from_be_bytes([params[1], params[2], params[3], params[4]]);
+                    let end = u32::from_be_bytes([params[5], params[6], params[7], params[8]]);
                     Some(format!("Scope={scope} Items={start}..={end}"))
                 } else {
                     Some(format!("Scope={scope}"))
@@ -640,8 +661,7 @@ fn decode_notification_response(event_id: u8, data: &[u8]) -> Option<String> {
         0x02 => {
             if data.len() >= 8 {
                 let uid = u64::from_be_bytes([
-                    data[0], data[1], data[2], data[3],
-                    data[4], data[5], data[6], data[7],
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                 ]);
                 if uid == u64::MAX {
                     Some("Track=None".to_string())
@@ -705,7 +725,7 @@ fn decode_notification_response(event_id: u8, data: &[u8]) -> Option<String> {
         }
         0x0D => {
             let raw = *data.first()? & 0x7F;
-            let pct = (raw as u32 * 100) / 127;
+            let pct = (u32::from(raw) * 100) / 127;
             Some(format!("Volume={pct}% (0x{raw:02X})"))
         }
         _ => None,
@@ -724,11 +744,11 @@ const fn get_player_app_attr_name(attr_id: u8) -> &'static str {
 
 const fn get_player_app_attr_value(attr_id: u8, value_id: u8) -> &'static str {
     match (attr_id, value_id) {
-        (0x01, 0x01) | (0x02, 0x01) | (0x03, 0x01) | (0x04, 0x01) => "OFF",
+        (0x01..=0x04, 0x01) => "OFF",
         (0x01, 0x02) => "ON",
-        (0x02, 0x02) | (0x03, 0x02) | (0x04, 0x02) => "All",
+        (0x02..=0x04, 0x02) => "All",
         (0x02, 0x03) => "Single",
-        (0x02, 0x04) | (0x03, 0x03) | (0x04, 0x03) => "Group",
+        (0x02, 0x04) | (0x03 | 0x04, 0x03) => "Group",
         _ => "?",
     }
 }

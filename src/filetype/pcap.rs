@@ -23,8 +23,6 @@ pub struct PcapLogLine {
     pub packet_info: PacketInfo,
     /// Original packet number in source file
     pub line_number: usize,
-    /// Anomaly score (mutable)
-    pub anomaly_score: f64,
 }
 
 impl PcapLogLine {
@@ -32,7 +30,6 @@ impl PcapLogLine {
         Self {
             packet_info,
             line_number,
-            anomaly_score: 0.0,
         }
     }
 }
@@ -215,14 +212,6 @@ impl LineType for PcapLogLine {
 
     fn line_number(&self) -> usize {
         self.line_number
-    }
-
-    fn anomaly_score(&self) -> f64 {
-        self.anomaly_score
-    }
-
-    fn set_anomaly_score(&mut self, score: f64) {
-        self.anomaly_score = score;
     }
 
     fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &PcapFileState) {
