@@ -514,6 +514,12 @@ impl ExplainSession {
                         tracing::warn!("explain session: server sent Close during explain read");
                         return;
                     }
+                    Err(tungstenite::Error::Io(e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        // 50ms read timeout elapsed — loop and retry.
+                    }
                     Err(e) => {
                         tracing::warn!("explain session: read error during explain: {e}");
                         return;
