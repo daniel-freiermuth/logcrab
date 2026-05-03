@@ -1,0 +1,554 @@
+openapi: 3.1.0
+info:
+  title: LogCrab Sidecar API
+  version: 1.0.0
+  summary: HTTP API for model discovery and streaming scoring
+  description: |
+    V1 API contract for the LogCrab Rust frontend and Python scoring sidecar.
+
+    Notes on streaming:
+    - `POST /v1/score-stream` uses NDJSON over HTTP.
+    - Each request line is one JSON object matching one of:
+      `StartFrame`, `LinesFrame`, `EndFrame`.
+    - Each response line is one JSON object matching one of:
+      `AcceptedFrame`, `ScoresFrame`, `WarningFrame`, `ErrorFrame`, `CompleteFrame`.
+
+    OpenAPI can describe the endpoint and frame schemas, but does not natively model
+    full-duplex NDJSON line framing semantics. See `x-ndjson-*` vendor extensions
+    for frame-level contract references.
+
+    Companion frame schema:
+    - `docs/sidecar_api_v1.frames.schema.json`
+servers:
+  - url: http://127.0.0.1:8765
+    description: Default localhost sidecar server
+
+tags:
+  - name: health
+  - name: models
+  - name: scoring
+
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      summary: Health and readiness probe
+      operationId: getHealth
+      responses:
+        '200':
+          description: Sidecar is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                ok:
+                  value:
+                    api_version: '1'
+                    status: ok
+
+  /v1/models:
+    get:
+      tags: [models]
+      summary: Discover available models and capabilities
+      operationId: getModels
+      responses:
+        '200':
+          description: List of discoverable models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+              examples:
+                default:
+                  value:
+                    api_version: '1'
+                    models:
+                      - id: logbert-android-errors
+                        name: Android Errors (WARN/ERROR) — logcat 2026
+                        architecture: temporal_logbert
+                        kind: sequence_anomaly
+                        version: '2026-04-14'
+                        status: ready
+                        input_mode: ordered_lines
+                        training_corpus:
+                          filter_profile: android-errors-v1
+                          description: Android logcat WARN and ERROR lines with parsed message field
+                          normalization_versions:
+                            logcat: 2
+                        supported_fields:
+                          - message
+                          - template_key
+                          - timestamp_unix_ms
+                          - source_file
+                          - filetype
+                        required_fields:
+                          - message
+                        chunk_policy:
+                          recommended_lines_per_chunk: 2048
+                          max_lines_per_chunk: 65536
+                        output:
+                          score_kind: anomaly
+                          higher_is_more_anomalous: true
+                          supports_explanations: false
+                    filter_profiles:
+                      - id: android-errors-v1
+                        description: Android logcat WARN and ERROR lines with parsed message field
+
+  /v1/score-stream:
+    get:
+      tags: [scoring]
+      summary: WebSocket upgrade for streaming anomaly scoring
+      description: |
+        WebSocket endpoint. Clients must connect using the WebSocket protocol
+        (`ws://127.0.0.1:8765/v1/score-stream`).
+
+        One WebSocket connection corresponds to one scoring run.
+
+        Client sends: `StartFrame`, zero or more `LinesFrame`, then `EndFrame`.
+        Server sends: `AcceptedFrame`, zero or more `ScoresFrame` and/or
+        `WarningFrame`, then exactly one terminal frame: `CompleteFrame` or `ErrorFrame`.
+
+        Each WebSocket text message is one JSON object. Frame schemas are defined
+        in `docs/sidecar_api_v1.frames.schema.json` and referenced below.
+
+        Note: OpenAPI 3.1 does not model WebSocket natively. This entry documents
+        the upgrade endpoint and links to the frame schemas.
+      operationId: scoreStream
+      responses:
+        '101':
+          description: Switching Protocols — WebSocket connection established
+        '400':
+          description: Invalid WebSocket upgrade request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Sidecar internal error during upgrade
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Sidecar not ready (model loading or unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      x-ws-client-frame-schema:
+        $ref: '#/components/schemas/RequestFrame'
+      x-ws-server-frame-schema:
+        $ref: '#/components/schemas/ResponseFrame'
+      x-ws-json-schema:
+        relativePath: docs/sidecar_api_v1.frames.schema.json
+        requestRef: '#/$defs/request_frame'
+        responseRef: '#/$defs/response_frame'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, status]
+      properties:
+        api_version:
+          type: string
+          const: '1'
+        status:
+          type: string
+          enum: [ok, starting, degraded]
+
+    ModelsResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, models, filter_profiles]
+      properties:
+        api_version:
+          type: string
+          const: '1'
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelInfo'
+        filter_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterProfileInfo'
+
+    ModelInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - architecture
+        - kind
+        - version
+        - status
+        - input_mode
+        - training_corpus
+        - supported_fields
+        - required_fields
+        - chunk_policy
+        - output
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Stable machine-readable slug used as model_id in the scoring protocol.
+        name:
+          type: string
+          minLength: 1
+          description: Human-readable label describing the model and its training domain.
+        architecture:
+          type: string
+          minLength: 1
+          description: Model architecture identifier (e.g. temporal_logbert, logbert).
+        kind:
+          type: string
+          enum: [sequence_anomaly]
+        version:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum: [ready, loading, unavailable]
+        input_mode:
+          type: string
+          enum: [ordered_lines]
+        training_corpus:
+          $ref: '#/components/schemas/TrainingCorpus'
+        supported_fields:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+        required_fields:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+        chunk_policy:
+          $ref: '#/components/schemas/ChunkPolicy'
+        output:
+          $ref: '#/components/schemas/OutputInfo'
+
+    TrainingCorpus:
+      type: object
+      additionalProperties: false
+      required: [filter_profile, description, normalization_versions]
+      properties:
+        filter_profile:
+          type: string
+        description:
+          type: string
+        normalization_versions:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 1
+          description: >
+            Map of filetype slug to the integer version of the logcrab normalizer
+            (`message()` output format) used when producing the training data.
+            The frontend declares its own current versions in the `start` frame;
+            a mismatch for a relevant filetype triggers a `warning` frame.
+
+    ChunkPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - recommended_lines_per_chunk
+        - max_lines_per_chunk
+      properties:
+        recommended_lines_per_chunk:
+          type: integer
+          minimum: 1
+        max_lines_per_chunk:
+          type: integer
+          minimum: 1
+
+    OutputInfo:
+      type: object
+      additionalProperties: false
+      required: [score_kind, higher_is_more_anomalous, supports_explanations]
+      properties:
+        score_kind:
+          type: string
+          enum: [anomaly]
+        higher_is_more_anomalous:
+          type: boolean
+        supports_explanations:
+          type: boolean
+
+    FilterProfileInfo:
+      type: object
+      additionalProperties: false
+      required: [id, description]
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+
+    LineId:
+      type: object
+      additionalProperties: false
+      required: [source_id, line_number, timestamp_unix_ms]
+      properties:
+        source_id:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        line_number:
+          type: integer
+          minimum: 0
+        timestamp_unix_ms:
+          type: integer
+          minimum: 0
+
+    InputLine:
+      type: object
+      additionalProperties: false
+      required: [line_id, message]
+      properties:
+        line_id:
+          $ref: '#/components/schemas/LineId'
+        message:
+          type: string
+        template_key:
+          type: string
+          description: Optional debug hint; Python re-derives the canonical template_key from message.
+        source_file:
+          type: string
+          description: Original filename of the log source.
+        filetype:
+          type: string
+          description: Detected file type (e.g. logcat, dlt, generic, dmesg).
+          example: logcat
+
+    FilteredLine:
+      type: object
+      additionalProperties: false
+      required: [line_id, reason]
+      properties:
+        line_id:
+          $ref: '#/components/schemas/LineId'
+        reason:
+          type: string
+          description: >
+            Why the model's corpus filter rejected this line.
+            `out_of_corpus` — line is outside the model's training domain (e.g. wrong filetype);
+            `empty_after_normalization` — template normalised to an empty string.
+          enum: [out_of_corpus, empty_after_normalization]
+
+    ScoredLine:
+      type: object
+      additionalProperties: false
+      required: [line_id, score, target_is_unk]
+      properties:
+        line_id:
+          $ref: '#/components/schemas/LineId'
+        score:
+          type: number
+          format: double
+        score_kind:
+          type: string
+          default: anomaly
+        target_is_unk:
+          type: boolean
+          description: >
+            True when the line's template was not in the model vocabulary and the [UNK] token
+            embedding was used. The score is still valid but carries less signal than a
+            fully-known template.
+
+    Summary:
+      type: object
+      additionalProperties: false
+      required: [lines_received, lines_scored, lines_filtered]
+      properties:
+        lines_received:
+          type: integer
+          minimum: 0
+        lines_scored:
+          type: integer
+          minimum: 0
+        lines_filtered:
+          type: integer
+          minimum: 0
+
+    StartFrame:
+      type: object
+      additionalProperties: false
+      required: [type, api_version, model_id, filtering_mode, normalization_versions]
+      properties:
+        type:
+          type: string
+          const: start
+        api_version:
+          type: string
+          const: '1'
+        model_id:
+          type: string
+          minLength: 1
+        filtering_mode:
+          type: string
+          const: backend_authoritative
+        normalization_versions:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 1
+          description: >
+            Map of filetype slug to the integer version of the normalizer currently
+            in use by this frontend build. Compared against the selected model's
+            `training_corpus.normalization_versions`.
+
+    LinesFrame:
+      type: object
+      additionalProperties: false
+      required: [type, chunk_index, lines]
+      properties:
+        type:
+          type: string
+          const: lines
+        chunk_index:
+          type: integer
+          minimum: 0
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/InputLine'
+
+    EndFrame:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: end
+
+    RequestFrame:
+      oneOf:
+        - $ref: '#/components/schemas/StartFrame'
+        - $ref: '#/components/schemas/LinesFrame'
+        - $ref: '#/components/schemas/EndFrame'
+      discriminator:
+        propertyName: type
+        mapping:
+          start: '#/components/schemas/StartFrame'
+          lines: '#/components/schemas/LinesFrame'
+          end: '#/components/schemas/EndFrame'
+
+    AcceptedFrame:
+      type: object
+      additionalProperties: false
+      required: [type, api_version, run_id, model_id, chunk_policy]
+      properties:
+        type:
+          type: string
+          const: accepted
+        api_version:
+          type: string
+          const: '1'
+        run_id:
+          type: string
+          minLength: 1
+        model_id:
+          type: string
+        chunk_policy:
+          $ref: '#/components/schemas/ChunkPolicy'
+
+    ScoresFrame:
+      type: object
+      additionalProperties: false
+      required: [type, chunk_index, scored, filtered]
+      properties:
+        type:
+          type: string
+          const: scores
+        chunk_index:
+          type: integer
+          minimum: 0
+        scored:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredLine'
+        filtered:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilteredLine'
+
+    WarningFrame:
+      type: object
+      additionalProperties: false
+      required: [type, code, message]
+      properties:
+        type:
+          type: string
+          const: warning
+        code:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+
+    ErrorFrame:
+      type: object
+      additionalProperties: false
+      required: [type, code, message]
+      properties:
+        type:
+          type: string
+          const: error
+        code:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+
+    CompleteFrame:
+      type: object
+      additionalProperties: false
+      required: [type, summary]
+      properties:
+        type:
+          type: string
+          const: complete
+        summary:
+          $ref: '#/components/schemas/Summary'
+
+    ResponseFrame:
+      oneOf:
+        - $ref: '#/components/schemas/AcceptedFrame'
+          description: Handshake acknowledgement (not a per-line outcome)
+        - $ref: '#/components/schemas/ScoresFrame'
+        - $ref: '#/components/schemas/WarningFrame'
+        - $ref: '#/components/schemas/ErrorFrame'
+        - $ref: '#/components/schemas/CompleteFrame'
+      discriminator:
+        propertyName: type
+        mapping:
+          accepted: '#/components/schemas/AcceptedFrame'
+          scores: '#/components/schemas/ScoresFrame'
+          warning: '#/components/schemas/WarningFrame'
+          error: '#/components/schemas/ErrorFrame'
+          complete: '#/components/schemas/CompleteFrame'
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
