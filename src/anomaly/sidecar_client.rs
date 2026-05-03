@@ -421,7 +421,7 @@ impl ExplainSession {
         // with waiting for explain requests from the UI thread.
         // 50 ms keeps UI latency low while not busy-polling.
         let _ = ws.get_ref().set_read_timeout(Some(Duration::from_millis(50)));
-        tracing::info!("explain session started");
+        tracing::debug!("explain session started");
 
         loop {
             // Poll for a pending explain request while servicing WebSocket
@@ -431,7 +431,7 @@ impl ExplainSession {
                     Ok(ln) => break ln,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         // All senders dropped — send close frame and exit.
-                        tracing::info!("explain session: all senders dropped, closing");
+                        tracing::debug!("explain session: all senders dropped, closing");
                         let _ = ws.send(Message::Text(r#"{"type":"close"}"#.into()));
                         return;
                     }
@@ -447,7 +447,7 @@ impl ExplainSession {
                         return;
                     }
                     Ok(msg) => {
-                        tracing::debug!("explain session: unexpected idle frame: {:?}", msg);
+                        tracing::trace!("explain session: unexpected idle frame: {:?}", msg);
                     }
                     Err(tungstenite::Error::Io(e))
                         if e.kind() == std::io::ErrorKind::WouldBlock
@@ -462,7 +462,7 @@ impl ExplainSession {
                 }
             };
 
-            tracing::info!("explain session: requesting line {target_ln}");
+            tracing::debug!("explain session: requesting line {target_ln}");
             let frame = serde_json::json!({
                 "type": "explain",
                 "target_line_number": target_ln,
@@ -482,7 +482,7 @@ impl ExplainSession {
                         };
                         if v["type"] == "explanation" {
                             if let Ok(f) = serde_json::from_value::<ExplanationFrame>(v) {
-                                tracing::info!(
+                                tracing::debug!(
                                     "explain session: got result for line {} (in_corpus={})",
                                     f.target_line_number, f.target_in_corpus,
                                 );
@@ -705,14 +705,14 @@ impl SidecarClient {
 
         let start = StartFrame::new(model_id, normalization_versions);
         ws.send(Message::Text(serde_json::to_string(&start)?.into()))?;
-        tracing::debug!("sent start frame");
+        tracing::trace!("sent start frame");
 
         let mut complete_in_send_phase = false;
         for (chunk_index, chunk) in lines.chunks(LINES_PER_CHUNK).enumerate() {
             let frame = LinesFrame { type_: "lines", chunk_index, lines: chunk };
             ws.send(Message::Text(serde_json::to_string(&frame)?.into()))?;
             if chunk_index % 500 == 499 {
-                tracing::info!("sent {}/{n_chunks} chunks", chunk_index + 1);
+                tracing::debug!("sent {}/{n_chunks} chunks", chunk_index + 1);
             }
             // Opportunistic read: consume any scores frames the server has
             // already produced while we were uploading.
@@ -814,7 +814,7 @@ impl SidecarClient {
                     result.scored.insert(s.line_id.line_number, entry);
                 }
                 let _ = frame.filtered; // absent from `scored`; callers assign score 0.0
-                tracing::info!(
+                tracing::debug!(
                     "scores frame #{chunk_index}: +{newly_scored} scored, {} total so far",
                     result.scored.len()
                 );
