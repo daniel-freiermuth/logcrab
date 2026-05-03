@@ -421,6 +421,7 @@ impl ExplainSession {
         // with waiting for explain requests from the UI thread.
         // 50 ms keeps UI latency low while not busy-polling.
         let _ = ws.get_ref().set_read_timeout(Some(Duration::from_millis(50)));
+        tracing::info!("explain session started");
 
         loop {
             // Poll for a pending explain request while servicing WebSocket
@@ -430,6 +431,7 @@ impl ExplainSession {
                     Ok(ln) => break ln,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         // All senders dropped — send close frame and exit.
+                        tracing::info!("explain session: all senders dropped, closing");
                         let _ = ws.send(Message::Text(r#"{"type":"close"}"#.into()));
                         return;
                     }
@@ -440,23 +442,33 @@ impl ExplainSession {
                     Ok(Message::Ping(data)) => {
                         let _ = ws.send(Message::Pong(data));
                     }
-                    Ok(Message::Close(_)) => return,
-                    Ok(_) => {} // unexpected data frame while idle — ignore
+                    Ok(Message::Close(_)) => {
+                        tracing::warn!("explain session: server sent Close frame");
+                        return;
+                    }
+                    Ok(msg) => {
+                        tracing::debug!("explain session: unexpected idle frame: {:?}", msg);
+                    }
                     Err(tungstenite::Error::Io(e))
                         if e.kind() == std::io::ErrorKind::WouldBlock
                             || e.kind() == std::io::ErrorKind::TimedOut =>
                     {
                         // Read timeout elapsed — go back and poll the channel.
                     }
-                    Err(_) => return, // connection lost
+                    Err(e) => {
+                        tracing::warn!("explain session: connection error: {e}");
+                        return;
+                    }
                 }
             };
 
+            tracing::info!("explain session: requesting line {target_ln}");
             let frame = serde_json::json!({
                 "type": "explain",
                 "target_line_number": target_ln,
             });
             if ws.send(Message::Text(frame.to_string().into())).is_err() {
+                tracing::warn!("explain session: failed to send explain frame");
                 break;
             }
 
@@ -465,10 +477,15 @@ impl ExplainSession {
                 match ws.read() {
                     Ok(Message::Text(text)) => {
                         let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                            tracing::warn!("explain session: invalid JSON response");
                             break;
                         };
                         if v["type"] == "explanation" {
                             if let Ok(f) = serde_json::from_value::<ExplanationFrame>(v) {
+                                tracing::info!(
+                                    "explain session: got result for line {} (in_corpus={})",
+                                    f.target_line_number, f.target_in_corpus,
+                                );
                                 let result = ExplainResult {
                                     target_line_number: f.target_line_number,
                                     target_in_corpus: f.target_in_corpus,
@@ -493,7 +510,14 @@ impl ExplainSession {
                     Ok(Message::Ping(data)) => {
                         let _ = ws.send(Message::Pong(data));
                     }
-                    Ok(Message::Close(_)) | Err(_) => return,
+                    Ok(Message::Close(_)) => {
+                        tracing::warn!("explain session: server sent Close during explain read");
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!("explain session: read error during explain: {e}");
+                        return;
+                    }
                     _ => {}
                 }
             }
