@@ -856,6 +856,11 @@ impl StoreID {
         self.source_id
     }
 
+    /// Return the 0-based line index within this source.
+    pub const fn line_index_within_source(&self) -> usize {
+        self.line_index
+    }
+
     /// Construct a `StoreID` directly from a source identifier and line index.
     pub const fn make(source_id: u64, line_index: usize) -> Self {
         Self { source_id, line_index }

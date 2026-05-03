@@ -252,7 +252,9 @@ impl FilterView {
                 }
                 LogTableEvent::ExplainAttention { line_index } => {
                     let source_id = line_index.source_id();
-                    let target_ln = store.get_by_id(&line_index).map(|l| l.line_number).unwrap_or(0);
+                    // Use the 0-based line index that matches line_id.line_number
+                    // in the scoring protocol, NOT the 1-based LogLine.line_number.
+                    let target_ln = line_index.line_index_within_source();
                     if store.request_explanation(source_id, target_ln) {
                         self.attention_target = Some(line_index);
                         self.attention_pending = true;
@@ -325,7 +327,7 @@ impl FilterView {
                 match store.poll_explain_status(source_id) {
                     ExplainPollStatus::Ready(result)
                         if Some(result.target_line_number)
-                            == self.attention_target.and_then(|t| store.get_by_id(&t).map(|l| l.line_number)) =>
+                            == self.attention_target.map(|t| t.line_index_within_source()) =>
                     {
                         self.attention_result = Some(result);
                         self.attention_pending = false;
