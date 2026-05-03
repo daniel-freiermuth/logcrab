@@ -203,11 +203,33 @@ macro_rules! register_filetypes {
             exts
         }
 
+        /// Returns the normalisation version for every registered filetype, keyed by slug.
+        ///
+        /// Sent in the `normalization_versions` field of the WebSocket `start` frame so
+        /// the sidecar can detect training/inference mismatches per filetype.
+        pub fn all_normalization_versions() -> ::std::collections::HashMap<&'static str, u32> {
+            let mut map = ::std::collections::HashMap::new();
+            $(
+                map.insert(
+                    <$b_ftype as $crate::filetype::HasSlug>::SLUG,
+                    <$b_ftype as $crate::filetype::InputFileType>::NORMALIZATION_VERSION,
+                );
+            )*
+            $(
+                map.insert(
+                    <$t_ftype as $crate::filetype::HasSlug>::SLUG,
+                    <$t_ftype as $crate::filetype::InputFileType>::NORMALIZATION_VERSION,
+                );
+            )*
+            map
+        }
+
         pub fn try_open_binary(
             path: &::std::path::Path,
             toast: &$crate::ui::ProgressToastHandle,
             warnings: &$crate::ui::ToastSender,
             file_config: &GlobalFileConfig,
+            store: &::std::sync::Arc<$crate::core::log_store::LogStore>,
         ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
             let mut file = ::std::fs::File::open(path).ok()?;
@@ -227,6 +249,7 @@ macro_rules! register_filetypes {
                         warnings,
                         arc_config,
                         move |p, fs| <$b_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
+                        store,
                     );
                     return Some((source.into(), filters, highlights));
                 }
@@ -241,6 +264,7 @@ macro_rules! register_filetypes {
             toast: &$crate::ui::ProgressToastHandle,
             warnings: &$crate::ui::ToastSender,
             file_config: &GlobalFileConfig,
+            store: &::std::sync::Arc<$crate::core::log_store::LogStore>,
         ) -> ::std::option::Option<(DataSourceVariant, Vec<$crate::core::SavedFilter>, Vec<$crate::core::SavedHighlight>)> {
             use ::std::io::Read as _;
             const MAX_SAMPLE_BYTES: usize = 100 * 1024;
@@ -266,6 +290,7 @@ macro_rules! register_filetypes {
                         warnings,
                         arc_config,
                         move |p, fs| <$t_ftype as $crate::filetype::InputFileType>::open(p, config_val, fs),
+                        store,
                     );
                     return Some((source.into(), filters, highlights));
                 }
@@ -273,6 +298,72 @@ macro_rules! register_filetypes {
             // Should never be reached if the last text type is a catch-all.
             tracing::error!("open_text_source: no text type matched — is the catch-all registered last?");
             None
+        }
+
+        /// Detect the file type of `path` and export all lines as NDJSON to `out`.
+        ///
+        /// Mirrors the detection logic of [`try_open_binary`] and
+        /// [`open_text_source`] but has no UI dependencies — suitable for CLI
+        /// tools and headless pipelines. Binary types are matched first by magic
+        /// bytes; text types are then matched in registration order by content
+        /// sampling. The last text type must be a catch-all (e.g. `generic`).
+        ///
+        /// Timestamps are raw and uncalibrated (config and file-state are both
+        /// `Default`), honouring the stability invariant on
+        /// [`$crate::filetype::LineType::timestamp`].
+        pub fn export_dispatch(
+            path: &::std::path::Path,
+            out: &mut impl ::std::io::Write,
+        ) -> ::anyhow::Result<()> {
+            use ::anyhow::Context as _;
+            use ::std::io::Read as _;
+
+            // ── Binary: magic-byte detection ─────────────────────────────────
+            let mut header = [0u8; 16];
+            let n = ::std::fs::File::open(path)
+                .with_context(|| format!("cannot open {}", path.display()))?
+                .read(&mut header)
+                .with_context(|| format!("cannot read header of {}", path.display()))?;
+            let header = &header[..n];
+
+            if n >= 4 {
+                $(
+                    if <$b_ftype as $crate::filetype::BinaryFileType>::MAGIC_BYTES
+                        .iter()
+                        .any(|p| header.starts_with(p))
+                    {
+                        return $crate::export::export_typed::<$b_ftype>(
+                            path,
+                            <$b_ftype as $crate::filetype::HasSlug>::SLUG,
+                            out,
+                        );
+                    }
+                )*
+            }
+
+            // ── Text: content sampling ────────────────────────────────────────
+            const MAX_SAMPLE_BYTES: u64 = 100 * 1024;
+            let mut sample = ::std::vec::Vec::new();
+            ::std::fs::File::open(path)
+                .with_context(|| format!("cannot open {}", path.display()))?
+                .take(MAX_SAMPLE_BYTES)
+                .read_to_end(&mut sample)
+                .with_context(|| format!("cannot sample {}", path.display()))?;
+
+            $(
+                if <$t_ftype as $crate::filetype::TextFileType>::looks_like(
+                    &mut ::std::io::Cursor::new(&sample),
+                ) {
+                    return $crate::export::export_typed::<$t_ftype>(
+                        path,
+                        <$t_ftype as $crate::filetype::HasSlug>::SLUG,
+                        out,
+                    );
+                }
+            )*
+
+            // Should never be reached if the last text type is a catch-all.
+            ::anyhow::bail!("export_dispatch: no file type matched for {}", path.display())
         }
 
         // ── DataSourceVariant ────────────────────────────────────────────────────
@@ -309,6 +400,14 @@ macro_rules! register_filetypes {
                 match self {
                     $( Self::$b_arm(s) => s.len(), )*
                     $( Self::$t_arm(s) => s.len(), )*
+                }
+            }
+
+            /// Return the compile-time filetype slug for this source variant.
+            pub fn filetype_slug(&self) -> &'static str {
+                match self {
+                    $( Self::$b_arm(_) => <$b_ftype as $crate::filetype::HasSlug>::SLUG, )*
+                    $( Self::$t_arm(_) => <$t_ftype as $crate::filetype::HasSlug>::SLUG, )*
                 }
             }
 
@@ -422,6 +521,18 @@ macro_rules! register_filetypes {
                 match self {
                     $( Self::$b_arm(s) => s.get_as_log_line(id), )*
                     $( Self::$t_arm(s) => s.get_as_log_line(id), )*
+                }
+            }
+
+            /// Returns the canonical sidecar `(timestamp_ms, message)` for a single line.
+            ///
+            /// Calls `LineType::message()` — the format-specific canonical text used by
+            /// `logcrab-export` and expected by the sidecar vocab — rather than the UI
+            /// `display_message()`.  Returns `None` when `id` is out of range.
+            pub fn get_sidecar_message(&self, id: usize) -> Option<(u64, String)> {
+                match self {
+                    $( Self::$b_arm(s) => s.get_sidecar_message(id), )*
+                    $( Self::$t_arm(s) => s.get_sidecar_message(id), )*
                 }
             }
 

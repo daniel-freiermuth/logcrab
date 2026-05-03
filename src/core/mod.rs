@@ -13,7 +13,7 @@ pub mod session;
 // pub use async_cache::AsyncCache;
 pub use chunked_loader::ChunkedLoader;
 pub use filter_worker::{FilterWorker, FilterWorkerHandle};
-pub use log_file::LogFileLoader;
+pub use log_file::{LogFileLoader, ScoringConfig};
 pub use log_store::LogStore;
 pub use search_rule::SearchRule;
 pub use search_state::SearchState;
