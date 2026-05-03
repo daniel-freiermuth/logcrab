@@ -14,18 +14,10 @@
 ///
 /// You should have received a copy of the GNU General Public License
 /// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-mod anomaly;
-mod config;
-mod core;
-mod filetype;
-mod input;
-mod parser;
-mod ui;
-
 use clap::Parser;
 use egui::IconData;
+use logcrab::ui::app::LogCrabApp;
 use std::path::PathBuf;
-use ui::app::LogCrabApp;
 
 #[cfg(feature = "ram-profiling")]
 #[global_allocator]

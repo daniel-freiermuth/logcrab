@@ -61,12 +61,13 @@ impl ProgressToastState {
 }
 
 /// A lightweight sender that lets any code (including background threads) enqueue
-/// standalone warning messages for display as persistent error toasts.
+/// toast messages for display on the next UI frame.
 ///
-/// Obtain one via [`ToastManager::sender`]. Multiple senders share the same queue.
+/// Obtain one via [`ToastManager::sender`]. Multiple senders share the same queues.
 #[derive(Clone)]
 pub struct ToastSender {
     queue: Arc<Mutex<Vec<String>>>,
+    success_queue: Arc<Mutex<Vec<String>>>,
     ctx: egui::Context,
 }
 
@@ -75,6 +76,15 @@ impl ToastSender {
     /// the next UI frame.
     pub fn send(&self, message: impl Into<String>) {
         if let Ok(mut q) = self.queue.lock() {
+            q.push(message.into());
+        }
+        self.ctx.request_repaint();
+    }
+
+    /// Enqueue `message` to be shown as a brief auto-closing success toast on
+    /// the next UI frame.
+    pub fn send_success(&self, message: impl Into<String>) {
+        if let Ok(mut q) = self.success_queue.lock() {
             q.push(message.into());
         }
         self.ctx.request_repaint();
@@ -88,21 +98,48 @@ impl ToastSender {
 #[derive(Clone)]
 pub struct ProgressToastHandle {
     state: Arc<RwLock<ProgressToastState>>,
+    /// Shared list of active progress toasts — kept so we can spawn sibling toasts.
+    progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
     ctx: egui::Context,
 }
 
 impl ProgressToastHandle {
-    fn new(ctx: egui::Context, title: String, message: String) -> Self {
+    fn new(
+        ctx: egui::Context,
+        progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
+        title: String,
+        message: String,
+    ) -> Self {
+        let state = Arc::new(RwLock::new(ProgressToastState {
+            title,
+            message,
+            progress: Some(0.0),
+            dismissed_at: None,
+            error: None,
+        }));
+        if let Ok(mut handles) = progress_handles.lock() {
+            handles.push(Arc::clone(&state));
+        }
         Self {
-            state: Arc::new(RwLock::new(ProgressToastState {
-                title,
-                message,
-                progress: Some(0.0),
-                dismissed_at: None,
-                error: None,
-            })),
+            state,
+            progress_handles,
             ctx,
         }
+    }
+
+    /// Create a new sibling progress toast that renders alongside this one.
+    /// Can be called from any thread.
+    pub fn spawn_sibling(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) -> ProgressToastHandle {
+        ProgressToastHandle::new(
+            self.ctx.clone(),
+            Arc::clone(&self.progress_handles),
+            title.into(),
+            message.into(),
+        )
     }
 
     /// Update the progress and message
@@ -154,8 +191,10 @@ pub struct ToastManager {
     toasts: Toasts,
     /// Active progress toast handles
     progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
-    /// Standalone notifications enqueued via [`ToastSender`].
+    /// Standalone error notifications enqueued via [`ToastSender`].
     pending_notifications: Arc<Mutex<Vec<String>>>,
+    /// Standalone success notifications enqueued via [`ToastSender::send_success`].
+    pending_successes: Arc<Mutex<Vec<String>>>,
     /// egui context for repaints
     ctx: egui::Context,
 }
@@ -171,6 +210,7 @@ impl ToastManager {
             toasts,
             progress_handles: Arc::new(Mutex::new(Vec::new())),
             pending_notifications: Arc::new(Mutex::new(Vec::new())),
+            pending_successes: Arc::new(Mutex::new(Vec::new())),
             ctx,
         }
     }
@@ -182,22 +222,20 @@ impl ToastManager {
         title: impl Into<String>,
         message: impl Into<String>,
     ) -> ProgressToastHandle {
-        let ctx = self.ctx.clone();
-        let handle = ProgressToastHandle::new(ctx, title.into(), message.into());
-
-        // Store reference to state for rendering
-        if let Ok(mut handles) = self.progress_handles.lock() {
-            handles.push(Arc::clone(&handle.state));
-        }
-
-        handle
+        ProgressToastHandle::new(
+            self.ctx.clone(),
+            Arc::clone(&self.progress_handles),
+            title.into(),
+            message.into(),
+        )
     }
 
-    /// Return a [`ToastSender`] that can enqueue standalone warning toasts from
-    /// any thread. Drained each frame inside [`Self::show`].
+    /// Return a [`ToastSender`] that can enqueue toasts from any thread.
+    /// Drained each frame inside [`Self::show`].
     pub fn sender(&self) -> ToastSender {
         ToastSender {
             queue: Arc::clone(&self.pending_notifications),
+            success_queue: Arc::clone(&self.pending_successes),
             ctx: self.ctx.clone(),
         }
     }
@@ -215,6 +253,16 @@ impl ToastManager {
         });
     }
 
+    /// Show a brief auto-closing success toast.
+    pub fn show_success(&mut self, message: impl Into<String>) {
+        self.toasts.add(Toast {
+            text: message.into().into(),
+            kind: ToastKind::Success,
+            options: ToastOptions::default().duration_in_seconds(4.0),
+            style: ToastStyle::default(),
+        });
+    }
+
     /// Render all toasts - call this in the update loop
     pub fn show(&mut self, ctx: &egui::Context) {
         // Promote any pending standalone notifications to persistent error toasts.
@@ -226,6 +274,16 @@ impl ToastManager {
             .unwrap_or_default();
         for msg in pending {
             self.show_error(msg);
+        }
+
+        // Drain success toasts enqueued from background threads.
+        let successes: Vec<String> = self
+            .pending_successes
+            .lock()
+            .map(|mut q| q.drain(..).collect())
+            .unwrap_or_default();
+        for msg in successes {
+            self.show_success(msg);
         }
 
         // Render progress toasts manually (not using egui-toast for these)
