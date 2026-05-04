@@ -305,7 +305,7 @@ impl Default for ColumnWidths {
             timestamp: 175.0,
             message: 0.0, // Will be calculated
             score: 70.0,
-            ml_score: 70.0,
+            ml_score: 90.0,
         }
     }
 }
@@ -380,8 +380,12 @@ impl LogTable {
         let header_height = ui.text_style_height(&egui::TextStyle::Heading);
         let body_height = available_height - header_height - 1.0;
 
-        // Calculate minimum message column width to fill remaining space
-        let other_cols_width = column_widths.source + column_widths.line + column_widths.timestamp;
+        // Calculate message column width: fill space not taken by other fixed columns
+        let other_cols_width = column_widths.source
+            + column_widths.line
+            + column_widths.timestamp
+            + column_widths.score
+            + column_widths.ml_score;
         let remainder = (available_width - other_cols_width).max(Self::MIN_MESSAGE_WIDTH);
 
         let mut table = TableBuilder::new(ui)
@@ -402,8 +406,8 @@ impl LogTable {
                     .resizable(true)
                     .clip(true),
             ) // Message
-            .column(Column::auto().clip(true)) // Score
-            .column(Column::auto().clip(true)); // ML Score
+            .column(Column::initial(column_widths.score).clip(true)) // Score
+            .column(Column::initial(column_widths.ml_score).clip(true)); // ML Score
 
         if let Some(row_idx) = scroll_to_row {
             table = table.scroll_to_row(row_idx, Some(egui::Align::Center));
