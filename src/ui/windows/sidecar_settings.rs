@@ -38,22 +38,27 @@ enum ConnectionStatus {
 
 impl SidecarSettingsWindow {
     pub fn open_with_config(config: &GlobalConfig) -> Self {
-        Self {
+        let mut window = Self {
             temp_host: config.sidecar_host.clone(),
             temp_port: config.sidecar_port.to_string(),
             connection_status: ConnectionStatus::Unknown,
             available_models: Vec::new(),
             models_loading: false,
             models_error: None,
+        };
+        // Probe the connection immediately so the UI is pre-populated on open.
+        window.test_connection();
+        if window.connection_status == ConnectionStatus::Connected {
+            window.load_models();
         }
+        window
     }
 
     /// Render the sidecar settings window.
     ///
-    /// Returns `Ok(true)` if settings were saved, `Err(())` if the window should close.
-    pub fn render(&mut self, ui: &mut Ui, config: &mut GlobalConfig) -> Result<bool, ()> {
-        let mut should_close = false;
-        let mut should_save = false;
+    /// Returns `true` when config was changed and should be persisted.
+    pub fn render(&mut self, ui: &mut Ui, config: &mut GlobalConfig) -> bool {
+        let mut changed = false;
 
         ui.heading("Sidecar Settings");
         ui.separator();
@@ -66,15 +71,21 @@ impl SidecarSettingsWindow {
             ui.label(RichText::new("Server Configuration").strong());
             ui.add_space(5.0);
 
-            ui.horizontal(|ui| {
+            let host_changed = ui.horizontal(|ui| {
                 ui.label("Host:");
-                ui.text_edit_singleline(&mut self.temp_host);
-            });
+                ui.text_edit_singleline(&mut self.temp_host)
+            }).inner.changed();
 
-            ui.horizontal(|ui| {
+            let port_changed = ui.horizontal(|ui| {
                 ui.label("Port:");
-                ui.text_edit_singleline(&mut self.temp_port);
-            });
+                ui.text_edit_singleline(&mut self.temp_port)
+            }).inner.changed();
+
+            if host_changed || port_changed {
+                if self.apply_settings(config) {
+                    changed = true;
+                }
+            }
 
             ui.add_space(5.0);
 
@@ -104,6 +115,8 @@ impl SidecarSettingsWindow {
 
         // Model selection (only when connected)
         if self.connection_status == ConnectionStatus::Connected {
+            let prev_model = config.selected_model.clone();
+
             ui.group(|ui| {
                 ui.label(RichText::new("Model Selection").strong());
                 ui.add_space(5.0);
@@ -188,43 +201,19 @@ impl SidecarSettingsWindow {
                 }
             });
 
+            if config.selected_model != prev_model {
+                changed = true;
+            }
+
             ui.add_space(10.0);
         }
 
-        // Enable/Disable scoring options
-        ui.checkbox(
-            &mut config.use_sidecar_scoring,
-            "Enable sidecar anomaly scoring",
-        );
-        ui.checkbox(
-            &mut config.color_by_ml_score,
-            "Color logs by ML anomaly score",
-        );
-
-        ui.add_space(10.0);
-
-        // Buttons
-        ui.horizontal(|ui| {
-            if ui.button("Save").clicked() {
-                if self.apply_settings(config) {
-                    should_save = true;
-                    should_close = true;
-                }
-            }
-
-            if ui.button("Cancel").clicked() {
-                should_close = true;
-            }
-        });
-
-        if should_close {
-            Err(())
-        } else {
-            Ok(should_save)
-        }
+        changed
     }
 
     fn test_connection(&mut self) {
+        self.available_models.clear();
+        self.models_error = None;
         let Ok(port) = self.temp_port.parse::<u16>() else {
             self.connection_status =
                 ConnectionStatus::Failed("Invalid port number".to_string());
