@@ -399,6 +399,16 @@ impl LogCrabApp {
                 ui.separator();
             }
 
+            if ui.button("Sidecar Settings...").clicked() {
+                self.sidecar_settings_window =
+                    Some(windows::SidecarSettingsWindow::open_with_config(
+                        &self.global_config,
+                    ));
+                ui.close();
+            }
+
+            ui.separator();
+
             if ui.button("Quit").clicked() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -481,29 +491,10 @@ impl LogCrabApp {
 
             if ui
                 .checkbox(
-                    &mut self.global_config.use_sidecar_scoring,
-                    "Use LogBERT Sidecar Scoring",
-                )
-                .on_hover_text(
-                    "Use machine learning model for anomaly detection (requires Python sidecar)",
-                )
-                .changed()
-            {
-                if let Err(e) = self.global_config.save() {
-                    tracing::error!("Failed to save config: {e}");
-                }
-                // Update store config so new files use the latest setting
-                if let Some(ref session) = self.session {
-                    self.apply_sidecar_config_to_store(&session.state.store);
-                }
-            }
-
-            if ui
-                .checkbox(
                     &mut self.global_config.color_by_ml_score,
                     "Color by ML Score",
                 )
-                .on_hover_text("Color log lines by ML score instead of legacy scorer")
+                .on_hover_text("Color log lines by ML anomaly score instead of local heuristic scorer")
                 .changed()
             {
                 let new_val = self.global_config.color_by_ml_score;
@@ -521,13 +512,6 @@ impl LogCrabApp {
             }
             if ui.button("Keyboard Shortcuts").clicked() {
                 self.show_shortcuts_window = true;
-                ui.close();
-            }
-            if ui.button("Sidecar Settings").clicked() {
-                self.sidecar_settings_window =
-                    Some(windows::SidecarSettingsWindow::open_with_config(
-                        &self.global_config,
-                    ));
                 ui.close();
             }
             ui.separator();
@@ -760,35 +744,35 @@ impl eframe::App for LogCrabApp {
 
         // Show sidecar settings window
         {
-            let mut close_sidecar_window = false;
-
             if let Some(mut sidecar_window) = self.sidecar_settings_window.take() {
+                let mut open = true;
                 egui::Window::new("Sidecar Settings")
                     .collapsible(false)
                     .resizable(true)
+                    .open(&mut open)
                     .show(ctx, |ui| {
-                        match sidecar_window.render(ui, &mut self.global_config) {
-                            Ok(should_save) => {
-                                if should_save {
-                                    if let Err(e) = self.global_config.save() {
-                                        tracing::error!("Failed to save config: {e}");
-                                    }
-                                    // Update store with new sidecar config
-                                    if let Some(ref session) = self.session {
-                                        self.apply_sidecar_config_to_store(
-                                            &session.state.store,
-                                        );
-                                    }
-                                    close_sidecar_window = true;
-                                }
+                        if sidecar_window.render(ui, &mut self.global_config) {
+                            let host = self.global_config.sidecar_host.clone();
+                            let port = self.global_config.sidecar_port;
+                            let use_sidecar = self.global_config.use_sidecar_scoring;
+                            let model = self.global_config.selected_model.clone();
+                            match GlobalConfig::update(|c| {
+                                c.sidecar_host = host;
+                                c.sidecar_port = port;
+                                c.use_sidecar_scoring = use_sidecar;
+                                c.selected_model = model;
+                            }) {
+                                Ok(updated) => self.global_config = updated,
+                                Err(e) => tracing::error!("Failed to update config: {e}"),
                             }
-                            Err(()) => {
-                                close_sidecar_window = true;
+                            // Update store with new sidecar config
+                            if let Some(ref session) = self.session {
+                                self.apply_sidecar_config_to_store(&session.state.store);
                             }
                         }
                     });
 
-                if !close_sidecar_window {
+                if open {
                     self.sidecar_settings_window = Some(sidecar_window);
                 }
             }
