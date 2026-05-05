@@ -282,26 +282,25 @@ impl FilterView {
                     let search_text = self.state.search.search_text.clone();
                     let case_sensitive = self.state.search.case_sensitive;
 
-                    // Check if this filter is already a favorite
-                    if let Some(pos) = global_config.favorite_filters.iter().position(|f| {
-                        f.search_text == search_text && f.case_sensitive == case_sensitive
-                    }) {
-                        // Remove from favorites
-                        global_config.favorite_filters.remove(pos);
-                        tracing::info!("Removed favorite: '{search_text}'");
-                    } else {
-                        // Add to favorites
-                        global_config
-                            .favorite_filters
-                            .push(crate::config::FavoriteFilter::new(
-                                search_text,
+                    // Save global config
+                    match GlobalConfig::update(|c| {
+                        let pos = c.favorite_filters.iter().position(|f| {
+                            f.search_text == search_text && f.case_sensitive == case_sensitive
+                        });
+                        if let Some(pos) = pos {
+                            c.favorite_filters.remove(pos);
+                            tracing::info!("Removed favorite: '{search_text}'");
+                        } else {
+                            c.favorite_filters.push(crate::config::FavoriteFilter::new(
+                                search_text.clone(),
                                 case_sensitive,
                             ));
-                        tracing::info!("Added favorite: '{}'", self.state.search.search_text);
+                            tracing::info!("Added favorite: '{search_text}'");
+                        }
+                    }) {
+                        Ok(updated) => *global_config = updated,
+                        Err(e) => tracing::error!("Failed to save config: {e}"),
                     }
-
-                    // Save global config
-                    let _ = global_config.save();
                 }
                 FilterViewEvent::ConvertToHighlight => {
                     // Request conversion to highlight - LogView will handle it and close this tab

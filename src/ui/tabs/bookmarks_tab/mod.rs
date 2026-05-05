@@ -21,6 +21,7 @@ pub mod bookmark_panel;
 pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
 use crate::{
+    config::GlobalConfig,
     core::{log_store::StoreID, SavedFilter},
     input::ShortcutAction,
     ui::{
@@ -291,9 +292,10 @@ impl LogCrabTab for BookmarksView {
                 .on_hover_text("Show bookmarks as markers in timeline")
                 .changed()
             {
-                // Save config when changed
-                if let Err(e) = global_config.save() {
-                    tracing::error!("Failed to save config: {e}");
+                let new_val = global_config.show_bookmarks_in_timeline;
+                match GlobalConfig::update(|c| c.show_bookmarks_in_timeline = new_val) {
+                    Ok(updated) => *global_config = updated,
+                    Err(e) => tracing::error!("Failed to save config: {e}"),
                 }
             }
             ui.label("Show in Timeline");

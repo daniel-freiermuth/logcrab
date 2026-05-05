@@ -18,8 +18,10 @@
 
 use crate::core::SearchRule;
 use crate::input::ShortcutAction;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 /// DLT timestamp source configuration
@@ -141,121 +143,160 @@ impl GlobalConfig {
         })
     }
 
-    /// Load global config from disk.
+    /// Parse config JSON into a `GlobalConfig`, handling version probing and migration.
+    ///
+    /// Returns `Self::default()` (or a read-only default) on any error.
+    fn parse_contents(contents: &str) -> Self {
+        #[derive(Deserialize)]
+        struct VersionProbe {
+            schema_version: Option<u32>,
+        }
+        let file_version = serde_json::from_str::<VersionProbe>(contents)
+            .map(|p| p.schema_version.unwrap_or(0))
+            .unwrap_or(0);
+
+        if file_version > SCHEMA_VERSION {
+            tracing::warn!(
+                "Config schema version {} is newer than this binary's {} — \
+                 using defaults (read-only: will not overwrite)",
+                file_version,
+                SCHEMA_VERSION
+            );
+            return Self {
+                read_only: true,
+                ..Self::default()
+            };
+        }
+
+        // v0 = old binary that never wrote schema_version: inject the field
+        // so the struct can deserialize without losing any existing settings.
+        let parse_result: Option<Self> = if file_version == 0 {
+            tracing::info!("Config has no schema_version, treating as v0 and migrating");
+            serde_json::from_str::<serde_json::Value>(contents)
+                .ok()
+                .and_then(|mut v| {
+                    v.as_object_mut()?.insert(
+                        "schema_version".to_string(),
+                        serde_json::json!(0u32),
+                    );
+                    serde_json::from_value::<Self>(v).ok()
+                })
+        } else {
+            serde_json::from_str::<Self>(contents).ok()
+        };
+
+        match parse_result {
+            None => {
+                tracing::warn!("Failed to parse config, using defaults");
+                Self::default()
+            }
+            Some(mut config) => {
+                if config.schema_version < SCHEMA_VERSION {
+                    // Placeholder for future field-level migrations.
+                    tracing::info!(
+                        "Migrated config from schema v{} to v{}",
+                        config.schema_version,
+                        SCHEMA_VERSION
+                    );
+                    config.schema_version = SCHEMA_VERSION;
+                }
+                tracing::info!(
+                    "Loaded {} shortcuts and {} favorite filters",
+                    config.shortcuts.len(),
+                    config.favorite_filters.len()
+                );
+                config
+            }
+        }
+    }
+
+    /// Load global config from disk at startup.
     ///
     /// - **Missing `schema_version`**: treated as v0, migrated to current.
     /// - **version < current**: deserialized, then migration logic runs.
     /// - **version == current**: deserialized as-is.
     /// - **version > current**: falls back to defaults with `read_only = true`
-    ///   so `save()` will not overwrite the newer-version file.
+    ///   so `update()` will not overwrite the newer-version file.
     pub fn load() -> Self {
         if let Some(path) = Self::config_path() {
             if path.exists() {
                 tracing::info!("Loading global config from {}", path.display());
                 match std::fs::read_to_string(&path) {
-                    Err(e) => {
-                        tracing::warn!("Failed to read config file: {e}");
-                    }
-                    Ok(contents) => {
-                        // Peek at just the version field first — works even if
-                        // the rest of the schema changed completely.
-                        #[derive(Deserialize)]
-                        struct VersionProbe {
-                            schema_version: Option<u32>,
-                        }
-                        let file_version = serde_json::from_str::<VersionProbe>(&contents)
-                            .map(|p| p.schema_version.unwrap_or(0))
-                            .unwrap_or(0);
-
-                        if file_version > SCHEMA_VERSION {
-                            tracing::warn!(
-                                "Config schema version {} is newer than this binary's {} — \
-                                 using defaults (read-only: will not overwrite)",
-                                file_version,
-                                SCHEMA_VERSION
-                            );
-                            return Self {
-                                read_only: true,
-                                ..Self::default()
-                            };
-                        }
-
-                        // v0 = old binary that never wrote schema_version: inject
-                        // the field so the struct deserializes without error.
-                        let parse_result = if file_version == 0 {
-                            tracing::info!(
-                                "Config has no schema_version, treating as v0 and migrating"
-                            );
-                            serde_json::from_str::<serde_json::Value>(&contents)
-                                .ok()
-                                .and_then(|mut v| {
-                                    v.as_object_mut()?.insert(
-                                        "schema_version".to_string(),
-                                        serde_json::json!(0u32),
-                                    );
-                                    serde_json::from_value::<Self>(v).ok()
-                                })
-                        } else {
-                            serde_json::from_str::<Self>(&contents).ok()
-                        };
-
-                        match parse_result {
-                            None => {
-                                tracing::warn!("Failed to parse config, using defaults");
-                            }
-                            Some(mut config) => {
-                                if config.schema_version < SCHEMA_VERSION {
-                                    // Placeholder for future field migrations.
-                                    tracing::info!(
-                                        "Migrated config from schema v{} to v{}",
-                                        config.schema_version,
-                                        SCHEMA_VERSION
-                                    );
-                                    config.schema_version = SCHEMA_VERSION;
-                                }
-                                tracing::info!(
-                                    "Loaded {} shortcuts and {} favorite filters",
-                                    config.shortcuts.len(),
-                                    config.favorite_filters.len()
-                                );
-                                return config;
-                            }
-                        }
-                    }
+                    Err(e) => tracing::warn!("Failed to read config file: {e}"),
+                    Ok(contents) => return Self::parse_contents(&contents),
                 }
             } else {
                 tracing::info!("No global config found, using defaults");
             }
         }
-
         Self::default()
     }
 
-    /// Save global config to disk.
+    /// Atomically update the on-disk config.
     ///
-    /// Returns `Ok(())` without writing when `read_only` is set (config was
-    /// loaded from a newer-version file that must not be overwritten).
-    pub fn save(&self) -> Result<(), String> {
-        if self.read_only {
-            tracing::warn!("Config is read-only (on-disk version is newer) — skipping save");
-            return Ok(());
-        }
+    /// Acquires an exclusive advisory lock on the config file, re-reads the
+    /// current on-disk state, applies `f`, writes back, and releases the lock.
+    /// Concurrent instances will block on the lock rather than interleaving
+    /// their read-modify-write cycles.
+    ///
+    /// When the config is read-only (on-disk version is newer than this
+    /// binary), `f` is applied only to the in-memory state and no write
+    /// occurs, preserving the session's in-memory settings without touching
+    /// the file.
+    ///
+    /// Returns the updated config so the caller can replace its cached copy.
+    pub fn update(f: impl FnOnce(&mut GlobalConfig)) -> Result<GlobalConfig, String> {
         let path = Self::config_path().ok_or("Could not determine config directory")?;
 
-        // Create directory if it doesn't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {e}"))?;
         }
 
-        // Serialize to JSON
-        let json = serde_json::to_string_pretty(self)
+        // Open or create the file and hold an exclusive lock for the entire
+        // read-modify-write cycle.
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)
+            .map_err(|e| format!("Failed to open config file: {e}"))?;
+
+        file.lock_exclusive()
+            .map_err(|e| format!("Failed to lock config file: {e}"))?;
+
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .map_err(|e| format!("Failed to read config file: {e}"))?;
+
+        let mut config = if contents.is_empty() {
+            Self::default()
+        } else {
+            Self::parse_contents(&contents)
+        };
+
+        // Apply the caller's mutation. For read-only configs we still apply
+        // in-memory so the current session reflects the change.
+        f(&mut config);
+
+        if config.read_only {
+            tracing::warn!("Config is read-only (on-disk version is newer) — changes not persisted");
+            file.unlock().ok();
+            return Ok(config);
+        }
+
+        let json = serde_json::to_string_pretty(&config)
             .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
-        // Write to file
-        std::fs::write(&path, json).map_err(|e| format!("Failed to write config file: {e}"))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|e| format!("Failed to seek config file: {e}"))?;
+        file.set_len(0)
+            .map_err(|e| format!("Failed to truncate config file: {e}"))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write config file: {e}"))?;
 
-        tracing::info!("Saved global config to {}", path.display());
-        Ok(())
+        // Lock releases when `file` is dropped here.
+        tracing::info!("Updated global config");
+        Ok(config)
     }
 }

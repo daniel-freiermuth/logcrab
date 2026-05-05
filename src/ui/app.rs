@@ -175,8 +175,11 @@ impl LogCrabApp {
         if let Some(paths) = dialog.pick_files() {
             if let Some(first) = paths.first() {
                 if let Some(parent) = first.parent() {
-                    self.global_config.last_log_directory = Some(parent.to_path_buf());
-                    let _ = self.global_config.save();
+                    let dir = parent.to_path_buf();
+                    match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
+                        Ok(updated) => self.global_config = updated,
+                        Err(e) => tracing::error!("Failed to update config: {e}"),
+                    }
                 }
             }
 
@@ -201,8 +204,11 @@ impl LogCrabApp {
             // Remember the directory from the first file
             if let Some(first) = paths.first() {
                 if let Some(parent) = first.parent() {
-                    self.global_config.last_log_directory = Some(parent.to_path_buf());
-                    let _ = self.global_config.save();
+                    let dir = parent.to_path_buf();
+                    match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
+                        Ok(updated) => self.global_config = updated,
+                        Err(e) => tracing::error!("Failed to update config: {e}"),
+                    }
                 }
             }
 
@@ -318,8 +324,11 @@ impl LogCrabApp {
 
                     if let Some(path) = dialog.save_file() {
                         if let Some(parent) = path.parent() {
-                            self.global_config.last_filters_directory = Some(parent.to_path_buf());
-                            let _ = self.global_config.save();
+                            let dir = parent.to_path_buf();
+                            match GlobalConfig::update(|c| c.last_filters_directory = Some(dir)) {
+                                Ok(updated) => self.global_config = updated,
+                                Err(e) => tracing::error!("Failed to update config: {e}"),
+                            }
                         }
                         match log_view.export_filters(&path) {
                             Ok(()) => tracing::info!("Filters exported successfully"),
@@ -341,9 +350,11 @@ impl LogCrabApp {
                         // Remember the directory from the first file
                         if let Some(first) = paths.first() {
                             if let Some(parent) = first.parent() {
-                                self.global_config.last_filters_directory =
-                                    Some(parent.to_path_buf());
-                                let _ = self.global_config.save();
+                                let dir = parent.to_path_buf();
+                                match GlobalConfig::update(|c| c.last_filters_directory = Some(dir)) {
+                                    Ok(updated) => self.global_config = updated,
+                                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                                }
                             }
                         }
                         for path in paths {
@@ -402,9 +413,10 @@ impl LogCrabApp {
                 )
                 .changed()
             {
-                // Save config when changed
-                if let Err(e) = self.global_config.save() {
-                    tracing::error!("Failed to save config: {e}");
+                let new_val = self.global_config.show_bookmarks_in_timeline;
+                match GlobalConfig::update(|c| c.show_bookmarks_in_timeline = new_val) {
+                    Ok(updated) => self.global_config = updated,
+                    Err(e) => tracing::error!("Failed to update config: {e}"),
                 }
             }
 
@@ -420,17 +432,20 @@ impl LogCrabApp {
                 } else {
                     ctx.set_visuals(egui::Visuals::dark());
                 }
-                // Save config when changed
-                if let Err(e) = self.global_config.save() {
-                    tracing::error!("Failed to save config: {e}");
+                let new_val = self.global_config.bright_mode;
+                match GlobalConfig::update(|c| c.bright_mode = new_val) {
+                    Ok(updated) => self.global_config = updated,
+                    Err(e) => tracing::error!("Failed to update config: {e}"),
                 }
             }
 
             ui.separator();
 
             if self.global_config.file_config.render(ui) {
-                if let Err(e) = self.global_config.save() {
-                    tracing::error!("Failed to save config: {e}");
+                let new_fc = self.global_config.file_config.clone();
+                match GlobalConfig::update(|c| c.file_config = new_fc) {
+                    Ok(updated) => self.global_config = updated,
+                    Err(e) => tracing::error!("Failed to update config: {e}"),
                 }
                 if let Some(ref mut session) = self.session {
                     session
@@ -564,7 +579,11 @@ impl LogCrabApp {
         if shortcuts_changed {
             self.shortcut_bindings
                 .save_to_config(&mut self.global_config);
-            let _ = self.global_config.save();
+            let new_shortcuts = self.global_config.shortcuts.clone();
+            match GlobalConfig::update(|c| c.shortcuts = new_shortcuts) {
+                Ok(updated) => self.global_config = updated,
+                Err(e) => tracing::error!("Failed to update config: {e}"),
+            }
         }
 
         if let Some(ref mut log_view) = self.session {
