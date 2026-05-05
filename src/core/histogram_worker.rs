@@ -47,6 +47,8 @@ pub struct AnomalyDistribution {
 #[derive(Clone)]
 pub struct HistogramRequest {
     pub key: HistogramCacheKey,
+    /// Whether to use ML sidecar score instead of heuristic score
+    pub color_by_ml_score: bool,
     /// Unique identifier for the filter this histogram belongs to
     pub filter_id: usize,
     /// The log store to read from
@@ -70,6 +72,8 @@ pub struct HistogramCacheKey {
     /// Zoom range in milliseconds (for cache invalidation)
     /// None means full range
     pub zoom_range_ms: Option<(i64, i64)>,
+    /// Whether to use ML sidecar score instead of heuristic score
+    pub color_by_ml_score: bool,
 }
 
 /// Result from background histogram computation
@@ -246,7 +250,7 @@ impl HistogramWorker {
         };
 
         let (buckets, anomaly_buckets) =
-            Self::create_buckets(store, &zoomed_indices, start_time, bucket_size);
+            Self::create_buckets(store, &zoomed_indices, start_time, bucket_size, request.color_by_ml_score);
 
         HistogramResult {
             cache_key: request.key.clone(),
@@ -286,6 +290,7 @@ impl HistogramWorker {
         filtered_indices: &[StoreID],
         start_time: DateTime<Local>,
         bucket_size: Duration,
+        color_by_ml_score: bool,
     ) -> (Vec<usize>, Vec<AnomalyDistribution>) {
         profiling::scope!("Histogram::create_buckets");
         let mut buckets = vec![0usize; NUM_BUCKETS];
@@ -299,8 +304,13 @@ impl HistogramWorker {
                 let bucket_idx = Self::timestamp_to_bucket(ts, start_time, bucket_size);
                 buckets[bucket_idx] += 1;
 
-                // Use anomaly_score from the line
-                let line_score = line.anomaly_score / 100.0;
+                // Use ML score if enabled and available, otherwise fall back to heuristic
+                let raw_score = if color_by_ml_score && line.sidecar_scored {
+                    line.sidecar_anomaly_score
+                } else {
+                    line.anomaly_score
+                };
+                let line_score = raw_score / 100.0;
                 // Determine which score bucket this falls into
                 let score_bucket =
                     ((line_score * SCORE_BUCKETS as f64).floor() as usize).min(SCORE_BUCKETS - 1);

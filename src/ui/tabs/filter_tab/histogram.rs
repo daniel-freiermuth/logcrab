@@ -172,6 +172,7 @@ impl HistogramCache {
             zoom_range,
             result_tx: self.result_tx.clone(),
             key: cache_key.clone(),
+            color_by_ml_score: cache_key.color_by_ml_score,
         };
 
         worker.send_request(request);
@@ -194,6 +195,7 @@ impl Histogram {
         markers: &[HistogramMarker],
         filter_state: &mut FilterState,
         worker: &HistogramWorkerHandle,
+        color_by_ml_score: bool,
     ) -> Option<HistogramClickEvent> {
         profiling::scope!("Histogram::render");
 
@@ -224,6 +226,7 @@ impl Histogram {
             exclude_str,
             case_sensitive: indices_case,
             zoom_range_ms,
+            color_by_ml_score,
         };
 
         // Poll for any completed results

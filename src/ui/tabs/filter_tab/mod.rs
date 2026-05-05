@@ -198,6 +198,7 @@ impl FilterView {
                 histogram_markers,
                 &mut self.state,
                 &log_view_state.histogram_worker,
+                global_config.color_by_ml_score,
             )
         };
         if let Some(hist_event) = hist_event {
