@@ -126,7 +126,6 @@ Example response:
       "architecture": "temporal_logbert",
       "kind": "sequence_anomaly",
       "version": "2026-04-14",
-      "status": "ready",
       "input_mode": "ordered_lines",
       "training_corpus": {
         "filter_profile": "android-errors-v1",

@@ -76,7 +76,6 @@ pub struct ModelInfo {
     pub architecture: String,
     pub kind: String,
     pub version: String,
-    pub status: String,
     pub input_mode: String,
     pub training_corpus: TrainingCorpus,
     pub chunk_policy: ChunkPolicy,

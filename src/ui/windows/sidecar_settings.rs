@@ -179,7 +179,6 @@ impl SidecarSettingsWindow {
                         ui.label(RichText::new("Model Details:").weak());
                         ui.label(format!("Architecture: {}", model.architecture));
                         ui.label(format!("Version: {}", model.version));
-                        ui.label(format!("Status: {}", model.status));
 
                         let norm_versions = crate::core::log_store::all_normalization_versions();
                         let mismatches = normalization_mismatches(model, &norm_versions);
