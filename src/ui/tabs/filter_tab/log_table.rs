@@ -325,6 +325,7 @@ impl LogTable {
         closest_row_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         color_by_ml_score: bool,
+        grey_rare_ml_lines: bool,
         model_is_active: bool,
     ) -> Vec<LogTableEvent> {
         profiling::scope!("LogTable::render");
@@ -361,6 +362,7 @@ impl LogTable {
                     &mut filter.column_widths,
                     filter.timestamp_mode,
                     color_by_ml_score,
+                    grey_rare_ml_lines,
                     model_is_active,
                 );
             });
@@ -431,6 +433,7 @@ impl LogTable {
         column_widths: &mut ColumnWidths,
         timestamp_mode: TimestampMode,
         color_by_ml_score: bool,
+        grey_rare_ml_lines: bool,
         model_is_active: bool,
     ) {
         table
@@ -452,6 +455,7 @@ impl LogTable {
                     dark_mode,
                     timestamp_mode,
                     color_by_ml_score,
+                    grey_rare_ml_lines,
                     model_is_active,
                 );
             });
@@ -511,6 +515,7 @@ impl LogTable {
         dark_mode: bool,
         timestamp_mode: TimestampMode,
         color_by_ml_score: bool,
+        grey_rare_ml_lines: bool,
         model_is_active: bool,
     ) {
         let visible_lines = filtered_indices.len();
@@ -546,6 +551,7 @@ impl LogTable {
                 timestamp_mode,
                 prev_row_timestamp,
                 color_by_ml_score,
+                grey_rare_ml_lines,
                 model_is_active,
             );
 
@@ -579,6 +585,7 @@ impl LogTable {
         timestamp_mode: TimestampMode,
         prev_row_timestamp: Option<DateTime<Local>>,
         color_by_ml_score: bool,
+        grey_rare_ml_lines: bool,
         model_is_active: bool,
     ) -> Option<LogTableEvent> {
         let row_index = row.index();
@@ -604,7 +611,11 @@ impl LogTable {
             && selected_line_index.is_some();
         let color = if color_by_ml_score {
             if line.sidecar_scored {
-                score_to_color(line.sidecar_anomaly_score, dark_mode)
+                if grey_rare_ml_lines && line.sidecar_score_is_rare {
+                    score_to_color(0.0, dark_mode)
+                } else {
+                    score_to_color(line.sidecar_anomaly_score, dark_mode)
+                }
             } else {
                 score_to_color(0.0, dark_mode)
             }

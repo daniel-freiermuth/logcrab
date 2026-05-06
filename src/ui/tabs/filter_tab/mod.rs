@@ -225,6 +225,7 @@ impl FilterView {
                 closest_row_index,
                 all_filter_highlights,
                 global_config.color_by_ml_score,
+                global_config.grey_rare_ml_lines,
                 model_is_active,
             )
         };

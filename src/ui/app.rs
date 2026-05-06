@@ -503,6 +503,23 @@ impl LogCrabApp {
                     Err(e) => tracing::error!("Failed to update config: {e}"),
                 }
             }
+
+            if self.global_config.color_by_ml_score {
+                if ui
+                    .checkbox(
+                        &mut self.global_config.grey_rare_ml_lines,
+                        "Grey out rare lines",
+                    )
+                    .on_hover_text("Show RARE-flagged lines in grey instead of their scored color (rare = in-corpus but seen < min_count times in training)")
+                    .changed()
+                {
+                    let new_val = self.global_config.grey_rare_ml_lines;
+                    match GlobalConfig::update(|c| c.grey_rare_ml_lines = new_val) {
+                        Ok(updated) => self.global_config = updated,
+                        Err(e) => tracing::error!("Failed to update config: {e}"),
+                    }
+                }
+            }
         });
 
         ui.menu_button("Help", |ui| {

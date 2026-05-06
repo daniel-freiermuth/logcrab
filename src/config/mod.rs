@@ -90,6 +90,10 @@ pub struct GlobalConfig {
     #[serde(default)]
     pub color_by_ml_score: bool,
 
+    /// In ML score coloring mode, show rare (RARE-flagged) lines in grey instead of their scored color (default: true)
+    #[serde(default = "default_grey_rare_ml_lines")]
+    pub grey_rare_ml_lines: bool,
+
     /// Sidecar server host
     #[serde(default = "default_sidecar_host")]
     pub sidecar_host: String,
@@ -112,6 +116,10 @@ const fn default_sidecar_port() -> u16 {
     crate::anomaly::sidecar_client::SidecarClient::default_port()
 }
 
+const fn default_grey_rare_ml_lines() -> bool {
+    true
+}
+
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
@@ -126,6 +134,7 @@ impl Default for GlobalConfig {
             show_bookmarks_in_timeline: false,
             use_sidecar_scoring: false,
             color_by_ml_score: false,
+            grey_rare_ml_lines: true,
             sidecar_host: default_sidecar_host(),
             sidecar_port: default_sidecar_port(),
             selected_model: None,

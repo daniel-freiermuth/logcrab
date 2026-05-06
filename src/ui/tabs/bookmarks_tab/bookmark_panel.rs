@@ -102,6 +102,7 @@ impl BookmarkPanel {
         closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         color_by_ml_score: bool,
+        grey_rare_ml_lines: bool,
     ) -> Vec<BookmarkPanelEvent> {
         let mut events = Vec::new();
 
@@ -126,6 +127,7 @@ impl BookmarkPanel {
                     closest_bookmark_index,
                     all_filter_highlights,
                     color_by_ml_score,
+                    grey_rare_ml_lines,
                     &mut events,
                 );
             });
@@ -151,6 +153,7 @@ impl BookmarkPanel {
         closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         color_by_ml_score: bool,
+        grey_rare_ml_lines: bool,
         events: &mut Vec<BookmarkPanelEvent>,
     ) {
         let available_height = ui.available_height();
@@ -212,6 +215,7 @@ impl BookmarkPanel {
                         closest_bookmark_index,
                         all_filter_highlights,
                         color_by_ml_score,
+                        grey_rare_ml_lines,
                         events,
                         dark_mode,
                     );
@@ -228,6 +232,7 @@ impl BookmarkPanel {
         closest_bookmark_index: Option<usize>,
         all_filter_highlights: &[FilterHighlight],
         color_by_ml_score: bool,
+        grey_rare_ml_lines: bool,
         events: &mut Vec<BookmarkPanelEvent>,
         dark_mode: bool,
     ) {
@@ -258,7 +263,11 @@ impl BookmarkPanel {
 
         let color = if color_by_ml_score {
             if line.sidecar_scored {
-                score_to_color(line.sidecar_anomaly_score, dark_mode)
+                if grey_rare_ml_lines && line.sidecar_score_is_rare {
+                    score_to_color(0.0, dark_mode)
+                } else {
+                    score_to_color(line.sidecar_anomaly_score, dark_mode)
+                }
             } else {
                 score_to_color(0.0, dark_mode)
             }
