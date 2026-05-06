@@ -44,6 +44,17 @@ struct Args {
 }
 
 fn main() -> eframe::Result<()> {
+    println!(
+        r#"
+    __                ______           __         /^\   /^\
+   / /   ____  ____ _/ ____/________ _/ /_       | o | | o |
+  / /   / __ \/ __ `/ /   / ___/ __ `/ __ \     < `-----' >
+ / /___/ /_/ / /_/ / /___/ /  / /_/ / /_/ /      \________/
+/_____/\____/\__, /\____/_/   \__,_/_.___/       /|      |\
+            /____/                              / |______| \
+"#
+    );
+
     // Initialize tracing subscriber with millisecond precision timestamps.
     // Set RUST_LOG environment variable to override (e.g., RUST_LOG=debug)
     tracing_subscriber::fmt()
