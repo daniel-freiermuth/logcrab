@@ -37,7 +37,13 @@ pub enum DltTimestampSource {
 /// Current schema version. Bump this whenever the config format changes in a
 /// backwards-incompatible way. Old binaries that don't know this version will
 /// fall back to defaults on load rather than silently corrupting the file.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// History:
+///   unversioned (v0) — no `schema_version` field
+///   v1 — initial versioned schema
+///   v2 — added sidecar scoring fields: `use_sidecar_scoring`, `color_by_ml_score`,
+///         `grey_rare_ml_lines`, `sidecar_host`, `sidecar_port`, `selected_model`
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Global user configuration stored in config directory
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,7 +241,8 @@ impl GlobalConfig {
             }
             Some(mut config) => {
                 if config.schema_version < SCHEMA_VERSION {
-                    // Placeholder for future field-level migrations.
+                    // v1 → v2: sidecar scoring fields added with serde defaults;
+                    // no explicit field changes needed — serde already populated them.
                     tracing::info!(
                         "Migrated config from schema v{} to v{}",
                         config.schema_version,
