@@ -16,29 +16,49 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Sidecar client for LogBERT anomaly detection — V1 WebSocket protocol.
+//! Sidecar client — V2 gRPC protocol.
 //!
-//! HTTP endpoints (`GET /v1/health`, `GET /v1/models`) use `reqwest` blocking.
-//! Scoring uses a WebSocket connection (`WS /v1/score-stream`).
+//! All three unary RPCs (`Health`, `ListModels`, `SubmitSample`) block the
+//! calling thread via `Runtime::block_on`.  The bidirectional streaming
+//! `ScoreStream` RPC also uses `block_on` for the scoring phase; the optional
+//! explain phase is driven by a background thread that reuses the same tokio
+//! runtime handle via `Arc<Runtime>`.
+//!
+//! The public API (struct names, method signatures, `ExplainSession`,
+//! `ExplainPollStatus`) is identical to the V1 WebSocket client so that the
+//! rest of the codebase requires zero changes.
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::TcpStream;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
-use tungstenite::Message;
+use tokio_stream::wrappers::UnboundedReceiverStream;
+
+// ── Proto generated code ──────────────────────────────────────────────────────
+
+pub mod proto {
+    tonic::include_proto!("sidecar.v2");
+}
+
+use proto::{
+    score_stream_client_message::Payload as ClientPayload,
+    score_stream_server_message::Payload as ServerPayload,
+    sidecar_client::SidecarClient as GrpcClient,
+    *,
+};
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_PORT: u16 = 8765;
 const DEFAULT_HOST: &str = "127.0.0.1";
 
-/// Lines per `LinesFrame` sent to the sidecar. Matches the typical model
-/// `recommended_lines_per_chunk` without needing to parse the model info first.
+/// Lines per `LinesFrame` sent to the sidecar.
 const LINES_PER_CHUNK: usize = 512;
 
-// ── HTTP response types ──────────────────────────────────────────────────────
+// ── Public data types (identical API to V1) ───────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthResponse {
     pub api_version: String,
     pub status: String,
@@ -48,7 +68,6 @@ pub struct HealthResponse {
 pub struct TrainingCorpus {
     pub filter_profile: String,
     pub description: String,
-    /// Filetype slug → normalisation version the training data was built with.
     pub normalization_versions: HashMap<String, u32>,
 }
 
@@ -67,12 +86,9 @@ pub struct OutputInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
-    /// Stable machine-readable slug, used as `model_id` in the scoring protocol.
     pub id: String,
-    /// Human-readable label describing the model and its training domain.
     #[serde(alias = "display_name")]
     pub name: String,
-    /// Model architecture identifier (e.g. `temporal_logbert`).
     pub architecture: String,
     pub kind: String,
     pub version: String,
@@ -88,45 +104,12 @@ pub struct FilterProfileInfo {
     pub description: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ModelsResponse {
-    #[allow(dead_code)]
-    api_version: String,
-    pub models: Vec<ModelInfo>,
-    #[allow(dead_code)]
-    pub filter_profiles: Vec<FilterProfileInfo>,
-}
-
-// ── WebSocket frame types — outbound (client → sidecar) ─────────────────────
-
-#[derive(Debug, Serialize)]
-struct StartFrame<'a> {
-    #[serde(rename = "type")]
-    type_: &'static str,
-    api_version: &'static str,
-    model_id: &'a str,
-    filtering_mode: &'static str,
-    normalization_versions: &'a HashMap<&'a str, u32>,
-}
-
-impl<'a> StartFrame<'a> {
-    fn new(model_id: &'a str, normalization_versions: &'a HashMap<&'a str, u32>) -> Self {
-        Self {
-            type_: "start",
-            api_version: "1",
-            model_id,
-            filtering_mode: "backend_authoritative",
-            normalization_versions,
-        }
-    }
-}
+// ── InputLine ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct LineId {
-    /// 16-bit source identifier — spec constrains to 0–65535.
     source_id: u16,
     line_number: usize,
-    /// Milliseconds since Unix epoch. Non-negative per spec (minimum: 0).
     timestamp_unix_ms: u64,
 }
 
@@ -162,96 +145,8 @@ impl InputLine {
     }
 }
 
-#[derive(Debug, Serialize)]
-struct LinesFrame<'a> {
-    #[serde(rename = "type")]
-    type_: &'static str,
-    chunk_index: usize,
-    lines: &'a [InputLine],
-}
-
-#[derive(Debug, Serialize)]
-struct EndFrame {
-    #[serde(rename = "type")]
-    type_: &'static str,
-}
-
-// ── WebSocket frame types — inbound (sidecar → client) ──────────────────────
-
-#[derive(Debug, Deserialize)]
-struct InboundLineId {
-    #[allow(dead_code)]
-    source_id: u16,
-    line_number: usize,
-    #[allow(dead_code)]
-    timestamp_unix_ms: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct ScoredLine {
-    line_id: InboundLineId,
-    score: f64,
-    #[allow(dead_code)]
-    score_kind: String,
-    pub target_is_unk: bool,
-    pub target_is_rare: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct FilteredLine {
-    #[allow(dead_code)]
-    line_id: InboundLineId,
-    #[allow(dead_code)]
-    reason: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ScoresFrame {
-    #[allow(dead_code)]
-    chunk_index: usize,
-    scored: Vec<ScoredLine>,
-    filtered: Vec<FilteredLine>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WarningFrame {
-    code: String,
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct AcceptedFrame {
-    #[allow(dead_code)]
-    run_id: String,
-    #[allow(dead_code)]
-    chunk_policy: serde_json::Value, // mirrors ChunkPolicy; we don't act on it currently
-}
-
-#[derive(Debug, Deserialize)]
-struct Summary {
-    #[allow(dead_code)]
-    lines_received: u64,
-    #[allow(dead_code)]
-    lines_scored: u64,
-    #[allow(dead_code)]
-    lines_filtered: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompleteFrame {
-    #[allow(dead_code)]
-    summary: Summary,
-}
-
-#[derive(Debug, Deserialize)]
-struct ErrorFrame {
-    code: String,
-    message: String,
-}
-
 // ── Manual classification ─────────────────────────────────────────────────────
 
-/// Label applied by the user when manually classifying a log sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SampleLabel {
@@ -274,18 +169,8 @@ impl std::fmt::Display for SampleLabel {
     }
 }
 
-#[derive(Debug, Serialize)]
-struct SubmitSampleRequest<'a> {
-    api_version: &'static str,
-    model_id: &'a str,
-    label: SampleLabel,
-    classified_line_number: usize,
-    lines: &'a [InputLine],
-}
+// ── Score stream result ───────────────────────────────────────────────────────
 
-// ── Score stream result ──────────────────────────────────────────────────────
-
-/// Per-line score from the sidecar.
 #[derive(Debug, Clone)]
 pub struct ScoreEntry {
     pub score: f64,
@@ -293,105 +178,76 @@ pub struct ScoreEntry {
     pub target_is_rare: bool,
 }
 
-/// Result of a complete `score_stream` run.
 #[derive(Debug, Default)]
 pub struct ScoreStreamResult {
     /// Keyed by `line_number` from `InputLine.line_id`.
-    /// Lines absent were filtered by the sidecar's corpus filter; callers assign them score 0.0.
-    /// Valid as long as a single `score_stream` call covers exactly one source (no `source_id` collisions).
     pub scored: HashMap<usize, ScoreEntry>,
-    /// Non-fatal warnings emitted by the sidecar (e.g. `normalization_version_mismatch`).
     pub warnings: Vec<String>,
 }
 
-// ── Explain session types ─────────────────────────────────────────────────────
+// ── Explain result types ──────────────────────────────────────────────────────
 
-/// How much the model attended to context line `line_number` when scoring the
-/// target.  Only lines with non-zero weight are returned by the sidecar.
 #[derive(Debug, Clone)]
 pub struct AttentionEntry {
     pub line_number: usize,
     pub weight: f32,
 }
 
-/// A template the model predicted was likely at the masked position,
-/// together with its softmax probability.
 #[derive(Debug, Clone)]
 pub struct TemplateEntry {
     pub template: String,
     pub probability: f32,
 }
 
-/// Result of a single explain request.
 #[derive(Debug, Clone)]
 pub struct ExplainResult {
     pub target_line_number: usize,
-    /// `false` when the target was filtered out by the model's corpus filter.
     pub target_in_corpus: bool,
-    /// Cross-entropy loss matching the score-stream value; `None` when not in corpus.
     pub target_score: Option<f64>,
     pub target_is_unk: bool,
     pub target_is_rare: bool,
-    /// Sparse attention entries — only in-corpus context lines with weight > 0.
-    /// Already sorted by weight descending by the sidecar.
     pub attention: Vec<AttentionEntry>,
-    /// Top-K templates predicted at the masked position, sorted by probability descending.
     pub top_templates: Vec<TemplateEntry>,
 }
 
-// Private deserialization helpers.
-#[derive(Deserialize)]
-struct AttentionEntryRaw {
-    line_number: usize,
-    weight: f64,
-}
-
-#[derive(Deserialize)]
-struct TemplateEntryRaw {
-    template: String,
-    probability: f64,
-}
-
-#[derive(Deserialize)]
-struct ExplanationFrame {
-    target_line_number: usize,
-    target_in_corpus: bool,
-    target_score: Option<f64>,
-    target_is_unk: bool,
-    target_is_rare: bool,
-    attention: Vec<AttentionEntryRaw>,
-    top_templates: Vec<TemplateEntryRaw>,
-}
-
-/// Status returned by [`ExplainSession::poll_status`].
 pub enum ExplainPollStatus {
-    /// The result is not ready yet.
     Pending,
-    /// A result arrived.
     Ready(ExplainResult),
-    /// The background WebSocket thread has exited; no further results will arrive.
+    /// The background thread has exited; no further results will arrive.
     Dead,
 }
 
-/// Handle to the explain phase of a live score-stream WebSocket session.
+// ── ExplainSession ────────────────────────────────────────────────────────────
+
+/// Handle to the explain phase of an active `ScoreStream` gRPC session.
 ///
-/// The WebSocket connection is kept alive in a background thread.
-/// Dropping this struct closes the connection and exits the thread.
+/// The gRPC stream is kept alive by a background thread that drives it via
+/// the shared tokio runtime.  Dropping this struct sends a `Close` frame and
+/// exits the thread.
 pub struct ExplainSession {
     request_tx: mpsc::SyncSender<usize>,
     result_rx: mpsc::Receiver<ExplainResult>,
+    /// Keep the runtime alive as long as the session is alive.
+    _rt: Arc<tokio::runtime::Runtime>,
 }
 
 impl ExplainSession {
-    fn spawn(ws: tungstenite::WebSocket<TcpStream>) -> Self {
-        let (req_tx, req_rx) = mpsc::sync_channel::<usize>(1);
-        let (res_tx, res_rx) = mpsc::sync_channel::<ExplainResult>(4);
-        std::thread::spawn(move || Self::run_loop(ws, req_rx, res_tx));
-        Self { request_tx: req_tx, result_rx: res_rx }
+    pub(crate) fn spawn(
+        rt: Arc<tokio::runtime::Runtime>,
+        req_tx: tokio::sync::mpsc::UnboundedSender<ScoreStreamClientMessage>,
+        stream: tonic::codec::Streaming<ScoreStreamServerMessage>,
+    ) -> Self {
+        let (explain_req_tx, explain_req_rx) = mpsc::sync_channel::<usize>(1);
+        let (explain_res_tx, explain_res_rx) = mpsc::sync_channel::<ExplainResult>(4);
+        let rt_clone = Arc::clone(&rt);
+        std::thread::spawn(move || {
+            Self::run_loop(rt_clone, req_tx, stream, explain_req_rx, explain_res_tx);
+        });
+        Self { request_tx: explain_req_tx, result_rx: explain_res_rx, _rt: rt }
     }
 
     /// Request an explanation for `target_line_number`.
-    /// Returns `false` if the session has already ended or the queue is full.
+    /// Returns `false` if the session has ended or the queue is full.
     pub fn request(&self, target_line_number: usize) -> bool {
         self.request_tx.try_send(target_line_number).is_ok()
     }
@@ -401,8 +257,6 @@ impl ExplainSession {
         self.result_rx.try_recv().ok()
     }
 
-    /// Poll the session and return a rich status so callers can detect when
-    /// the background WebSocket thread has exited.
     pub fn poll_status(&self) -> ExplainPollStatus {
         match self.result_rx.try_recv() {
             Ok(result) => ExplainPollStatus::Ready(result),
@@ -412,131 +266,140 @@ impl ExplainSession {
     }
 
     fn run_loop(
-        mut ws: tungstenite::WebSocket<TcpStream>,
-        req_rx: mpsc::Receiver<usize>,
-        res_tx: mpsc::SyncSender<ExplainResult>,
+        rt: Arc<tokio::runtime::Runtime>,
+        req_tx: tokio::sync::mpsc::UnboundedSender<ScoreStreamClientMessage>,
+        mut stream: tonic::codec::Streaming<ScoreStreamServerMessage>,
+        explain_req_rx: mpsc::Receiver<usize>,
+        explain_res_tx: mpsc::SyncSender<ExplainResult>,
     ) {
-        // Short read timeout so we can interleave WebSocket keepalive handling
-        // with waiting for explain requests from the UI thread.
-        // 50 ms keeps UI latency low while not busy-polling.
-        let _ = ws.get_ref().set_read_timeout(Some(Duration::from_millis(50)));
-        tracing::debug!("explain session started");
-
+        tracing::debug!("explain session: started");
         loop {
-            // Poll for a pending explain request while servicing WebSocket
-            // control frames (Ping→Pong, Close) that arrive in the meantime.
+            // Wait for an explain request with 50 ms polling so we detect
+            // session drop (Disconnected) promptly.
             let target_ln = loop {
-                match req_rx.try_recv() {
+                match explain_req_rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(ln) => break ln,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        // All senders dropped — send close frame and exit.
-                        tracing::debug!("explain session: all senders dropped, closing");
-                        let _ = ws.send(Message::Text(r#"{"type":"close"}"#.into()));
-                        return;
-                    }
-                    Err(mpsc::TryRecvError::Empty) => {}
-                }
-                // No request yet — service incoming WebSocket frames.
-                match ws.read() {
-                    Ok(Message::Ping(data)) => {
-                        let _ = ws.send(Message::Pong(data));
-                    }
-                    Ok(Message::Close(_)) => {
-                        tracing::warn!("explain session: server sent Close frame");
-                        return;
-                    }
-                    Ok(msg) => {
-                        tracing::trace!("explain session: unexpected idle frame: {:?}", msg);
-                    }
-                    Err(tungstenite::Error::Io(e))
-                        if e.kind() == std::io::ErrorKind::WouldBlock
-                            || e.kind() == std::io::ErrorKind::TimedOut =>
-                    {
-                        // Read timeout elapsed — go back and poll the channel.
-                    }
-                    Err(e) => {
-                        tracing::warn!("explain session: connection error: {e}");
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        tracing::debug!("explain session: all senders dropped — sending close");
+                        let _ = req_tx.send(ScoreStreamClientMessage {
+                            payload: Some(ClientPayload::Close(CloseFrame {})),
+                        });
                         return;
                     }
                 }
             };
 
             tracing::debug!("explain session: requesting line {target_ln}");
-            let frame = serde_json::json!({
-                "type": "explain",
-                "target_line_number": target_ln,
+            let _ = req_tx.send(ScoreStreamClientMessage {
+                payload: Some(ClientPayload::Explain(ExplainFrame {
+                    target_line_number: target_ln as u64,
+                })),
             });
-            if ws.send(Message::Text(frame.to_string().into())).is_err() {
-                tracing::warn!("explain session: failed to send explain frame");
-                break;
-            }
 
-            // Read until we get the explanation response for this request.
+            // Drive the stream on this thread via the shared runtime until the
+            // explanation for this request arrives.
             loop {
-                match ws.read() {
-                    Ok(Message::Text(text)) => {
-                        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-                            tracing::warn!("explain session: invalid JSON response");
-                            break;
-                        };
-                        if v["type"] == "explanation" {
-                            if let Ok(f) = serde_json::from_value::<ExplanationFrame>(v) {
-                                tracing::debug!(
-                                    "explain session: got result for line {} (in_corpus={})",
-                                    f.target_line_number, f.target_in_corpus,
-                                );
-                                let result = ExplainResult {
-                                    target_line_number: f.target_line_number,
-                                    target_in_corpus: f.target_in_corpus,
-                                    target_score: f.target_score,
-                                    target_is_unk: f.target_is_unk,
-                                    target_is_rare: f.target_is_rare,
-                                    attention: f.attention.into_iter().map(|e| AttentionEntry {
-                                        line_number: e.line_number,
-                                        weight: e.weight as f32,
-                                    }).collect(),
-                                    top_templates: f.top_templates.into_iter().map(|e| TemplateEntry {
-                                        template: e.template,
-                                        probability: e.probability as f32,
-                                    }).collect(),
-                                };
-                                let _ = res_tx.send(result);
-                            }
+                match rt.block_on(stream.message()) {
+                    Ok(Some(msg)) => {
+                        if let Some(ServerPayload::Explanation(e)) = msg.payload {
+                            tracing::debug!(
+                                "explain session: got result for line {} (in_corpus={})",
+                                e.target_line_number,
+                                e.target_in_corpus
+                            );
+                            let result = ExplainResult {
+                                target_line_number: e.target_line_number as usize,
+                                target_in_corpus: e.target_in_corpus,
+                                target_score: e.target_score,
+                                target_is_unk: e.target_is_unk,
+                                target_is_rare: e.target_is_rare,
+                                attention: e
+                                    .attention
+                                    .into_iter()
+                                    .map(|a| AttentionEntry {
+                                        line_number: a.line_number as usize,
+                                        weight: a.weight,
+                                    })
+                                    .collect(),
+                                top_templates: e
+                                    .top_templates
+                                    .into_iter()
+                                    .map(|t| TemplateEntry {
+                                        template: t.template,
+                                        probability: t.probability,
+                                    })
+                                    .collect(),
+                            };
+                            let _ = explain_res_tx.send(result);
                             break;
                         }
-                        // Ignore other frame types (e.g. stray warnings).
+                        // Ignore interleaved warnings or other non-explanation frames.
                     }
-                    Ok(Message::Ping(data)) => {
-                        let _ = ws.send(Message::Pong(data));
-                    }
-                    Ok(Message::Close(_)) => {
-                        tracing::warn!("explain session: server sent Close during explain read");
+                    Ok(None) => {
+                        tracing::warn!("explain session: stream ended unexpectedly");
                         return;
-                    }
-                    Err(tungstenite::Error::Io(e))
-                        if e.kind() == std::io::ErrorKind::WouldBlock
-                            || e.kind() == std::io::ErrorKind::TimedOut =>
-                    {
-                        // 50ms read timeout elapsed — loop and retry.
                     }
                     Err(e) => {
-                        tracing::warn!("explain session: read error during explain: {e}");
+                        tracing::warn!("explain session: stream error: {e}");
                         return;
                     }
-                    _ => {}
                 }
             }
         }
     }
 }
 
-// ── SidecarClient ────────────────────────────────────────────────────────────
+// ── Proto conversion helpers ──────────────────────────────────────────────────
 
-/// Client for the LogBERT sidecar — V1 protocol.
+fn input_line_to_proto(line: &InputLine) -> proto::InputLine {
+    proto::InputLine {
+        line_id: Some(proto::LineId {
+            source_id: u32::from(line.line_id.source_id),
+            line_number: line.line_id.line_number as u64,
+            timestamp_unix_ms: line.line_id.timestamp_unix_ms,
+        }),
+        message: line.message.clone(),
+        template_key: line.template_key.clone(),
+        source_file: line.source_file.clone(),
+        filetype: line.filetype.clone(),
+    }
+}
+
+fn proto_to_model_info(m: proto::ModelInfo) -> ModelInfo {
+    let tc = m.training_corpus.unwrap_or_default();
+    let cp = m.chunk_policy.unwrap_or_default();
+    let out = m.output.unwrap_or_default();
+    ModelInfo {
+        id: m.id,
+        name: m.name,
+        architecture: m.architecture,
+        kind: m.kind,
+        version: m.version,
+        input_mode: m.input_mode,
+        training_corpus: TrainingCorpus {
+            filter_profile: tc.filter_profile,
+            description: tc.description,
+            normalization_versions: tc.normalization_versions,
+        },
+        chunk_policy: ChunkPolicy {
+            recommended_lines_per_chunk: cp.recommended_lines_per_chunk as usize,
+            max_lines_per_chunk: cp.max_lines_per_chunk as usize,
+        },
+        output: OutputInfo {
+            score_kind: out.score_kind,
+            higher_is_more_anomalous: out.higher_is_more_anomalous,
+            supports_explanations: out.supports_explanations,
+        },
+    }
+}
+
+// ── SidecarClient ─────────────────────────────────────────────────────────────
+
+/// gRPC client for the LogBERT sidecar — V2 protocol.
 pub struct SidecarClient {
-    host: String,
-    port: u16,
-    http: reqwest::blocking::Client,
+    rt: Arc<tokio::runtime::Runtime>,
+    channel: tonic::transport::Channel,
 }
 
 impl SidecarClient {
@@ -548,39 +411,57 @@ impl SidecarClient {
         DEFAULT_PORT
     }
 
-    pub fn connect(host: &str, port: u16) -> Result<Self> {
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
-        Ok(Self { host: host.to_string(), port, http })
-    }
-
-    /// `GET /v1/health` — liveness check.
-    pub fn health_check(&self) -> Result<HealthResponse> {
-        let url = format!("http://{}:{}/v1/health", self.host, self.port);
-        let resp = self.http.get(&url).send().context("health request failed")?;
-        if !resp.status().is_success() {
-            bail!("health check returned {}", resp.status());
-        }
-        Ok(resp.json()?)
-    }
-
-    /// `GET /v1/models` — discover available models.
-    pub fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        let url = format!("http://{}:{}/v1/models", self.host, self.port);
-        let resp = self.http.get(&url).send().context("models request failed")?;
-        if !resp.status().is_success() {
-            bail!("list_models returned {}", resp.status());
-        }
-        let body: ModelsResponse = resp.json()?;
-        Ok(body.models)
-    }
-
-    /// `POST /v1/samples` — submit a manually labelled log sample for future training.
+    /// Connect to the sidecar at `host:port`.
     ///
-    /// Uploads all `lines` from the source that contains `classified_line_number`, tagged
-    /// with `label`.  The sidecar stores the data under
-    /// `{uploads_dir}/{model_id}/{label}/{timestamp}_{uuid}.ndjson`.
+    /// Creates a dedicated tokio runtime (2 worker threads) and establishes a
+    /// lazy gRPC channel.  The actual TCP handshake happens on the first RPC.
+    pub fn connect(host: &str, port: u16) -> Result<Self> {
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .context("failed to build tokio runtime for sidecar client")?,
+        );
+        let endpoint = tonic::transport::Channel::from_shared(format!("http://{host}:{port}"))
+            .context("invalid sidecar endpoint")?;
+        // `connect_lazy()` internally calls `tokio::spawn` to start its
+        // background connection-management task, so it must be called from
+        // within the runtime context.
+        let channel = rt.block_on(async move { endpoint.connect_lazy() });
+        Ok(Self { rt, channel })
+    }
+
+    fn client(&self) -> GrpcClient<tonic::transport::Channel> {
+        // Channel is cheaply cloneable (shared connection pool internally).
+        GrpcClient::new(self.channel.clone())
+            .max_decoding_message_size(256 * 1024 * 1024)
+            .max_encoding_message_size(256 * 1024 * 1024)
+    }
+
+    // ── Unary RPCs ────────────────────────────────────────────────────────────
+
+    /// `Health` — liveness / readiness probe.
+    pub fn health_check(&self) -> Result<HealthResponse> {
+        let resp = self
+            .rt
+            .block_on(self.client().health(HealthRequest {}))
+            .context("Health RPC failed")?
+            .into_inner();
+        Ok(HealthResponse { api_version: resp.api_version, status: resp.status })
+    }
+
+    /// `ListModels` — discover available models and filter profiles.
+    pub fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        let resp = self
+            .rt
+            .block_on(self.client().list_models(ListModelsRequest {}))
+            .context("ListModels RPC failed")?
+            .into_inner();
+        Ok(resp.models.into_iter().map(proto_to_model_info).collect())
+    }
+
+    /// `SubmitSample` — upload a manually labelled log sample.
     pub fn submit_sample(
         &self,
         model_id: &str,
@@ -588,62 +469,44 @@ impl SidecarClient {
         classified_line_number: usize,
         lines: &[InputLine],
     ) -> Result<()> {
-        let url = format!("http://{}:{}/v1/samples", self.host, self.port);
-        let body = SubmitSampleRequest { api_version: "1", model_id, label, classified_line_number, lines };
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .context("submit_sample request failed")?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let msg = resp.text().unwrap_or_default();
-            bail!("submit_sample returned {status}: {msg}");
-        }
+        let req = SubmitSampleRequest {
+            model_id: model_id.to_string(),
+            label: label.as_str().to_string(),
+            classified_line_number: classified_line_number as u64,
+            lines: lines.iter().map(input_line_to_proto).collect(),
+        };
+        self.rt
+            .block_on(self.client().submit_sample(req))
+            .context("SubmitSample RPC failed")?;
         Ok(())
     }
 
-    /// `WS /v1/score-stream` — stream lines to the sidecar and collect scores.
-    ///
-    /// Sends `lines` in chunks of [`LINES_PER_CHUNK`], waits for all `scores`
-    /// frames, and returns the aggregated results.
+    // ── ScoreStream ───────────────────────────────────────────────────────────
+
+    /// Score lines; discard the explain session.
     pub fn score_stream(
         &self,
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
     ) -> Result<ScoreStreamResult> {
-        let (result, _ws) = self.open_score_stream_ws(model_id, normalization_versions, lines, &mut |_, _| {})?;
+        let (result, _session) =
+            self.open_score_stream(model_id, normalization_versions, lines, &mut |_, _| {})?;
         Ok(result)
     }
 
-    /// Like [`score_stream`], but keeps the WebSocket open for on-demand attention
-    /// explanations after scoring completes.
-    ///
-    /// Returns the scores plus an [`ExplainSession`] that the caller can use to
-    /// request per-line attention weights without re-sending the input lines.
-    /// The WebSocket connection is held alive in a background thread until the
-    /// `ExplainSession` is dropped.
+    /// Like [`score_stream`], keeping the stream open for explain requests.
     pub fn score_stream_with_explain(
         &self,
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
-        let (result, ws) = self.open_score_stream_ws(model_id, normalization_versions, lines, &mut |_, _| {})?;
-        Ok((result, ExplainSession::spawn(ws)))
+        self.open_score_stream(model_id, normalization_versions, lines, &mut |_, _| {})
     }
 
-    /// Like [`score_stream_with_explain`], but invokes `on_scores` after each
-    /// `scores` frame arrives from the sidecar. This lets the caller
-    /// incrementally apply results (e.g. update the UI store) as GPU batches
-    /// complete on the server side.
-    ///
-    /// The callback receives `(new_entries, &ScoreStreamResult, lines_total)`:
-    ///   - `new_entries`: the scored lines from *this frame only* (line_number → ScoreEntry)
-    ///   - `&ScoreStreamResult`: the full accumulated result so far
-    ///   - `lines_total`: the total number of input lines for progress calculation
+    /// Like [`score_stream_with_explain`], invoking `on_scores` incrementally
+    /// after each GPU batch so the UI can update as scores arrive.
     pub fn score_stream_streaming(
         &self,
         model_id: &str,
@@ -652,207 +515,157 @@ impl SidecarClient {
         on_scores: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult, usize),
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
         let total = lines.len();
-        let (result, ws) = self.open_score_stream_ws(
+        self.open_score_stream(
             model_id,
             normalization_versions,
             lines,
             &mut |new_entries, result| on_scores(new_entries, result, total),
-        )?;
-        Ok((result, ExplainSession::spawn(ws)))
+        )
     }
 
-    /// Internal: open a WebSocket, run the full scoring protocol, and return
-    /// both the results and the still-open WebSocket (ready for the explain phase).
+    /// Core implementation: runs the scoring phase to completion, then wraps
+    /// the live stream in an `ExplainSession`.
     ///
-    /// `on_frame` is called after each `scores` frame is processed, receiving
-    /// a reference to the newly-scored entries from this frame and the full
-    /// accumulated result so far.
-    fn open_score_stream_ws(
+    /// `on_frame` is invoked on the **calling thread** after each `Scores`
+    /// message.  The message loop runs outside any `async` block so the
+    /// callback can be called directly without unsafe code.
+    fn open_score_stream(
         &self,
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
         on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
-    ) -> Result<(ScoreStreamResult, tungstenite::WebSocket<TcpStream>)> {
-        let addr = format!("{}:{}", self.host, self.port);
-        tracing::info!("Connecting to sidecar at {addr}");
-        let tcp = TcpStream::connect(&addr)
-            .with_context(|| format!("TCP connect to {addr} failed"))?;
-        // No write timeout: the OS handles flow control; we block freely.
-        // During the send phase we use a short read timeout (1 ms) so that
-        // ws.read() acts like try_read() — returning immediately when there is
-        // nothing yet — letting us interleave sends and reads without threads
-        // or a Mutex.  After all frames are sent we switch to 600 s so we wait
-        // patiently for the server to finish GPU scoring.
-        tcp.set_write_timeout(None)?;
-        // Leave read timeout unset for the handshake; we'll configure it below.
+    ) -> Result<(ScoreStreamResult, ExplainSession)> {
+        let norm_map: HashMap<String, u32> =
+            normalization_versions.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let proto_lines: Vec<proto::InputLine> = lines.iter().map(input_line_to_proto).collect();
+        let model_id = model_id.to_string();
+        let n_chunks = proto_lines.len().div_ceil(LINES_PER_CHUNK.max(1));
 
-        let ws_url = format!("ws://{}:{}/v1/score-stream", self.host, self.port);
-        let (mut ws, _) = tungstenite::client(ws_url, tcp)
-            .context("WebSocket handshake failed")?;
-        let n_chunks = (lines.len() + LINES_PER_CHUNK - 1) / LINES_PER_CHUNK;
-        tracing::info!("WebSocket handshake done — sending {} lines ({n_chunks} chunks)", lines.len());
+        let rt = Arc::clone(&self.rt);
+        let mut client = self.client();
 
-        // 1 ms non-blocking read during the send phase (acts like try_read).
-        // Switched to 600 s once all frames are sent.
-        ws.get_ref().set_read_timeout(Some(Duration::from_millis(1)))?;
+        // Phase 1: send all frames and open the RPC.  This async block owns
+        // only `Send + 'static` data so no unsafe pointer tricks are needed.
+        let (req_tx, mut stream) = self.rt.block_on(async move {
+            let (tx, rx) =
+                tokio::sync::mpsc::unbounded_channel::<ScoreStreamClientMessage>();
 
-        // ── Send phase: stream all frames, opportunistically reading responses ─
-        // tungstenite preserves internal read state across WouldBlock/TimedOut
-        // errors, so it is safe to call read() speculatively between sends.
+            tx.send(ScoreStreamClientMessage {
+                payload: Some(ClientPayload::Start(StartFrame {
+                    api_version: "2".to_string(),
+                    model_id: model_id.clone(),
+                    filtering_mode: "backend_authoritative".to_string(),
+                    normalization_versions: norm_map,
+                })),
+            })?;
+
+            tracing::info!(
+                "Sending {} lines ({n_chunks} chunks, model={model_id}) to sidecar",
+                proto_lines.len()
+            );
+            for (chunk_index, chunk) in proto_lines.chunks(LINES_PER_CHUNK).enumerate() {
+                tx.send(ScoreStreamClientMessage {
+                    payload: Some(ClientPayload::Lines(LinesFrame {
+                        chunk_index: chunk_index as u32,
+                        lines: chunk.to_vec(),
+                    })),
+                })?;
+                if chunk_index % 500 == 499 {
+                    tracing::debug!("sent {}/{n_chunks} chunks", chunk_index + 1);
+                }
+            }
+            tx.send(ScoreStreamClientMessage {
+                payload: Some(ClientPayload::End(EndFrame {})),
+            })?;
+            tracing::info!("all {n_chunks} chunks + End frame sent — waiting for Complete");
+
+            let stream = client
+                .score_stream(UnboundedReceiverStream::new(rx))
+                .await
+                .context("ScoreStream RPC failed")?
+                .into_inner();
+
+            Ok::<_, anyhow::Error>((tx, stream))
+        })?;
+
+        // Phase 2: drive the response stream on the calling thread.
+        // `on_frame` is called directly — no async capture, no unsafe needed.
         let mut result = ScoreStreamResult::default();
-
-        let start = StartFrame::new(model_id, normalization_versions);
-        ws.send(Message::Text(serde_json::to_string(&start)?.into()))?;
-        tracing::trace!("sent start frame");
-
-        let mut complete_in_send_phase = false;
-        for (chunk_index, chunk) in lines.chunks(LINES_PER_CHUNK).enumerate() {
-            let frame = LinesFrame { type_: "lines", chunk_index, lines: chunk };
-            ws.send(Message::Text(serde_json::to_string(&frame)?.into()))?;
-            if chunk_index % 500 == 499 {
-                tracing::debug!("sent {}/{n_chunks} chunks", chunk_index + 1);
-            }
-            // Opportunistic read: consume any scores frames the server has
-            // already produced while we were uploading.
-            if Self::drain_nonblocking(&mut ws, &mut result, on_frame)? == ReadAction::Break {
-                complete_in_send_phase = true;
-                break;
-            }
-        }
-
-        if complete_in_send_phase {
-            tracing::info!("complete received during send phase — skipping remaining chunks");
-        } else {
-            ws.send(Message::Text(serde_json::to_string(&EndFrame { type_: "end" })?.into()))?;
-            tracing::info!("all {n_chunks} chunks + end frame sent — waiting for complete");
-
-            // ── Read phase: switch to long timeout and consume remaining responses ─
-            ws.get_ref().set_read_timeout(Some(Duration::from_secs(600)))?;
-
-            loop {
-                match ws.read()? {
-                    Message::Text(text) => {
-                        if Self::handle_text(&text, &mut result, on_frame)? == ReadAction::Break {
-                            break;
-                        }
-                    }
-                    Message::Close(_) => break,
-                    Message::Ping(data) => ws.send(Message::Pong(data))?,
-                    _ => {}
-                }
-            }
-        }
-
-        Ok((result, ws))
-    }
-
-    /// Drain any immediately-available inbound WebSocket messages, ignoring
-    /// `WouldBlock`/`TimedOut` (i.e. nothing ready yet).
-    ///
-    /// Returns `Ok(ReadAction::Break)` if a `complete` frame was received,
-    /// signalling that scoring finished early and the send loop should stop.
-    fn drain_nonblocking(
-        ws: &mut tungstenite::WebSocket<TcpStream>,
-        result: &mut ScoreStreamResult,
-        on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
-    ) -> Result<ReadAction> {
         loop {
-            match ws.read() {
-                Ok(Message::Text(text)) => {
-                    if Self::handle_text(&text, result, on_frame)? == ReadAction::Break {
-                        return Ok(ReadAction::Break);
+            match self.rt.block_on(stream.message()).context("stream read error")? {
+                Some(msg) => {
+                    if Self::handle_server_msg(msg, &mut result, on_frame)? {
+                        break;
                     }
                 }
-                Ok(Message::Ping(data)) => ws.send(Message::Pong(data))?,
-                Ok(Message::Close(_)) => bail!("sidecar closed connection during send phase"),
-                Ok(_) => {}
-                Err(tungstenite::Error::Io(e))
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut =>
-                {
-                    return Ok(ReadAction::Continue); // nothing ready — continue sending
-                }
-                Err(e) => return Err(e.into()),
+                None => bail!("sidecar stream closed before Complete frame"),
             }
         }
+
+        let session = ExplainSession::spawn(rt, req_tx, stream);
+        Ok((result, session))
     }
 
-    /// Parse and act on a text WebSocket frame.  Returns `Break` when a
-    /// `complete` frame is received (only expected in the read phase).
-    fn handle_text(
-        text: &str,
+    /// Handle one inbound server message.
+    /// Returns `true` when a `Complete` frame signals end of scoring.
+    fn handle_server_msg(
+        msg: ScoreStreamServerMessage,
         result: &mut ScoreStreamResult,
         on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
-    ) -> Result<ReadAction> {
-        let envelope: serde_json::Value =
-            serde_json::from_str(text).context("invalid JSON from sidecar")?;
-        match envelope["type"].as_str() {
-            Some("accepted") => {
-                if let Ok(f) = serde_json::from_value::<AcceptedFrame>(envelope) {
-                    tracing::info!(run_id = %f.run_id, "sidecar accepted the run");
-                } else {
-                    tracing::info!("sidecar accepted the run");
-                }
+    ) -> Result<bool> {
+        match msg.payload {
+            Some(ServerPayload::Accepted(a)) => {
+                tracing::info!(run_id = %a.run_id, "sidecar accepted the run");
             }
-            Some("scores") => {
-                let frame: ScoresFrame = serde_json::from_value(envelope)
-                    .context("failed to parse scores frame")?;
-                let chunk_index = frame.chunk_index;
-                let newly_scored = frame.scored.len();
-                // Collect new entries before inserting so we can pass them to the callback.
+            Some(ServerPayload::Warning(w)) => {
+                tracing::warn!("sidecar warning [{}]: {}", w.code, w.message);
+                result.warnings.push(format!("[{}] {}", w.code, w.message));
+            }
+            Some(ServerPayload::Scores(s)) => {
+                let chunk_index = s.chunk_index;
                 let mut new_entries: HashMap<usize, ScoreEntry> =
-                    HashMap::with_capacity(frame.scored.len());
-                for s in frame.scored {
+                    HashMap::with_capacity(s.scored.len());
+                for scored in s.scored {
+                    let ln = scored
+                        .line_id
+                        .as_ref()
+                        .map_or(0, |id| id.line_number as usize);
                     let entry = ScoreEntry {
-                        score: s.score,
-                        target_is_unk: s.target_is_unk,
-                        target_is_rare: s.target_is_rare,
+                        score: scored.score,
+                        target_is_unk: scored.target_is_unk,
+                        target_is_rare: scored.target_is_rare,
                     };
-                    new_entries.insert(s.line_id.line_number, entry.clone());
-                    result.scored.insert(s.line_id.line_number, entry);
+                    new_entries.insert(ln, entry.clone());
+                    result.scored.insert(ln, entry);
                 }
-                let _ = frame.filtered; // absent from `scored`; callers assign score 0.0
                 tracing::debug!(
-                    "scores frame #{chunk_index}: +{newly_scored} scored, {} total so far",
+                    "Scores frame #{chunk_index}: +{} scored, {} total so far",
+                    new_entries.len(),
                     result.scored.len()
                 );
                 on_frame(&new_entries, result);
             }
-            Some("warning") => {
-                let frame: WarningFrame = serde_json::from_value(envelope)
-                    .context("failed to parse warning frame")?;
-                tracing::warn!("sidecar warning [{}]: {}", frame.code, frame.message);
-                result.warnings.push(format!("[{}] {}", frame.code, frame.message));
+            Some(ServerPayload::Complete(c)) => {
+                let s = c.summary.unwrap_or_default();
+                tracing::info!(
+                    lines_received = s.lines_received,
+                    lines_scored = s.lines_scored,
+                    lines_filtered = s.lines_filtered,
+                    "sidecar signalled complete",
+                );
+                return Ok(true);
             }
-            Some("complete") => {
-                if let Ok(f) = serde_json::from_value::<CompleteFrame>(envelope) {
-                    tracing::info!(
-                        lines_received = f.summary.lines_received,
-                        lines_scored = f.summary.lines_scored,
-                        lines_filtered = f.summary.lines_filtered,
-                        "sidecar signalled complete",
-                    );
-                } else {
-                    tracing::info!("sidecar signalled complete");
-                }
-                return Ok(ReadAction::Break);
+            Some(ServerPayload::Error(e)) => {
+                bail!("sidecar error [{}]: {}", e.code, e.message);
             }
-            Some("error") => {
-                let frame: ErrorFrame = serde_json::from_value(envelope)
-                    .context("failed to parse error frame")?;
-                bail!("sidecar error [{}]: {}", frame.code, frame.message);
+            Some(ServerPayload::Explanation(_)) => {
+                tracing::warn!("unexpected Explanation frame during scoring phase — ignored");
             }
-            other => {
-                tracing::warn!("unknown frame type from sidecar: {other:?}");
+            None => {
+                tracing::warn!("empty server message payload");
             }
         }
-        Ok(ReadAction::Continue)
+        Ok(false)
     }
-}
-
-#[derive(PartialEq)]
-enum ReadAction {
-    Continue,
-    Break,
 }

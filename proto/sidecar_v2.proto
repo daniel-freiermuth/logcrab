@@ -1,0 +1,238 @@
+// LogCrab Sidecar — V2 gRPC API
+//
+// Copyright (C) 2026 Daniel Freiermuth
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Replaces the V1 WebSocket/JSON protocol with strongly-typed gRPC streaming.
+// The ScoreStream RPC is a single bidirectional streaming call that covers
+// both the scoring phase (start → lines → end → scores → complete) and the
+// optional explain phase (explain → explanation, repeatable).
+
+syntax = "proto3";
+
+package sidecar.v2;
+
+// ── Shared types ──────────────────────────────────────────────────────────────
+
+message LineId {
+  uint32 source_id          = 1;
+  uint64 line_number        = 2;
+  uint64 timestamp_unix_ms  = 3;
+}
+
+message InputLine {
+  LineId          line_id      = 1;
+  string          message      = 2;
+  optional string template_key = 3;
+  optional string source_file  = 4;
+  optional string filetype     = 5;
+}
+
+// ── Health ────────────────────────────────────────────────────────────────────
+
+message HealthRequest {}
+
+message HealthResponse {
+  string api_version = 1;
+  string status      = 2; // "ok" | "degraded"
+}
+
+// ── Model discovery ───────────────────────────────────────────────────────────
+
+message ListModelsRequest {}
+
+message TrainingCorpus {
+  string              filter_profile       = 1;
+  string              description          = 2;
+  map<string, uint32> normalization_versions = 3;
+}
+
+message ChunkPolicy {
+  uint32 recommended_lines_per_chunk = 1;
+  uint32 max_lines_per_chunk         = 2;
+}
+
+message OutputInfo {
+  string score_kind             = 1;
+  bool   higher_is_more_anomalous = 2;
+  bool   supports_explanations  = 3;
+}
+
+message ModelInfo {
+  string         id              = 1;
+  string         name            = 2;
+  string         architecture    = 3;
+  string         kind            = 4;
+  string         version         = 5;
+  string         input_mode      = 6;
+  TrainingCorpus training_corpus = 7;
+  ChunkPolicy    chunk_policy    = 8;
+  OutputInfo     output          = 9;
+}
+
+message FilterProfileInfo {
+  string id          = 1;
+  string description = 2;
+}
+
+message ListModelsResponse {
+  string                  api_version     = 1;
+  repeated ModelInfo      models          = 2;
+  repeated FilterProfileInfo filter_profiles = 3;
+}
+
+// ── Sample submission ─────────────────────────────────────────────────────────
+
+message SubmitSampleRequest {
+  string              model_id                = 1;
+  string              label                   = 2; // "benign" | "anomalous"
+  uint64              classified_line_number  = 3;
+  repeated InputLine  lines                   = 4;
+}
+
+message SubmitSampleResponse {
+  bool   stored    = 1;
+  string sample_id = 2;
+}
+
+// ── ScoreStream — client → server messages ────────────────────────────────────
+
+// Phase 1 opener: sent exactly once at the start of a session.
+message StartFrame {
+  string              api_version            = 1;
+  string              model_id               = 2;
+  string              filtering_mode         = 3; // "backend_authoritative"
+  map<string, uint32> normalization_versions = 4;
+}
+
+// One or more chunks of log lines, in order.
+message LinesFrame {
+  uint32             chunk_index = 1;
+  repeated InputLine lines       = 2;
+}
+
+// Signals that all lines have been sent; the server will begin (or finish) scoring.
+message EndFrame {}
+
+// Phase 2: request attention explanation for a specific line number.
+message ExplainFrame {
+  uint64 target_line_number = 1;
+}
+
+// Terminates the session; the server frees its corpus state.
+message CloseFrame {}
+
+message ScoreStreamClientMessage {
+  oneof payload {
+    StartFrame   start   = 1;
+    LinesFrame   lines   = 2;
+    EndFrame     end     = 3;
+    ExplainFrame explain = 4;
+    CloseFrame   close   = 5;
+  }
+}
+
+// ── ScoreStream — server → client messages ────────────────────────────────────
+
+// Sent once after a valid StartFrame; carries the run ID and chunk policy.
+message AcceptedFrame {
+  string run_id                      = 1;
+  uint32 recommended_lines_per_chunk = 2;
+  uint32 max_lines_per_chunk         = 3;
+}
+
+// Non-fatal diagnostic (e.g. normalization version mismatch).
+message WarningFrame {
+  string code    = 1;
+  string message = 2;
+}
+
+message ScoredLine {
+  LineId line_id       = 1;
+  double score         = 2;
+  string score_kind    = 3;
+  bool   target_is_unk  = 4;
+  bool   target_is_rare = 5;
+}
+
+message FilteredLine {
+  LineId line_id = 1;
+  string reason  = 2;
+}
+
+// One GPU mini-batch worth of results (scored lines) and/or filtered lines.
+message ScoresFrame {
+  uint32              chunk_index = 1;
+  repeated ScoredLine  scored     = 2;
+  repeated FilteredLine filtered  = 3;
+}
+
+message Summary {
+  uint64 lines_received = 1;
+  uint64 lines_scored   = 2;
+  uint64 lines_filtered = 3;
+}
+
+// Final scoring phase message; scoring is done after this.
+message CompleteFrame {
+  Summary summary = 1;
+}
+
+// Attention weight for one in-corpus context line.
+message AttentionEntry {
+  uint64 line_number = 1;
+  float  weight      = 2;
+}
+
+// Top predicted template with its softmax probability.
+message TemplateEntry {
+  string template    = 1;
+  float  probability = 2;
+}
+
+// Response to an ExplainFrame request.
+message ExplanationFrame {
+  uint64                  target_line_number = 1;
+  bool                    target_in_corpus   = 2;
+  optional double         target_score       = 3;
+  bool                    target_is_unk      = 4;
+  bool                    target_is_rare     = 5;
+  repeated AttentionEntry attention          = 6;
+  repeated TemplateEntry  top_templates      = 7;
+}
+
+// Fatal protocol or server-side error.
+message ErrorFrame {
+  string code    = 1;
+  string message = 2;
+}
+
+message ScoreStreamServerMessage {
+  oneof payload {
+    AcceptedFrame    accepted    = 1;
+    WarningFrame     warning     = 2;
+    ScoresFrame      scores      = 3;
+    CompleteFrame    complete    = 4;
+    ExplanationFrame explanation = 5;
+    ErrorFrame       error       = 6;
+  }
+}
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+service Sidecar {
+  // Liveness / readiness probe.
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Discover available models and filter profiles.
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+
+  // Store a manually classified log sample for future training.
+  rpc SubmitSample(SubmitSampleRequest) returns (SubmitSampleResponse);
+
+  // Bidirectional streaming session covering scoring + optional explain phases.
+  // Client sends: Start → Lines* → End → (Explain* → Close)?
+  // Server sends: Accepted → Warning* → Scores* → Complete → Explanation*
+  rpc ScoreStream(stream ScoreStreamClientMessage)
+      returns (stream ScoreStreamServerMessage);
+}
