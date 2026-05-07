@@ -67,7 +67,6 @@ serde_json = "1.0.149"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dlt-core = "0.20"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
 pcap-parser = "0.17.0"
 btsnoop = "0.2.1"
 someip_parse = "0.6.2"
@@ -81,11 +80,16 @@ anyhow = "1"
 profiling = { version = "1.0", default-features = false }
 tracy-client = { version = "0.18.4", optional = true }
 tokio = { version = "1.49.0", features = ["sync", "rt-multi-thread", "macros", "io-std"] }
-tungstenite = "0.26"
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+tokio-stream = { version = "0.1", features = ["net"] }
 rmcp = { version = "1.5", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1"
 fs2 = "0.4"
 indexmap = { version = "2", features = ["rayon"] }
+
+[build-dependencies]
+tonic-build = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

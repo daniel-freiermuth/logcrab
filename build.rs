@@ -1,10 +1,19 @@
 // LogCrab - GPL-3.0-or-later
-// Build script to embed version info at compile time
+// Build script: embed version info and compile protobuf definitions.
 
 use std::process::Command;
 
 fn main() {
-    // Get git hash
+    // ── Compile proto definitions ─────────────────────────────────────────────
+    tonic_build::configure()
+        .build_client(true)
+        .build_server(false) // server lives in the Python sidecar
+        .compile_protos(&["proto/sidecar_v2.proto"], &["proto"])
+        .expect("failed to compile sidecar_v2.proto");
+
+    println!("cargo:rerun-if-changed=proto/sidecar_v2.proto");
+
+    // ── Embed git version info ────────────────────────────────────────────────
     let git_hash = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
