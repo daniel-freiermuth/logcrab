@@ -491,6 +491,21 @@ impl LogCrabApp {
 
             if ui
                 .checkbox(
+                    &mut self.global_config.use_sidecar_scoring,
+                    "Enable ML Scoring",
+                )
+                .on_hover_text("Send log lines to the sidecar server for ML-based anomaly scoring")
+                .changed()
+            {
+                let new_val = self.global_config.use_sidecar_scoring;
+                match GlobalConfig::update(|c| c.use_sidecar_scoring = new_val) {
+                    Ok(updated) => self.global_config = updated,
+                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                }
+            }
+
+            if ui
+                .checkbox(
                     &mut self.global_config.color_by_ml_score,
                     "Color by ML Score",
                 )
