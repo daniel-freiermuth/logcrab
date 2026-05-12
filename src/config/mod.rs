@@ -16,6 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+pub mod session_history;
+
 use crate::core::SearchRule;
 use crate::input::ShortcutAction;
 use fs2::FileExt;

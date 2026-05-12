@@ -4,6 +4,7 @@ use super::ToastManager;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::config::session_history::{RecordedSession, SessionHistory};
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorker;
 use crate::core::log_store::all_file_extensions;
@@ -62,6 +63,29 @@ pub struct LogCrabApp {
 
     /// Toast notification manager
     toast_manager: ToastManager,
+
+    /// Persistent session history
+    session_history: SessionHistory,
+
+    /// Pending session restore offer: when the user opens a file that belongs
+    /// to one or more previous sessions, we show a dialog to let them choose.
+    /// Contains (files_being_opened, matching_sessions).
+    pending_session_offer: Option<PendingSessionOffer>,
+}
+
+/// State for the "restore session?" dialog
+struct PendingSessionOffer {
+    /// The file(s) the user originally requested
+    files: Vec<PathBuf>,
+    /// Previous sessions that contain at least one of those files
+    matching_sessions: Vec<RecordedSession>,
+}
+
+/// Action chosen in the session offer dialog
+enum SessionOfferAction {
+    JustTheFiles,
+    RestoreSession(usize),
+    Cancel,
 }
 
 impl LogCrabApp {
@@ -94,6 +118,9 @@ impl LogCrabApp {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
         }
 
+        let mut session_history = SessionHistory::load();
+        session_history.prune_missing();
+
         let mut app = Self {
             session: None,
             filter_worker: FilterWorker::new(),
@@ -108,6 +135,8 @@ impl LogCrabApp {
             pending_drop_files: Vec::new(),
             pending_source_removal: None,
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
+            session_history,
+            pending_session_offer: None,
         };
 
         // Load initial files if provided via command line
@@ -126,6 +155,9 @@ impl LogCrabApp {
     }
 
     pub fn start_new_session(&mut self) {
+        // Record the outgoing session before replacing it
+        self.record_current_session();
+
         // Create a new store for this file
         let store = LogStore::new();
         // Push sidecar scoring config so background loading threads can use it
@@ -139,6 +171,71 @@ impl LogCrabApp {
         // uploads) can surface success/error notifications without blocking the UI.
         session.state.toast_sender = Some(self.toast_manager.sender());
         self.session = Some(session);
+    }
+
+    /// Save the current session's file set into the session history
+    fn record_current_session(&mut self) {
+        if let Some(ref session) = self.session {
+            let paths = session.state.store.get_source_file_paths();
+            if !paths.is_empty() {
+                match SessionHistory::update(|h| h.record(paths)) {
+                    Ok(updated) => self.session_history = updated,
+                    Err(e) => tracing::error!("Failed to save session history: {e}"),
+                }
+            }
+        }
+    }
+
+    /// Check if any of the given files belong to a previously recorded session.
+    /// If so, stash a `PendingSessionOffer` so the UI can show a dialog.
+    /// Returns `true` if an offer dialog will be shown (caller should not open the files yet).
+    fn check_session_offer(&mut self, files: Vec<PathBuf>) -> bool {
+        let mut matching: Vec<RecordedSession> = Vec::new();
+        for file in &files {
+            for session in self.session_history.sessions_containing(file) {
+                // Skip if this session is identical to what was already requested
+                if session.same_files(&files) {
+                    continue;
+                }
+                // Skip duplicates
+                if matching.iter().any(|m| m.same_files(&session.files)) {
+                    continue;
+                }
+                // Only offer sessions whose files all still exist
+                if session.all_files_exist() {
+                    matching.push(session.clone());
+                }
+            }
+        }
+
+        if matching.is_empty() {
+            return false;
+        }
+
+        self.pending_session_offer = Some(PendingSessionOffer {
+            files,
+            matching_sessions: matching,
+        });
+        true
+    }
+
+    /// Open a set of files as a new session (unconditionally, no session-offer check)
+    fn open_files_as_new_session(&mut self, files: Vec<PathBuf>) {
+        self.start_new_session();
+        for file in files {
+            if file.exists() {
+                self.add_file_to_session(file);
+            } else {
+                self.toast_manager
+                    .show_error(format!("File not found: {}", file.display()));
+            }
+        }
+    }
+
+    /// Restore a recorded session
+    fn restore_session(&mut self, session: &RecordedSession) {
+        let files = session.files.clone();
+        self.open_files_as_new_session(files);
     }
 
     /// Build a `ScoringConfig` from the current global config and set it on the store.
@@ -205,9 +302,9 @@ impl LogCrabApp {
                 }
             }
 
-            self.start_new_session();
-            for path in paths {
-                self.add_file_to_session(path);
+            // Check if any of the selected files belong to a previous session
+            if !self.check_session_offer(paths.clone()) {
+                self.open_files_as_new_session(paths);
             }
         }
     }
@@ -234,8 +331,11 @@ impl LogCrabApp {
                 }
             }
 
-            for path in paths {
-                self.add_file_to_session(path);
+            // Check if any of the added files belong to a previous session
+            if !self.check_session_offer(paths.clone()) {
+                for path in paths {
+                    self.add_file_to_session(path);
+                }
             }
         }
     }
@@ -258,15 +358,17 @@ impl LogCrabApp {
             }
         }
 
-        // If no session exists, the first file creates the session
-        // Otherwise, all files are added to the existing workspace
-        if self.session.is_none() {
-            self.start_new_session();
-        }
+        // Check session history for dropped log files
+        if !log_files.is_empty() && !self.check_session_offer(log_files.clone()) {
+            // No session offer — proceed as before
+            if self.session.is_none() {
+                self.start_new_session();
+            }
 
-        for path in log_files {
-            tracing::info!("Adding dropped file to workspace: {}", path.display());
-            self.add_file_to_session(path);
+            for path in log_files {
+                tracing::info!("Adding dropped file to workspace: {}", path.display());
+                self.add_file_to_session(path);
+            }
         }
 
         // Import filter files if we have a log view
@@ -314,6 +416,36 @@ impl LogCrabApp {
             if self.session.is_some() && ui.button("Add File to session...").clicked() {
                 self.add_file_dialog();
                 ui.close();
+            }
+
+            // Recent sessions submenu
+            if !self.session_history.sessions.is_empty() {
+                let mut restore_idx: Option<usize> = None;
+                ui.menu_button("Recent Sessions", |ui| {
+                    for (idx, session) in self.session_history.sessions.iter().enumerate() {
+                        let label = session.display_label();
+                        let time_str = session.last_used.format("%Y-%m-%d %H:%M").to_string();
+                        let tooltip = session
+                            .files
+                            .iter()
+                            .map(|f| f.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+
+                        if ui
+                            .button(format!("{label}  ({time_str})"))
+                            .on_hover_text(tooltip)
+                            .clicked()
+                        {
+                            restore_idx = Some(idx);
+                            ui.close();
+                        }
+                    }
+                });
+                if let Some(idx) = restore_idx {
+                    let session = self.session_history.sessions[idx].clone();
+                    self.restore_session(&session);
+                }
             }
 
             // Show submenu to remove individual files
@@ -590,16 +722,164 @@ impl LogCrabApp {
         if let Some(ref mut log_view) = self.session {
             log_view.render(ui, &mut self.global_config);
         } else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(100.0);
-                ui.heading("Welcome to LogCrab 🦀");
-                ui.add_space(20.0);
-                ui.add_space(40.0);
+            self.render_welcome_screen(ui);
+        }
+    }
 
-                if ui.button("Open Log File").clicked() {
-                    self.open_file_dialog();
+    /// Render the welcome/start screen shown when no session is active
+    fn render_welcome_screen(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(60.0);
+            ui.heading("Welcome to LogCrab 🦀");
+            ui.add_space(20.0);
+
+            if ui.button("Open Log File").clicked() {
+                self.open_file_dialog();
+            }
+
+            ui.add_space(30.0);
+
+            // Show previous sessions
+            if !self.session_history.sessions.is_empty() {
+                ui.separator();
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new("Previous Sessions").strong());
+                ui.add_space(8.0);
+
+                let mut session_to_restore: Option<usize> = None;
+                let mut session_to_remove: Option<usize> = None;
+
+                egui::ScrollArea::vertical()
+                    .max_height(ui.available_height() - 20.0)
+                    .show(ui, |ui| {
+                        for (idx, session) in self.session_history.sessions.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                // Session restore button: show filenames
+                                let label = session.display_label();
+                                let tooltip = session
+                                    .files
+                                    .iter()
+                                    .map(|f| f.display().to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+
+                                let time_str =
+                                    session.last_used.format("%Y-%m-%d %H:%M").to_string();
+
+                                if ui
+                                    .button(&label)
+                                    .on_hover_text(format!("{tooltip}\n\nLast used: {time_str}"))
+                                    .clicked()
+                                {
+                                    session_to_restore = Some(idx);
+                                }
+
+                                ui.weak(&time_str);
+
+                                if ui
+                                    .small_button("✕")
+                                    .on_hover_text("Remove from history")
+                                    .clicked()
+                                {
+                                    session_to_remove = Some(idx);
+                                }
+                            });
+                        }
+                    });
+
+                if let Some(idx) = session_to_remove {
+                    match SessionHistory::update(|h| { h.sessions.remove(idx); }) {
+                        Ok(updated) => self.session_history = updated,
+                        Err(e) => tracing::error!("Failed to save session history: {e}"),
+                    }
+                } else if let Some(idx) = session_to_restore {
+                    let session = self.session_history.sessions[idx].clone();
+                    self.restore_session(&session);
+                }
+            }
+        });
+    }
+
+    /// Render the "Restore previous session?" dialog window
+    fn render_session_offer_dialog(&mut self, ctx: &egui::Context) {
+        let Some(ref offer) = self.pending_session_offer else {
+            return;
+        };
+
+        let mut action: Option<SessionOfferAction> = None;
+
+        egui::Window::new("Restore Previous Session?")
+            .collapsible(false)
+            .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                let file_label: String = offer
+                    .files
+                    .iter()
+                    .filter_map(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ui.label(format!(
+                    "The file(s) you selected ({file_label}) appeared in previous sessions."
+                ));
+                ui.label("Would you like to restore one of those sessions?");
+                ui.add_space(10.0);
+
+                // Option: open just the requested files
+                if ui.button(format!("Open only: {file_label}")).clicked() {
+                    action = Some(SessionOfferAction::JustTheFiles);
+                }
+
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // Options: each matching previous session
+                for (idx, session) in offer.matching_sessions.iter().enumerate() {
+                    let label = session.display_label();
+                    let time_str = session.last_used.format("%Y-%m-%d %H:%M").to_string();
+                    let tooltip = session
+                        .files
+                        .iter()
+                        .map(|f| f.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    if ui
+                        .button(format!("Restore session: {label}  ({time_str})"))
+                        .on_hover_text(tooltip)
+                        .clicked()
+                    {
+                        action = Some(SessionOfferAction::RestoreSession(idx));
+                    }
+                }
+
+                ui.add_space(6.0);
+                if ui.button("Cancel").clicked() {
+                    action = Some(SessionOfferAction::Cancel);
                 }
             });
+
+        if let Some(act) = action {
+            // Take ownership of the offer to avoid borrow issues
+            let offer = self.pending_session_offer.take().unwrap();
+            match act {
+                SessionOfferAction::JustTheFiles => {
+                    if self.session.is_none() {
+                        self.open_files_as_new_session(offer.files);
+                    } else {
+                        for path in offer.files {
+                            self.add_file_to_session(path);
+                        }
+                    }
+                }
+                SessionOfferAction::RestoreSession(idx) => {
+                    let session = &offer.matching_sessions[idx];
+                    self.restore_session(session);
+                }
+                SessionOfferAction::Cancel => {}
+            }
         }
     }
 
@@ -774,6 +1054,11 @@ impl eframe::App for LogCrabApp {
             windows::render_about_window(ctx, &mut self.show_about_window);
         }
 
+        // Show session offer dialog
+        if self.pending_session_offer.is_some() {
+            self.render_session_offer_dialog(ctx);
+        }
+
         // Show sidecar settings window
         {
             if let Some(mut sidecar_window) = self.sidecar_settings_window.take() {
@@ -814,5 +1099,15 @@ impl eframe::App for LogCrabApp {
         self.toast_manager.show(ctx);
 
         profiling::finish_frame!();
+    }
+}
+
+impl Drop for LogCrabApp {
+    fn drop(&mut self) {
+        // Save .crab files and record session history on exit
+        if let Some(ref session) = self.session {
+            session.save_crab_file();
+        }
+        self.record_current_session();
     }
 }

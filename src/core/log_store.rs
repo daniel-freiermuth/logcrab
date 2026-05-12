@@ -1013,6 +1013,16 @@ impl LogStore {
             .collect()
     }
 
+    /// Get full file paths for all loaded sources
+    pub fn get_source_file_paths(&self) -> Vec<PathBuf> {
+        profiling::scope!("LogStore::sources::read");
+        let sources = self.sources.read().expect("sources lock poisoned");
+        sources
+            .values()
+            .map(|source| source.file_path().to_path_buf())
+            .collect()
+    }
+
     /// Remove a source by its stable source ID
     ///
     /// Note: `StoreID`s referencing the removed source will simply fail to resolve.
