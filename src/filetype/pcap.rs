@@ -38,6 +38,9 @@ impl PcapLogLine {
 // PcapFileState
 // ============================================================================
 
+/// Well-known SOME/IP Service Discovery port
+const SOMEIP_SD_PORT: u16 = 30490;
+
 /// File state for PCAP files, including time offset and SOME/IP SD decoding state
 #[derive(Debug)]
 pub struct PcapFileState {
@@ -45,6 +48,8 @@ pub struct PcapFileState {
     inner: crate::filetype::SimpleFileState,
     /// Set of multicast address:port combinations that should decode SOME/IP SD
     someip_sd_decodings: std::sync::Mutex<HashSet<String>>,
+    /// Known SOME/IP endpoints discovered from SD messages (format: "TCP:ip:port" or "UDP:ip:port")
+    someip_known_endpoints: std::sync::Mutex<HashSet<String>>,
 }
 
 impl PcapFileState {
@@ -82,6 +87,25 @@ impl PcapFileState {
             true
         }
     }
+
+    /// Add discovered SOME/IP endpoints from SD messages
+    pub fn add_someip_endpoints(&self, endpoints: &[SomeIpEndpoint]) {
+        let mut known = self
+            .someip_known_endpoints
+            .lock()
+            .expect("someip_known_endpoints lock poisoned");
+        for ep in endpoints {
+            known.insert(ep.key());
+        }
+    }
+
+    /// Check if a given address:port is a known SOME/IP endpoint
+    pub fn is_known_someip_endpoint(&self, proto: &str, addr: &str, port: u16) -> bool {
+        self.someip_known_endpoints
+            .lock()
+            .expect("someip_known_endpoints lock poisoned")
+            .contains(&format!("{proto}:{addr}:{port}"))
+    }
 }
 
 impl Default for PcapFileState {
@@ -89,6 +113,7 @@ impl Default for PcapFileState {
         Self {
             inner: crate::filetype::SimpleFileState::default(),
             someip_sd_decodings: std::sync::Mutex::new(HashSet::new()),
+            someip_known_endpoints: std::sync::Mutex::new(HashSet::new()),
         }
     }
 }
@@ -103,6 +128,12 @@ impl Clone for PcapFileState {
                     .expect("someip_sd_decodings lock poisoned")
                     .clone(),
             ),
+            someip_known_endpoints: std::sync::Mutex::new(
+                self.someip_known_endpoints
+                    .lock()
+                    .expect("someip_known_endpoints lock poisoned")
+                    .clone(),
+            ),
         }
     }
 }
@@ -110,7 +141,7 @@ impl Clone for PcapFileState {
 impl serde::Serialize for PcapFileState {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut state = s.serialize_struct("PcapFileState", 2)?;
+        let mut state = s.serialize_struct("PcapFileState", 3)?;
         state.serialize_field("time_offset_ms", &self.time_offset_ms())?;
         let decodings: Vec<String> = self
             .someip_sd_decodings
@@ -120,6 +151,14 @@ impl serde::Serialize for PcapFileState {
             .cloned()
             .collect();
         state.serialize_field("someip_sd_decodings", &decodings)?;
+        let endpoints: Vec<String> = self
+            .someip_known_endpoints
+            .lock()
+            .expect("someip_known_endpoints lock poisoned")
+            .iter()
+            .cloned()
+            .collect();
+        state.serialize_field("someip_known_endpoints", &endpoints)?;
         state.end()
     }
 }
@@ -132,6 +171,8 @@ impl<'de> serde::Deserialize<'de> for PcapFileState {
             time_offset_ms: i64,
             #[serde(default)]
             someip_sd_decodings: Vec<String>,
+            #[serde(default)]
+            someip_known_endpoints: Vec<String>,
         }
         let h = Helper::deserialize(d)?;
         Ok(Self {
@@ -140,6 +181,7 @@ impl<'de> serde::Deserialize<'de> for PcapFileState {
                 calibration: std::sync::Mutex::new(None),
             },
             someip_sd_decodings: std::sync::Mutex::new(h.someip_sd_decodings.into_iter().collect()),
+            someip_known_endpoints: std::sync::Mutex::new(h.someip_known_endpoints.into_iter().collect()),
         })
     }
 }
@@ -184,11 +226,35 @@ impl LineType for PcapLogLine {
             self.packet_info.format_message()
         };
 
-        // Add SOME/IP SD decoding if active for this multicast address:port
-        if let Some(key) = self.packet_info.multicast_key() {
+        let pi = &self.packet_info;
+
+        // 1. Auto-decode SOME/IP-SD on well-known SD port (30490)
+        if pi.protocol == "UDP"
+            && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
+        {
+            if let Some(ref payload) = pi.transport_payload {
+                if let Some(sd_info) = decode_someip_sd(payload) {
+                    // Lazily register discovered endpoints
+                    file_state.add_someip_endpoints(&sd_info.endpoints);
+                    let entries_str = if sd_info.entries.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", sd_info.entries.join(", "))
+                    };
+                    return format!(
+                        "{} [SOME/IP-SD {}{}]",
+                        base_msg, sd_info.message_type, entries_str
+                    );
+                }
+            }
+        }
+
+        // 2. Legacy per-multicast toggle (backward compat)
+        if let Some(key) = pi.multicast_key() {
             if file_state.is_someip_sd_active(&key) {
-                if let Some(ref payload) = self.packet_info.udp_payload {
+                if let Some(ref payload) = pi.transport_payload {
                     if let Some(sd_info) = decode_someip_sd(payload) {
+                        file_state.add_someip_endpoints(&sd_info.endpoints);
                         let entries_str = if sd_info.entries.is_empty() {
                             String::new()
                         } else {
@@ -199,6 +265,22 @@ impl LineType for PcapLogLine {
                             base_msg, sd_info.message_type, entries_str
                         );
                     }
+                }
+            }
+        }
+
+        // 3. Auto-decode SOME/IP on known endpoints discovered from SD
+        if let Some(ref payload) = pi.transport_payload {
+            let proto = &pi.protocol;
+            let is_known_src = pi
+                .src_port
+                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.src_addr, p));
+            let is_known_dst = pi
+                .dst_port
+                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.dst_addr, p));
+            if is_known_src || is_known_dst {
+                if let Some(someip_str) = decode_someip(payload) {
+                    return format!("{} [SOME/IP {}]", base_msg, someip_str);
                 }
             }
         }
@@ -275,10 +357,14 @@ impl InputFileType for PcapFileType {
     fn open(
         path: &Path,
         _config: (),
-        _file_state: std::sync::Arc<PcapFileState>,
+        file_state: std::sync::Arc<PcapFileState>,
     ) -> anyhow::Result<Self> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let lines = parse_pcap_to_lines(path)?;
+
+        // Pre-scan for SOME/IP-SD endpoints on the well-known SD port
+        pre_discover_someip_endpoints(&lines, &file_state);
+
         Ok(Self {
             lines,
             cursor: 0,
@@ -331,7 +417,7 @@ pub struct PacketInfo {
     pub info: String,
     pub tcp_details: Option<TcpDetails>,
     pub is_abnormal: bool,
-    pub udp_payload: Option<Vec<u8>>,
+    pub transport_payload: Option<Vec<u8>>,
 }
 
 /// TCP-specific packet details
@@ -678,13 +764,29 @@ fn is_multicast_address(addr: &str) -> bool {
 }
 
 // ============================================================================
-// SOME/IP SD Decoder
+// SOME/IP Decoder
 // ============================================================================
+
+/// A discovered SOME/IP endpoint (address + port + transport protocol)
+#[derive(Debug, Clone)]
+pub struct SomeIpEndpoint {
+    pub addr: String,
+    pub port: u16,
+    pub protocol: &'static str, // "TCP" or "UDP"
+}
+
+impl SomeIpEndpoint {
+    /// Key format used for HashSet lookups: "TCP:10.0.0.1:30000"
+    pub fn key(&self) -> String {
+        format!("{}:{}:{}", self.protocol, self.addr, self.port)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SomeIpSdInfo {
     pub message_type: String,
     pub entries: Vec<String>,
+    pub endpoints: Vec<SomeIpEndpoint>,
 }
 
 /// Decode SOME/IP SD (Service Discovery) payload using `someip_parse` library
@@ -725,6 +827,35 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
                 | SdOption::Ipv4SdEndpoint(_)
                 | SdOption::Ipv6SdEndpoint(_)
                 | SdOption::UnknownDiscardable(_) => None,
+            })
+            .collect()
+    }
+
+    /// Extract `SomeIpEndpoint` objects from a slice of SD options.
+    fn extract_endpoints(opts: &[SdOption]) -> Vec<SomeIpEndpoint> {
+        opts.iter()
+            .filter_map(|opt| match opt {
+                SdOption::Ipv4Endpoint(e) => Some(SomeIpEndpoint {
+                    addr: Ipv4Addr::from(e.ipv4_address).to_string(),
+                    port: e.port,
+                    protocol: proto_str(e.transport_protocol),
+                }),
+                SdOption::Ipv6Endpoint(e) => Some(SomeIpEndpoint {
+                    addr: Ipv6Addr::from(e.ipv6_address).to_string(),
+                    port: e.port,
+                    protocol: proto_str(e.transport_protocol),
+                }),
+                SdOption::Ipv4Multicast(e) => Some(SomeIpEndpoint {
+                    addr: Ipv4Addr::from(e.ipv4_address).to_string(),
+                    port: e.port,
+                    protocol: proto_str(e.transport_protocol),
+                }),
+                SdOption::Ipv6Multicast(e) => Some(SomeIpEndpoint {
+                    addr: Ipv6Addr::from(e.ipv6_address).to_string(),
+                    port: e.port,
+                    protocol: proto_str(e.transport_protocol),
+                }),
+                _ => None,
             })
             .collect()
     }
@@ -828,10 +959,87 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
         someip_parse::MessageType::Error => "ERROR",
     };
 
+    // Extract all endpoints from SD options for lazy discovery
+    let discovered_endpoints = extract_endpoints(&sd_header.options);
+
     Some(SomeIpSdInfo {
         message_type: msg_type.to_string(),
         entries,
+        endpoints: discovered_endpoints,
     })
+}
+
+/// Decode a non-SD SOME/IP message and return a formatted summary string.
+fn decode_someip(payload: &[u8]) -> Option<String> {
+    use someip_parse::SomeipMsgSlice;
+
+    let Ok(msg) = SomeipMsgSlice::from_slice(payload) else {
+        return None;
+    };
+
+    // Skip SD messages — those are handled by decode_someip_sd
+    if msg.is_someip_sd() {
+        return None;
+    }
+
+    let msg_type = match msg.message_type() {
+        someip_parse::MessageType::Request => "REQ",
+        someip_parse::MessageType::RequestNoReturn => "FIRE&FORGET",
+        someip_parse::MessageType::Notification => "NOTIFY",
+        someip_parse::MessageType::Response => "RESP",
+        someip_parse::MessageType::Error => "ERR",
+    };
+
+    let service_id = msg.service_id();
+    let method_or_event = msg.event_or_method_id();
+    let client_id = (msg.request_id() >> 16) as u16;
+    let session_id = (msg.request_id() & 0xFFFF) as u16;
+    let return_code = msg.return_code();
+    let payload_len = msg.payload().len();
+
+    let id_label = if msg.is_event() { "evt" } else { "method" };
+    let tp = if msg.is_tp() { " TP" } else { "" };
+
+    let rc_str = match return_code {
+        0x00 => String::new(),
+        0x01 => " RC=NOT_OK".to_string(),
+        0x02 => " RC=UNKNOWN_SERVICE".to_string(),
+        0x03 => " RC=UNKNOWN_METHOD".to_string(),
+        _ => format!(" RC=0x{return_code:02x}"),
+    };
+
+    Some(format!(
+        "{msg_type} svc=0x{service_id:04x} {id_label}=0x{method_or_event:04x} client=0x{client_id:04x} sess=0x{session_id:04x}{tp}{rc_str} Len={payload_len}",
+    ))
+}
+
+// ============================================================================
+// SOME/IP endpoint pre-discovery
+// ============================================================================
+
+/// Scan parsed packets for SOME/IP-SD messages on the well-known SD port and
+/// populate the file state with discovered SOME/IP endpoints.
+fn pre_discover_someip_endpoints(lines: &[PcapLogLine], file_state: &PcapFileState) {
+    let mut endpoints = Vec::new();
+    for line in lines {
+        let pi = &line.packet_info;
+        if pi.protocol == "UDP"
+            && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
+        {
+            if let Some(ref payload) = pi.transport_payload {
+                if let Some(sd_info) = decode_someip_sd(payload) {
+                    endpoints.extend(sd_info.endpoints);
+                }
+            }
+        }
+    }
+    if !endpoints.is_empty() {
+        tracing::info!(
+            "Pre-discovered {} SOME/IP endpoints from SD messages",
+            endpoints.len()
+        );
+        file_state.add_someip_endpoints(&endpoints);
+    }
 }
 
 // ============================================================================
@@ -868,7 +1076,7 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
             info: "ARP Request/Reply".to_string(),
             tcp_details: None,
             is_abnormal: false,
-            udp_payload: None,
+            transport_payload: None,
         }),
         _ => Some(PacketInfo {
             timestamp,
@@ -882,7 +1090,7 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
             info: String::new(),
             tcp_details: None,
             is_abnormal: false,
-            udp_payload: None,
+            transport_payload: None,
         }),
     }
 }
@@ -916,10 +1124,10 @@ fn parse_ipv4_packet(
     let dst_ip = format!("{}.{}.{}.{}", data[16], data[17], data[18], data[19]);
     let total_len = u16::from_be_bytes([data[2], data[3]]);
     let transport_data = &data[ihl..];
-    let (proto_name, src_port, dst_port, info, tcp_details, udp_payload) = match protocol {
+    let (proto_name, src_port, dst_port, info, tcp_details, transport_payload) = match protocol {
         6 => {
-            let (p, sp, dp, i, td) = parse_tcp_info(transport_data);
-            (p, sp, dp, i, td, None)
+            let (p, sp, dp, i, td, payload) = parse_tcp_info(transport_data);
+            (p, sp, dp, i, td, payload)
         }
         17 => {
             let (p, sp, dp, i, payload) = parse_udp_info(transport_data);
@@ -957,7 +1165,7 @@ fn parse_ipv4_packet(
         info,
         tcp_details,
         is_abnormal,
-        udp_payload,
+        transport_payload,
     })
 }
 
@@ -975,10 +1183,10 @@ fn parse_ipv6_packet(
     let src_ip = format_ipv6(&data[8..24]);
     let dst_ip = format_ipv6(&data[24..40]);
     let transport_data = &data[40..];
-    let (proto_name, src_port, dst_port, info, tcp_details, udp_payload) = match next_header {
+    let (proto_name, src_port, dst_port, info, tcp_details, transport_payload) = match next_header {
         6 => {
-            let (p, sp, dp, i, td) = parse_tcp_info(transport_data);
-            (p, sp, dp, i, td, None)
+            let (p, sp, dp, i, td, payload) = parse_tcp_info(transport_data);
+            (p, sp, dp, i, td, payload)
         }
         17 => {
             let (p, sp, dp, i, payload) = parse_udp_info(transport_data);
@@ -1009,7 +1217,7 @@ fn parse_ipv6_packet(
         info,
         tcp_details,
         is_abnormal,
-        udp_payload,
+        transport_payload,
     })
 }
 
@@ -1027,9 +1235,18 @@ fn format_ipv6(bytes: &[u8]) -> String {
     }
 }
 
-fn parse_tcp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String, Option<TcpDetails>) {
+fn parse_tcp_info(
+    data: &[u8],
+) -> (
+    String,
+    Option<u16>,
+    Option<u16>,
+    String,
+    Option<TcpDetails>,
+    Option<Vec<u8>>,
+) {
     if data.len() < 20 {
-        return ("TCP".to_string(), None, None, String::new(), None);
+        return ("TCP".to_string(), None, None, String::new(), None, None);
     }
     let src_port = u16::from_be_bytes([data[0], data[1]]);
     let dst_port = u16::from_be_bytes([data[2], data[3]]);
@@ -1042,6 +1259,11 @@ fn parse_tcp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String, Opt
         (data.len() - data_offset) as u32
     } else {
         0
+    };
+    let tcp_payload = if data.len() > data_offset {
+        Some(data[data_offset..].to_vec())
+    } else {
+        None
     };
     let tcp_details = TcpDetails {
         seq,
@@ -1056,6 +1278,7 @@ fn parse_tcp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String, Opt
         Some(dst_port),
         String::new(),
         Some(tcp_details),
+        tcp_payload,
     )
 }
 
