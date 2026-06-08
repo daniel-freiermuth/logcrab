@@ -51,6 +51,11 @@ impl LogcatLogLine {
             line_number,
         }
     }
+
+    /// Full message portion including PID/TID/LEVEL prefix.
+    pub fn message_text(&self) -> &str {
+        &self.message_text
+    }
 }
 
 // ============================================================================

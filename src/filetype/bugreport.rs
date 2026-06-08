@@ -358,10 +358,10 @@ impl LineType for BugreportLogLine {
                         crate::parser::format_time_diff(chrono::Duration::milliseconds(
                             offset_ms
                         )),
-                        l.message()
+                        l.message_text()
                     )
                 } else {
-                    l.message()
+                    l.message_text().to_owned()
                 }
             }
             // Dmesg timestamps are boot-relative and always shifted by the
