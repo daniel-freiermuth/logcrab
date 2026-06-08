@@ -1,6 +1,6 @@
 # Maintainer: Daniel Freiermuth <daniel@freiermuth.dev>
 pkgname=logcrab
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="A polyscopic anomaly explorer built with Rust and egui"
 arch=('x86_64')
