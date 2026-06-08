@@ -667,6 +667,23 @@ impl LogCrabApp {
                     }
                 }
             }
+
+            ui.separator();
+
+            if ui
+                .checkbox(
+                    &mut self.global_config.hide_duplicates,
+                    "Hide Duplicate Lines",
+                )
+                .on_hover_text("Hide exact duplicate log lines (same timestamp, source, and message)")
+                .changed()
+            {
+                let new_val = self.global_config.hide_duplicates;
+                match GlobalConfig::update(|c| c.hide_duplicates = new_val) {
+                    Ok(updated) => self.global_config = updated,
+                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                }
+            }
         });
 
         ui.menu_button("Help", |ui| {

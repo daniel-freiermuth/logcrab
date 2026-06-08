@@ -112,6 +112,9 @@ impl FilterView {
         }
         self.state
             .search
+            .hide_duplicates = global_config.hide_duplicates;
+        self.state
+            .search
             .ensure_cache_valid(&log_view_state.store, &log_view_state.filter_worker);
 
         // Render filter bar

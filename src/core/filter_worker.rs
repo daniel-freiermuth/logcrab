@@ -45,6 +45,8 @@ pub struct FilterRequest {
     pub exclude_text: String,
     /// Whether case sensitivity was enabled (for result tracking)
     pub case_sensitive: bool,
+    /// Whether to deduplicate exact matches (same timestamp, source, message)
+    pub hide_duplicates: bool,
 }
 
 /// Result from background filtering
@@ -56,6 +58,8 @@ pub struct FilterResult {
     pub exclude_text: String,
     /// Whether case sensitivity was enabled
     pub case_sensitive: bool,
+    /// Whether deduplication was applied
+    pub hide_duplicates: bool,
     /// The `LogStore` version these indices were computed for
     pub store_version: StoreVersion,
 }
@@ -170,6 +174,32 @@ impl FilterWorker {
                     })
                 };
 
+                // Apply deduplication if requested (serial pass after parallel regex filter)
+                let filtered_indices = if request.hide_duplicates {
+                    profiling::scope!("dedup_filter");
+                    let mut seen = std::collections::HashSet::new();
+                    filtered_indices
+                        .into_iter()
+                        .filter(|id| {
+                            if let (Some(ts), Some(line)) = (
+                                request.store.adjusted_timestamp(id),
+                                request.store.get_by_id(id),
+                            ) {
+                                let key = (
+                                    ts.timestamp_nanos_opt().unwrap_or(0),
+                                    id.source_id(),
+                                    line.message,
+                                );
+                                seen.insert(key)
+                            } else {
+                                true
+                            }
+                        })
+                        .collect()
+                } else {
+                    filtered_indices
+                };
+
                 tracing::trace!(
                     "Filter {} complete: {} matches",
                     filter_id,
@@ -181,6 +211,7 @@ impl FilterWorker {
                     search_text: request.search_text.clone(),
                     exclude_text: request.exclude_text.clone(),
                     case_sensitive: request.case_sensitive,
+                    hide_duplicates: request.hide_duplicates,
                     store_version,
                 };
 

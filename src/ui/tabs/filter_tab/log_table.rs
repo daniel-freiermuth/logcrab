@@ -334,6 +334,7 @@ impl LogTable {
         let dark_mode = ui.visuals().dark_mode;
 
         // Get filtered indices first to avoid borrow conflicts
+        // Deduplication (when enabled) is already applied by the background filter worker.
         let filtered_indices = filter.search.get_filtered_indices_cached();
         let filter_id = filter.get_id();
 

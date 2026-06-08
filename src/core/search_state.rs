@@ -44,6 +44,8 @@ pub struct SearchState {
     pub exclude_text: String,
     /// Whether the search is case-sensitive
     pub case_sensitive: bool,
+    /// Whether to deduplicate exact matches (same timestamp, source, message)
+    pub hide_duplicates: bool,
     /// Cached indices of matching lines (Arc allows cheap cloning)
     filtered_indices: Arc<Vec<StoreID>>,
 
@@ -52,12 +54,14 @@ pub struct SearchState {
     last_requested_text: String,
     last_requested_exclude: String,
     last_requested_case: bool,
+    last_requested_dedup: bool,
 
     /// What the current `filtered_indices` was actually computed for
     /// (only updated when results are received)
     indices_computed_for_text: String,
     indices_computed_for_exclude: String,
     indices_computed_for_case: bool,
+    indices_computed_for_dedup: bool,
     indices_computed_for_version: StoreVersion,
 
     /// Channel for receiving background filter results
@@ -79,10 +83,13 @@ impl SearchState {
             last_requested_text: String::new(),
             last_requested_exclude: String::new(),
             case_sensitive: false,
+            hide_duplicates: false,
             last_requested_case: false,
+            last_requested_dedup: false,
             indices_computed_for_text: String::new(),
             indices_computed_for_exclude: String::new(),
             indices_computed_for_case: false,
+            indices_computed_for_dedup: false,
             indices_computed_for_version: StoreVersion::default(),
             filtered_indices: Arc::new(Vec::new()),
             last_requested_version: StoreVersion::default(),
@@ -147,6 +154,7 @@ impl SearchState {
                 search_text: self.search_text.clone(),
                 exclude_text: self.exclude_text.clone(),
                 case_sensitive: self.case_sensitive,
+                hide_duplicates: self.hide_duplicates,
             };
 
             worker.send_request(request);
@@ -164,6 +172,7 @@ impl SearchState {
             self.indices_computed_for_text = result.search_text;
             self.indices_computed_for_exclude = result.exclude_text;
             self.indices_computed_for_case = result.case_sensitive;
+            self.indices_computed_for_dedup = result.hide_duplicates;
             self.indices_computed_for_version = result.store_version;
             got_any = true;
         }
@@ -193,12 +202,14 @@ impl SearchState {
             || self.last_requested_text != self.search_text
             || self.last_requested_exclude != self.exclude_text
             || self.last_requested_case != self.case_sensitive
+            || self.last_requested_dedup != self.hide_duplicates
         {
             self.request_filter_update(Arc::clone(store), worker);
             self.last_requested_version = store.version();
             self.last_requested_text = self.search_text.clone();
             self.last_requested_exclude = self.exclude_text.clone();
             self.last_requested_case = self.case_sensitive;
+            self.last_requested_dedup = self.hide_duplicates;
         }
     }
 

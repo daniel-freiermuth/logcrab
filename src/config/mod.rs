@@ -45,7 +45,8 @@ pub enum DltTimestampSource {
 ///   v1 — initial versioned schema
 ///   v2 — added sidecar scoring fields: `use_sidecar_scoring`, `color_by_ml_score`,
 ///         `grey_rare_ml_lines`, `sidecar_host`, `sidecar_port`, `selected_model`
-pub const SCHEMA_VERSION: u32 = 2;
+///   v3 — added `hide_duplicates`
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Global user configuration stored in config directory
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +111,10 @@ pub struct GlobalConfig {
     #[serde(default = "default_sidecar_port")]
     pub sidecar_port: u16,
 
+    /// Hide exact duplicate log lines (same timestamp, source, and message) in filter views.
+    #[serde(default)]
+    pub hide_duplicates: bool,
+
     /// Selected model id (slug) for anomaly detection.
     /// `None` means no model is selected; sidecar scoring will be skipped.
     #[serde(default)]
@@ -143,6 +148,7 @@ impl Default for GlobalConfig {
             use_sidecar_scoring: false,
             color_by_ml_score: false,
             grey_rare_ml_lines: true,
+            hide_duplicates: false,
             sidecar_host: default_sidecar_host(),
             sidecar_port: default_sidecar_port(),
             selected_model: None,
