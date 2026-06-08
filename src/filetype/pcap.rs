@@ -193,11 +193,32 @@ impl crate::filetype::LogFileState for PcapFileState {
 }
 
 // ============================================================================
+// PcapConfig — persistent per-type settings
+// ============================================================================
+
+/// Persistent settings for PCAP files, stored in the global config.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PcapConfig {
+    /// When `true`, include the Ethernet MAC addresses in each log line.
+    #[serde(default)]
+    pub show_mac_addresses: bool,
+}
+
+impl crate::filetype::EguiConfig for PcapConfig {
+    fn egui_render(&mut self, ui: &mut egui::Ui) -> bool {
+        ui.separator();
+        ui.label("PCAP:");
+        let resp = ui.checkbox(&mut self.show_mac_addresses, "Show MAC addresses");
+        resp.changed()
+    }
+}
+
+// ============================================================================
 // LineType implementation
 // ============================================================================
 
 impl LineType for PcapLogLine {
-    type Config = ();
+    type Config = PcapConfig;
     type FileState = PcapFileState;
 
     fn file_state_from_v2(time_offset_ms: i64) -> PcapFileState {
@@ -206,7 +227,7 @@ impl LineType for PcapLogLine {
         s
     }
 
-    fn timestamp(&self, _config: &(), file_state: &PcapFileState) -> DateTime<Local> {
+    fn timestamp(&self, _config: &PcapConfig, file_state: &PcapFileState) -> DateTime<Local> {
         self.packet_info.timestamp + chrono::Duration::milliseconds(file_state.time_offset_ms())
     }
 
@@ -214,7 +235,7 @@ impl LineType for PcapLogLine {
         self.packet_info.format_message()
     }
 
-    fn display_message(&self, _config: &(), file_state: &PcapFileState) -> String {
+    fn display_message(&self, config: &PcapConfig, file_state: &PcapFileState) -> String {
         let offset_ms = file_state.time_offset_ms();
         let base_msg = if offset_ms != 0 {
             format!(
@@ -224,6 +245,17 @@ impl LineType for PcapLogLine {
             )
         } else {
             self.packet_info.format_message()
+        };
+
+        // Prepend MAC addresses if the setting is enabled.
+        let base_msg = if config.show_mac_addresses {
+            let pi = &self.packet_info;
+            match (&pi.src_mac, &pi.dst_mac) {
+                (Some(smac), Some(dmac)) => format!("{smac} \u{2192} {dmac} | {base_msg}"),
+                _ => base_msg,
+            }
+        } else {
+            base_msg
         };
 
         let pi = &self.packet_info;
@@ -296,7 +328,7 @@ impl LineType for PcapLogLine {
         self.line_number
     }
 
-    fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &PcapFileState) {
+    fn egui_render_context_menu(&self, ui: &mut Ui, _config: &PcapConfig, file_state: &PcapFileState) {
         if ui.button("⏱ Calibrate Time Here").clicked() {
             let raw_time = self.packet_info.timestamp;
             let display_time =
@@ -356,7 +388,7 @@ impl InputFileType for PcapFileType {
     /// Open a pcap/pcapng file for pull-based reading.
     fn open(
         path: &Path,
-        _config: (),
+        _config: PcapConfig,
         file_state: std::sync::Arc<PcapFileState>,
     ) -> anyhow::Result<Self> {
         let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -411,6 +443,10 @@ pub struct PacketInfo {
     pub src_port: Option<u16>,
     pub dst_addr: String,
     pub dst_port: Option<u16>,
+    /// Ethernet source MAC address (e.g. `"aa:bb:cc:dd:ee:ff"`), if available.
+    pub src_mac: Option<String>,
+    /// Ethernet destination MAC address, if available.
+    pub dst_mac: Option<String>,
     pub protocol: String,
     pub vlan_id: Option<u16>,
     pub length: u32,
@@ -1051,6 +1087,8 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
     if data.len() < 14 {
         return None;
     }
+    let src_mac = format_mac(&data[6..12]);
+    let dst_mac = format_mac(&data[0..6]);
     let mut ethertype = u16::from_be_bytes([data[12], data[13]]);
     let mut payload_offset = 14;
     let mut vlan_id = None;
@@ -1062,14 +1100,27 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
     }
     let payload = &data[payload_offset..];
     match ethertype {
-        0x0800 => parse_ipv4_packet(payload, timestamp, vlan_id),
-        0x86DD => parse_ipv6_packet(payload, timestamp, vlan_id),
+        0x0800 => {
+            let mut pi = parse_ipv4_packet(payload, timestamp, vlan_id)?;
+            pi.src_mac = Some(src_mac);
+            pi.dst_mac = Some(dst_mac);
+            Some(pi)
+        }
+        0x86DD => {
+            let mut pi = parse_ipv6_packet(payload, timestamp, vlan_id)?;
+            pi.src_mac = Some(src_mac);
+            pi.dst_mac = Some(dst_mac);
+            Some(pi)
+        }
         0x0806 => Some(PacketInfo {
             timestamp,
-            src_addr: format_mac(&data[6..12]),
+            // For ARP the "addresses" are the MACs themselves; no separate MAC field.
+            src_addr: src_mac,
             src_port: None,
-            dst_addr: format_mac(&data[0..6]),
+            dst_addr: dst_mac,
             dst_port: None,
+            src_mac: None,
+            dst_mac: None,
             protocol: "ARP".to_string(),
             vlan_id,
             length: data.len() as u32,
@@ -1080,10 +1131,12 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
         }),
         _ => Some(PacketInfo {
             timestamp,
-            src_addr: format_mac(&data[6..12]),
+            src_addr: src_mac,
             src_port: None,
-            dst_addr: format_mac(&data[0..6]),
+            dst_addr: dst_mac,
             dst_port: None,
+            src_mac: None,
+            dst_mac: None,
             protocol: format!("0x{ethertype:04x}"),
             vlan_id,
             length: data.len() as u32,
@@ -1159,6 +1212,8 @@ fn parse_ipv4_packet(
         src_port,
         dst_addr: dst_ip,
         dst_port,
+        src_mac: None,
+        dst_mac: None,
         protocol: proto_name,
         vlan_id,
         length: u32::from(total_len),
@@ -1211,6 +1266,8 @@ fn parse_ipv6_packet(
         src_port,
         dst_addr: dst_ip,
         dst_port,
+        src_mac: None,
+        dst_mac: None,
         protocol: proto_name,
         vlan_id,
         length: u32::from(payload_len) + 40,

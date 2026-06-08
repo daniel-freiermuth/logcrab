@@ -46,7 +46,8 @@ pub enum DltTimestampSource {
 ///   v2 — added sidecar scoring fields: `use_sidecar_scoring`, `color_by_ml_score`,
 ///         `grey_rare_ml_lines`, `sidecar_host`, `sidecar_port`, `selected_model`
 ///   v3 — added `hide_duplicates`
-pub const SCHEMA_VERSION: u32 = 3;
+///   v4 — added `file_config.pcap` (`PcapConfig`) with `show_mac_addresses`
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Global user configuration stored in config directory
 #[derive(Debug, Clone, Serialize, Deserialize)]
