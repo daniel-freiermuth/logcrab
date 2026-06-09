@@ -175,7 +175,10 @@ impl FilterView {
         // Check for completed filter results from background thread
         let scroll_to_row = {
             profiling::scope!("find_scroll_position");
-            if self.state.last_rendered_selection == selected_line_index {
+            if self.state.scroll_locked {
+                // Scroll lock active — don't follow the global selection
+                None
+            } else if self.state.last_rendered_selection == selected_line_index {
                 None
             } else {
                 self.state.last_rendered_selection = selected_line_index;

@@ -103,6 +103,7 @@ impl FilterBar {
             Self::render_edit_button(ui, &mut events);
             Self::render_globally_visible_toggle(ui, filter, log_view_state);
             Self::render_histogram_toggle(ui, filter, log_view_state);
+            Self::render_scroll_lock_toggle(ui, filter);
             Self::render_color_picker(ui, filter);
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, global_config, &mut events);
@@ -423,6 +424,11 @@ impl FilterBar {
         {
             session_state.modified = true;
         }
+    }
+
+    fn render_scroll_lock_toggle(ui: &mut Ui, filter: &mut FilterState) {
+        ui.toggle_value(&mut filter.scroll_locked, "🔒")
+            .on_hover_text("Lock scroll — don't follow selection from other tabs");
     }
 
     fn render_validation_status(ui: &mut Ui, filter: &FilterState) {
