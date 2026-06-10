@@ -139,6 +139,21 @@ impl DltLogLine {
 }
 
 // ============================================================================
+// SyncPoint
+// ============================================================================
+
+/// A time sync point that introduces a time offset for all lines from a given
+/// line number onwards. Multiple sync points create piecewise-constant offsets
+/// along the file.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncPoint {
+    /// The line number from which this offset takes effect (inclusive).
+    pub from_line: usize,
+    /// The time offset in milliseconds to apply.
+    pub offset_ms: i64,
+}
+
+// ============================================================================
 // DltFileState
 // ============================================================================
 
@@ -164,6 +179,25 @@ pub struct DltCalibrationState {
     pub window: crate::filetype::CalibrationWindow,
 }
 
+/// Pending sync-point calibration — the user right-clicked a line and wants
+/// to set a sync point starting at that line number.
+pub struct DltSyncPointCalibration {
+    /// Line number from which this sync point will apply.
+    pub from_line: usize,
+    /// The raw storage timestamp of the right-clicked line.
+    pub storage_time: chrono::DateTime<chrono::Local>,
+    /// Header timestamp (monotonic) of the right-clicked line, if available.
+    pub header_timestamp_us: Option<i64>,
+    /// ECU ID for inferred boot-time lookup.
+    pub ecu_id: String,
+    /// App ID for inferred boot-time lookup.
+    pub app_id: String,
+    /// Whether we're in inferred-monotonic mode.
+    pub is_inferred: bool,
+    /// The calibration UI window.
+    pub window: crate::filetype::CalibrationWindow,
+}
+
 /// Per-source persistent state for DLT log sources.
 ///
 /// Owns its interior synchronization so it can live in a bare `Arc` with no
@@ -181,14 +215,35 @@ pub struct DltFileState {
     /// `.crab`. On re-open, persisted values take precedence over the
     /// freshly computed defaults, preserving calibration across sessions.
     pub boot_times: Arc<DashMap<(String, String), DateTime<Local>>>,
+    /// Sync points: piecewise time offsets that apply from a given line number onwards.
+    /// Sorted by `from_line` ascending. Each sync point's offset is *absolute* (not cumulative).
+    pub sync_points: Mutex<Vec<SyncPoint>>,
     /// Open calibration window, if any. Not persisted.
     pub calibration: Mutex<Option<DltCalibrationState>>,
+    /// Open sync-point calibration window, if any. Not persisted.
+    pub sync_point_calibration: Mutex<Option<DltSyncPointCalibration>>,
+    /// Whether the sync points management window is open. Not persisted.
+    pub show_sync_points_window: std::sync::atomic::AtomicBool,
+    /// Pending line jump request from sync-point window click. `usize::MAX` = none.
+    pub pending_jump_line: std::sync::atomic::AtomicUsize,
 }
 
 impl DltFileState {
     #[inline]
     pub fn storage_offset_ms(&self) -> i64 {
         self.storage_offset_ms.load(Ordering::Relaxed)
+    }
+
+    /// Look up the sync-point offset that applies to a given line number.
+    /// Returns 0 if no sync point applies.
+    pub fn sync_point_offset_ms(&self, line_number: usize) -> i64 {
+        let sync_points = self.sync_points.lock().expect("sync_points lock poisoned");
+        // Binary search: find the last sync point with from_line <= line_number
+        match sync_points.binary_search_by_key(&line_number, |sp| sp.from_line) {
+            Ok(idx) => sync_points[idx].offset_ms,
+            Err(0) => 0, // line_number is before any sync point
+            Err(idx) => sync_points[idx - 1].offset_ms,
+        }
     }
 }
 
@@ -197,16 +252,22 @@ impl Default for DltFileState {
         Self {
             storage_offset_ms: AtomicI64::new(0),
             boot_times: Arc::new(DashMap::new()),
+            sync_points: Mutex::new(Vec::new()),
             calibration: Mutex::new(None),
+            sync_point_calibration: Mutex::new(None),
+            show_sync_points_window: std::sync::atomic::AtomicBool::new(false),
+            pending_jump_line: std::sync::atomic::AtomicUsize::new(usize::MAX),
         }
     }
 }
 
 impl std::fmt::Debug for DltFileState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sp_count = self.sync_points.lock().map(|v| v.len()).unwrap_or(0);
         f.debug_struct("DltFileState")
             .field("storage_offset_ms", &self.storage_offset_ms())
             .field("boot_times_count", &self.boot_times.len())
+            .field("sync_points_count", &sp_count)
             .finish_non_exhaustive()
     }
 }
@@ -220,10 +281,21 @@ impl Clone for DltFileState {
             .iter()
             .map(|e| (e.key().clone(), *e.value()))
             .collect();
+        let sp = self
+            .sync_points
+            .lock()
+            .expect("sync_points lock poisoned")
+            .clone();
         Self {
             storage_offset_ms: AtomicI64::new(self.storage_offset_ms()),
             boot_times: Arc::new(bt),
+            sync_points: Mutex::new(sp),
             calibration: Mutex::new(None),
+            sync_point_calibration: Mutex::new(None),
+            show_sync_points_window: std::sync::atomic::AtomicBool::new(
+                self.show_sync_points_window.load(Ordering::Relaxed),
+            ),
+            pending_jump_line: std::sync::atomic::AtomicUsize::new(usize::MAX),
         }
     }
 }
@@ -257,9 +329,14 @@ fn string_map_to_boot_times(
 impl serde::Serialize for DltFileState {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut state = s.serialize_struct("DltFileState", 2)?;
+        let sp = self
+            .sync_points
+            .lock()
+            .expect("sync_points lock poisoned");
+        let mut state = s.serialize_struct("DltFileState", 3)?;
         state.serialize_field("storage_offset_ms", &self.storage_offset_ms())?;
         state.serialize_field("boot_times", &boot_times_to_string_map(&self.boot_times))?;
+        state.serialize_field("sync_points", &*sp)?;
         state.end()
     }
 }
@@ -272,12 +349,18 @@ impl<'de> serde::Deserialize<'de> for DltFileState {
             storage_offset_ms: i64,
             #[serde(default)]
             boot_times: std::collections::BTreeMap<String, DateTime<Local>>,
+            #[serde(default)]
+            sync_points: Vec<SyncPoint>,
         }
         let h = Helper::deserialize(d)?;
         Ok(Self {
             storage_offset_ms: AtomicI64::new(h.storage_offset_ms),
             boot_times: Arc::new(string_map_to_boot_times(h.boot_times)),
+            sync_points: Mutex::new(h.sync_points),
             calibration: Mutex::new(None),
+            sync_point_calibration: Mutex::new(None),
+            show_sync_points_window: std::sync::atomic::AtomicBool::new(false),
+            pending_jump_line: std::sync::atomic::AtomicUsize::new(usize::MAX),
         })
     }
 }
@@ -328,19 +411,28 @@ impl LineType for DltLogLine {
         file_state: &DltFileState,
     ) -> DateTime<Local> {
         use crate::config::DltTimestampSource;
+        let sync_offset = file_state.sync_point_offset_ms(self.line_number);
         match config {
             DltTimestampSource::InferredMonotonic => {
                 if let Some(header_us) = self.header_timestamp_us {
                     let key = (self.ecu_id.clone(), self.app_id.clone());
                     if let Some(boot_time) = file_state.boot_times.get(&key) {
-                        return *boot_time + chrono::TimeDelta::microseconds(header_us);
+                        return *boot_time
+                            + chrono::TimeDelta::microseconds(header_us)
+                            + chrono::Duration::milliseconds(sync_offset);
                     }
                 }
                 // Fallback: no boot_time for this app yet
-                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms())
+                self.storage_time
+                    + chrono::Duration::milliseconds(
+                        file_state.storage_offset_ms() + sync_offset,
+                    )
             }
             DltTimestampSource::StorageTime => {
-                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms())
+                self.storage_time
+                    + chrono::Duration::milliseconds(
+                        file_state.storage_offset_ms() + sync_offset,
+                    )
             }
         }
     }
@@ -356,12 +448,21 @@ impl LineType for DltLogLine {
     ) -> String {
         use crate::config::DltTimestampSource;
         let body = self.format_body();
+        let sync_offset = file_state.sync_point_offset_ms(self.line_number);
+        let sync_prefix = if sync_offset != 0 {
+            format!(
+                "[sync:{}] ",
+                format_time_diff(chrono::Duration::milliseconds(sync_offset))
+            )
+        } else {
+            String::new()
+        };
         match config {
             DltTimestampSource::InferredMonotonic => {
                 // In inferred-monotonic mode prepend [<storage_time> (<diff>) <storage_ecu>]
                 // so the user always sees the relationship between storage and monotonic time.
                 let inferred_time = self.timestamp(config, file_state);
-                format!("{} {body}", self.format_time_prefix(inferred_time))
+                format!("{sync_prefix}{} {body}", self.format_time_prefix(inferred_time))
             }
             DltTimestampSource::StorageTime => {
                 // In storage-time mode prepend [<offset>] when a calibration offset
@@ -369,11 +470,11 @@ impl LineType for DltLogLine {
                 let offset_ms = file_state.storage_offset_ms();
                 if offset_ms != 0 {
                     format!(
-                        "[{}] {body}",
+                        "{sync_prefix}[{}] {body}",
                         format_time_diff(chrono::Duration::milliseconds(offset_ms))
                     )
                 } else {
-                    body
+                    format!("{sync_prefix}{body}")
                 }
             }
         }
@@ -433,50 +534,235 @@ impl LineType for DltLogLine {
             });
             ui.close();
         }
+
+        // Sync point: set a time offset that applies from this line onwards.
+        if ui.button("\u{1F4CD} Set Sync Point Here").clicked() {
+            use crate::config::DltTimestampSource;
+
+            let is_inferred = matches!(config, DltTimestampSource::InferredMonotonic)
+                && self.header_timestamp_us.is_some();
+
+            let current_time = self.timestamp(config, file_state);
+
+            *file_state
+                .sync_point_calibration
+                .lock()
+                .expect("sync_point_calibration lock poisoned") =
+                Some(DltSyncPointCalibration {
+                    from_line: self.line_number,
+                    storage_time: self.storage_time,
+                    header_timestamp_us: self.header_timestamp_us,
+                    ecu_id: self.ecu_id.clone(),
+                    app_id: self.app_id.clone(),
+                    is_inferred,
+                    window: crate::filetype::CalibrationWindow::new(
+                        current_time,
+                        false, // not DLT-specific "apply to all" mode
+                        Some(current_time),
+                        self.storage_time,
+                    ),
+                });
+            ui.close();
+        }
+
+        // Toggle sync points management window
+        if ui.button("\u{1F4CD} Manage Sync Points").clicked() {
+            file_state.show_sync_points_window.store(
+                !file_state.show_sync_points_window.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            ui.close();
+        }
     }
 }
 
 impl crate::filetype::LogFileState for DltFileState {
-    fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
-        let mut cal_guard = self.calibration.lock().expect("calibration lock poisoned");
-        let Some(cal) = cal_guard.as_mut() else {
-            return false;
-        };
-        match cal.window.render(ui) {
-            Ok(Some((target_time, apply_to_all_apps))) => {
-                if cal.is_inferred {
-                    let new_boot_time =
-                        target_time - chrono::TimeDelta::microseconds(cal.header_timestamp_us);
-                    let key = (cal.ecu_id.clone(), cal.app_id.clone());
-                    let ecu_id = cal.ecu_id.clone();
+    fn take_pending_jump_line(&self) -> Option<usize> {
+        let val = self
+            .pending_jump_line
+            .swap(usize::MAX, Ordering::Relaxed);
+        if val == usize::MAX {
+            None
+        } else {
+            Some(val)
+        }
+    }
 
-                    if apply_to_all_apps {
-                        for mut entry in self.boot_times.iter_mut() {
-                            if entry.key().0 == ecu_id {
-                                *entry.value_mut() = new_boot_time;
+    fn egui_render_file_state(&self, ui: &egui::Ui, source_path: &std::path::Path) -> bool {
+        let mut changed = false;
+
+        // Drive the regular calibration window.
+        {
+            let mut cal_guard = self.calibration.lock().expect("calibration lock poisoned");
+            if let Some(cal) = cal_guard.as_mut() {
+                match cal.window.render(ui) {
+                    Ok(Some((target_time, apply_to_all_apps))) => {
+                        if cal.is_inferred {
+                            let new_boot_time = target_time
+                                - chrono::TimeDelta::microseconds(cal.header_timestamp_us);
+                            let key = (cal.ecu_id.clone(), cal.app_id.clone());
+                            let ecu_id = cal.ecu_id.clone();
+
+                            if apply_to_all_apps {
+                                for mut entry in self.boot_times.iter_mut() {
+                                    if entry.key().0 == ecu_id {
+                                        *entry.value_mut() = new_boot_time;
+                                    }
+                                }
+                                // Insert if no entry for this ECU existed yet.
+                                self.boot_times.entry(key).or_insert(new_boot_time);
+                            } else {
+                                self.boot_times.insert(key, new_boot_time);
                             }
+                        } else {
+                            // Storage-time mode: derive the offset from the raw storage timestamp.
+                            let offset_ms = (target_time - cal.storage_time).num_milliseconds();
+                            self.storage_offset_ms
+                                .store(offset_ms, std::sync::atomic::Ordering::Relaxed);
                         }
-                        // Insert if no entry for this ECU existed yet.
-                        self.boot_times.entry(key).or_insert(new_boot_time);
-                    } else {
-                        self.boot_times.insert(key, new_boot_time);
-                    }
-                } else {
-                    // Storage-time mode: derive the offset from the raw storage timestamp.
-                    let offset_ms = (target_time - cal.storage_time).num_milliseconds();
-                    self.storage_offset_ms
-                        .store(offset_ms, std::sync::atomic::Ordering::Relaxed);
-                }
 
-                *cal_guard = None;
-                true
-            }
-            Ok(None) => false,
-            Err(()) => {
-                *cal_guard = None;
-                false
+                        *cal_guard = None;
+                        changed = true;
+                    }
+                    Ok(None) => {}
+                    Err(()) => {
+                        *cal_guard = None;
+                    }
+                }
             }
         }
+
+        // Drive the sync-point calibration window.
+        {
+            let mut sp_cal_guard = self
+                .sync_point_calibration
+                .lock()
+                .expect("sync_point_calibration lock poisoned");
+            if let Some(sp_cal) = sp_cal_guard.as_mut() {
+                match sp_cal.window.render(ui) {
+                    Ok(Some((target_time, _apply_to_all))) => {
+                        // Compute the offset: target_time - raw_time_of_this_line
+                        // The raw time is the timestamp *without* the sync point offset
+                        // that will be applied. We use the storage_time as the raw base.
+                        let raw_time = if sp_cal.is_inferred {
+                            if let Some(header_us) = sp_cal.header_timestamp_us {
+                                let key =
+                                    (sp_cal.ecu_id.clone(), sp_cal.app_id.clone());
+                                self.boot_times
+                                    .get(&key)
+                                    .map_or(sp_cal.storage_time, |bt| {
+                                        *bt + chrono::TimeDelta::microseconds(header_us)
+                                    })
+                            } else {
+                                sp_cal.storage_time
+                                    + chrono::Duration::milliseconds(self.storage_offset_ms())
+                            }
+                        } else {
+                            sp_cal.storage_time
+                                + chrono::Duration::milliseconds(self.storage_offset_ms())
+                        };
+                        let offset_ms = (target_time - raw_time).num_milliseconds();
+                        let from_line = sp_cal.from_line;
+
+                        let mut sync_points = self
+                            .sync_points
+                            .lock()
+                            .expect("sync_points lock poisoned");
+
+                        // Remove any existing sync point at the same line.
+                        sync_points.retain(|sp| sp.from_line != from_line);
+                        // Insert and keep sorted.
+                        let insert_pos = sync_points
+                            .binary_search_by_key(&from_line, |sp| sp.from_line)
+                            .unwrap_or_else(|pos| pos);
+                        sync_points.insert(insert_pos, SyncPoint { from_line, offset_ms });
+
+                        *sp_cal_guard = None;
+                        // Auto-open the sync points window so the user sees the result.
+                        self.show_sync_points_window.store(true, Ordering::Relaxed);
+                        changed = true;
+                    }
+                    Ok(None) => {}
+                    Err(()) => {
+                        *sp_cal_guard = None;
+                    }
+                }
+            }
+        }
+
+        // Render sync points management panel when open.
+        if self.show_sync_points_window.load(Ordering::Relaxed) {
+            let mut sync_points = self.sync_points.lock().expect("sync_points lock poisoned");
+            let mut to_remove: Option<usize> = None;
+            let mut open = true;
+            let window_title = format!(
+                "\u{1F4CD} Sync Points — {}",
+                source_path.file_name().unwrap_or(source_path.as_os_str()).to_string_lossy()
+            );
+            egui::Window::new(window_title)
+                .open(&mut open)
+                .collapsible(true)
+                .resizable(true)
+                .default_width(350.0)
+                .show(ui.ctx(), |ui| {
+                    if sync_points.is_empty() {
+                        ui.label("No sync points set.\nRight-click a line → \"Set Sync Point Here\" to add one.");
+                    } else {
+                        ui.label("Time sync points (offset applies from line onwards):");
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical()
+                            .max_height(200.0)
+                            .show(ui, |ui| {
+                                for (idx, sp) in sync_points.iter_mut().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        // Clickable line label — jumps to that line.
+                                        let line_label = format!("Line {}:", sp.from_line);
+                                        if ui
+                                            .link(&line_label)
+                                            .on_hover_text("Click to jump to this line")
+                                            .clicked()
+                                        {
+                                            self.pending_jump_line.store(
+                                                sp.from_line,
+                                                Ordering::Relaxed,
+                                            );
+                                        }
+                                        // Editable offset (ms) as a drag value.
+                                        let mut offset_ms = sp.offset_ms as f64;
+                                        let drag = egui::DragValue::new(&mut offset_ms)
+                                            .suffix(" ms")
+                                            .speed(100.0);
+                                        if ui.add(drag).changed() {
+                                            sp.offset_ms = offset_ms as i64;
+                                            changed = true;
+                                        }
+                                        if ui
+                                            .small_button("\u{1F5D1}")
+                                            .on_hover_text("Remove sync point")
+                                            .clicked()
+                                        {
+                                            to_remove = Some(idx);
+                                        }
+                                    });
+                                }
+                            });
+                        ui.add_space(4.0);
+                        if ui.button("Clear All").clicked() {
+                            sync_points.clear();
+                            changed = true;
+                        }
+                    }
+                });
+            if !open {
+                self.show_sync_points_window.store(false, Ordering::Relaxed);
+            }
+            if let Some(idx) = to_remove {
+                sync_points.remove(idx);
+                changed = true;
+            }
+        }
+
+        changed
     }
 }
 

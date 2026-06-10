@@ -187,8 +187,8 @@ impl<'de> serde::Deserialize<'de> for PcapFileState {
 }
 
 impl crate::filetype::LogFileState for PcapFileState {
-    fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
-        self.inner.egui_render_file_state(ui)
+    fn egui_render_file_state(&self, ui: &egui::Ui, source_path: &std::path::Path) -> bool {
+        self.inner.egui_render_file_state(ui, source_path)
     }
 }
 

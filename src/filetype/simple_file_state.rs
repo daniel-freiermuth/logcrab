@@ -79,7 +79,7 @@ impl<'de> serde::Deserialize<'de> for SimpleFileState {
 }
 
 impl LogFileState for SimpleFileState {
-    fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
+    fn egui_render_file_state(&self, ui: &egui::Ui, _source_path: &std::path::Path) -> bool {
         let mut cal = self.calibration.lock().expect("calibration lock poisoned");
         render_calibration(ui, &mut cal).is_some_and(|offset_ms| {
             self.set_time_offset_ms(offset_ms);

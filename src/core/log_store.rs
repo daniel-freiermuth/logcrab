@@ -574,13 +574,17 @@ where
     ///
     /// The `FileState` impl writes the new offset into itself on confirm;
     /// this method bumps the source version so dependent views invalidate.
-    /// Returns `true` when an offset was applied.
-    pub fn render_file_state(&self, ui: &egui::Ui) -> bool {
-        let changed = self.file_state.egui_render_file_state(ui);
+    /// Returns `(time_changed, optional jump target)`.
+    pub fn render_file_state(&self, ui: &egui::Ui) -> (bool, Option<StoreID>) {
+        let changed = self.file_state.egui_render_file_state(ui, &self.file_path);
         if changed {
             self.rebuild_time_index();
         }
-        changed
+        let jump = self.file_state.take_pending_jump_line().map(|line_idx| StoreID::make(
+            self.source_id,
+            line_idx,
+        ));
+        (changed, jump)
     }
 
     // ========================================================================
@@ -1257,13 +1261,20 @@ impl LogStore {
 
     /// Drive all open calibration windows across every source (one per frame).
     ///
-    /// Returns `true` if any source applied a new offset (caller should set `modified = true`).
-    pub fn render_file_states(&self, ui: &egui::Ui) -> bool {
+    /// Returns `(time_changed, optional jump target)`.
+    pub fn render_file_states(&self, ui: &egui::Ui) -> (bool, Option<StoreID>) {
         profiling::scope!("LogStore::render_file_states");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources
-            .values()
-            .fold(false, |acc, s| s.render_file_state(ui) || acc)
+        let mut changed = false;
+        let mut jump = None;
+        for s in sources.values() {
+            let (c, j) = s.render_file_state(ui);
+            changed |= c;
+            if j.is_some() {
+                jump = j;
+            }
+        }
+        (changed, jump)
     }
 
     /// Render type-specific context menu items for the line at `id`.

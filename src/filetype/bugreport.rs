@@ -276,7 +276,7 @@ impl<'de> serde::Deserialize<'de> for BugreportFileState {
 impl LogFileState for BugreportFileState {
     const MAX_STATE_VERSION: Option<u32> = Some(BUGREPORT_STATE_VERSION);
 
-    fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
+    fn egui_render_file_state(&self, ui: &egui::Ui, _source_path: &std::path::Path) -> bool {
         use crate::filetype::render_calibration;
 
         let logcat_changed = {

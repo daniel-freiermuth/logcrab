@@ -352,8 +352,12 @@ impl CrabSession {
         }
 
         // Drive any open calibration windows for all sources (one per source per frame).
-        if self.state.store.render_file_states(ui) {
+        let (file_state_changed, jump_target) = self.state.store.render_file_states(ui);
+        if file_state_changed {
             self.state.modified = true;
+        }
+        if let Some(store_id) = jump_target {
+            self.state.selected_line_index = Some(store_id);
         }
 
         // Handle highlight-to-filter conversion

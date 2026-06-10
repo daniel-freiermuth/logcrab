@@ -74,11 +74,20 @@ pub trait LogFileState: Send + Sync {
     /// Drive any open UI window stored in this state.
     ///
     /// Called once per source per frame from `SourceData::render_file_state`.
+    /// `source_path` is the path to the source file (for display in window titles).
     /// Returns `true` when the user confirms a new calibration time (the offset has
     /// already been written into `self`); the caller then bumps the source version.
     /// Default: no-op returning `false`.
-    fn egui_render_file_state(&self, _ui: &egui::Ui) -> bool {
+    fn egui_render_file_state(&self, _ui: &egui::Ui, _source_path: &std::path::Path) -> bool {
         false
+    }
+
+    /// Take a pending line-jump request (if any) set by UI interactions in the file state.
+    ///
+    /// Returns `Some(line_index)` if a jump was requested, consuming it.
+    /// Default: always `None`.
+    fn take_pending_jump_line(&self) -> Option<usize> {
+        None
     }
 }
 

@@ -458,7 +458,7 @@ macro_rules! register_filetypes {
             }
 
             /// Drive any open calibration windows for this source (one per frame).
-            pub fn render_file_state(&self, ui: &egui::Ui) -> bool {
+            pub fn render_file_state(&self, ui: &egui::Ui) -> (bool, Option<$crate::core::log_store::StoreID>) {
                 match self {
                     $( Self::$b_arm(s) => s.render_file_state(ui), )*
                     $( Self::$t_arm(s) => s.render_file_state(ui), )*
