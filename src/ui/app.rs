@@ -902,10 +902,12 @@ impl LogCrabApp {
 
     /// Preview hovering files - shows overlay when dragging files over window
     fn preview_files_being_dropped(ctx: &egui::Context) {
-        // Also guard on window focus: if the OS fails to send HoveredFileCancelled (a known
-        // XWayland/X11 edge case), hovered_files can remain non-empty after the drag leaves.
-        // Requiring focus prevents the overlay from being stuck on screen indefinitely.
-        let active = ctx.input(|i| !i.raw.hovered_files.is_empty() && i.focused);
+        // Show overlay whenever the backend reports hovered files.
+        // The XWayland/X11 stuck-overlay edge case (HoveredFileCancelled never
+        // sent) is unlikely in practice and less harmful than not showing the
+        // overlay at all on Wayland where neither focus nor pointer position are
+        // reliably reported during drag-and-drop.
+        let active = ctx.input(|i| !i.raw.hovered_files.is_empty());
         if active {
             let text = ctx.input(|i| {
                 let mut text = "Drop to open:\n".to_owned();
@@ -917,9 +919,9 @@ impl LogCrabApp {
                 text
             });
 
+            let screen_rect = ctx.content_rect();
             let painter =
                 ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
-            let screen_rect = ctx.content_rect();
             painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
 
             let font = TextStyle::Heading.resolve(&ctx.style());
