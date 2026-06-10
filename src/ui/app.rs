@@ -85,6 +85,7 @@ struct PendingSessionOffer {
 enum SessionOfferAction {
     JustTheFiles,
     RestoreSession(usize),
+    MergeSession(usize),
     Cancel,
 }
 
@@ -863,13 +864,25 @@ impl LogCrabApp {
                         .collect::<Vec<_>>()
                         .join("\n");
 
-                    if ui
-                        .button(format!("Restore session: {label}  ({time_str})"))
-                        .on_hover_text(tooltip)
-                        .clicked()
-                    {
-                        action = Some(SessionOfferAction::RestoreSession(idx));
-                    }
+                    ui.label(format!("{label}  ({time_str})"))
+                        .on_hover_text(&tooltip);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Replace current session")
+                            .on_hover_text(format!("Close current files and restore:\n{tooltip}"))
+                            .clicked()
+                        {
+                            action = Some(SessionOfferAction::RestoreSession(idx));
+                        }
+                        if ui
+                            .button("Merge with current session")
+                            .on_hover_text(format!("Add these files to the current session:\n{tooltip}"))
+                            .clicked()
+                        {
+                            action = Some(SessionOfferAction::MergeSession(idx));
+                        }
+                    });
+                    ui.add_space(4.0);
                 }
 
                 ui.add_space(6.0);
@@ -894,6 +907,17 @@ impl LogCrabApp {
                 SessionOfferAction::RestoreSession(idx) => {
                     let session = &offer.matching_sessions[idx];
                     self.restore_session(session);
+                }
+                SessionOfferAction::MergeSession(idx) => {
+                    let session = &offer.matching_sessions[idx];
+                    if self.session.is_none() {
+                        self.start_new_session();
+                    }
+                    for path in &session.files {
+                        if path.exists() {
+                            self.add_file_to_session(path.clone());
+                        }
+                    }
                 }
                 SessionOfferAction::Cancel => {}
             }
