@@ -74,6 +74,8 @@ pub struct HistogramCacheKey {
     pub zoom_range_ms: Option<(i64, i64)>,
     /// Whether to use ML sidecar score instead of heuristic score
     pub color_by_ml_score: bool,
+    /// Whether deduplication is active
+    pub hide_duplicates: bool,
 }
 
 /// Result from background histogram computation

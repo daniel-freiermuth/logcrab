@@ -187,11 +187,12 @@ impl SearchState {
     }
 
     /// Get the search text that the current filtered indices were computed for.
-    pub fn indices_computed_for(&self) -> (&str, &str, bool, StoreVersion) {
+    pub fn indices_computed_for(&self) -> (&str, &str, bool, bool, StoreVersion) {
         (
             &self.indices_computed_for_text,
             &self.indices_computed_for_exclude,
             self.indices_computed_for_case,
+            self.indices_computed_for_dedup,
             self.indices_computed_for_version,
         )
     }
