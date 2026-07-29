@@ -1035,6 +1035,7 @@ impl LogStore {
         drop(sources);
         // Also remove scores and explain session for this source
         self.scores.remove(&source_id);
+        self.sidecar_scores.remove(&source_id);
         self.explain_sessions
             .lock()
             .expect("explain_sessions lock poisoned")
