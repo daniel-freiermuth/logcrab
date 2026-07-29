@@ -209,7 +209,7 @@ impl Histogram {
 
         // Use the search parameters that the current filtered_indices were computed for,
         // not the current search_text (which may have changed while filter is pending)
-        let (indices_text, indices_exclude, indices_case, indices_version) =
+        let (indices_text, indices_exclude, indices_case, indices_dedup, indices_version) =
             filter_state.search.indices_computed_for();
         let search_str = indices_text.to_string();
         let exclude_str = indices_exclude.to_string();
@@ -227,6 +227,7 @@ impl Histogram {
             case_sensitive: indices_case,
             zoom_range_ms,
             color_by_ml_score,
+            hide_duplicates: indices_dedup,
         };
 
         // Poll for any completed results
