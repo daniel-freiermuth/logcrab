@@ -764,7 +764,7 @@ impl LogCrabApp {
                 ui.add_space(8.0);
 
                 let mut session_to_restore: Option<usize> = None;
-                let mut session_to_remove: Option<usize> = None;
+                let mut session_to_remove: Option<Vec<PathBuf>> = None;
 
                 egui::ScrollArea::vertical()
                     .max_height(ui.available_height() - 20.0)
@@ -798,14 +798,14 @@ impl LogCrabApp {
                                     .on_hover_text("Remove from history")
                                     .clicked()
                                 {
-                                    session_to_remove = Some(idx);
+                                    session_to_remove = Some(session.files.clone());
                                 }
                             });
                         }
                     });
 
-                if let Some(idx) = session_to_remove {
-                    match SessionHistory::update(|h| { h.sessions.remove(idx); }) {
+                if let Some(files) = &session_to_remove {
+                    match SessionHistory::update(|h| { h.sessions.retain(|s| !s.same_files(files)); }) {
                         Ok(updated) => self.session_history = updated,
                         Err(e) => tracing::error!("Failed to save session history: {e}"),
                     }
