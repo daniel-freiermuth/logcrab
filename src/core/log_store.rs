@@ -139,18 +139,41 @@ impl ScoreStore {
         guard.scored_flags.get(index).copied().unwrap_or(false)
     }
 
-    /// Resize the internal vec to accommodate new lines (fills with 0.0).
+    /// Get all sidecar fields for a specific line index from a single snapshot load.
+    /// Returns `(score, unk, rare, scored)` with out-of-bounds defaults.
+    pub fn get_all(&self, index: usize) -> (f64, bool, bool, bool) {
+        let guard = self.data.load();
+        (
+            guard.scores.get(index).copied().unwrap_or(0.0),
+            guard.unk_flags.get(index).copied().unwrap_or(false),
+            guard.rare_flags.get(index).copied().unwrap_or(false),
+            guard.scored_flags.get(index).copied().unwrap_or(false),
+        )
+    }
+
+    /// Resize the internal vec to accommodate new lines (fills with defaults).
     /// Called when lines are appended to keep scores in sync.
+    ///
+    /// Uses `rcu` (read-copy-update) to retry if a concurrent setter swaps in a
+    /// newer snapshot between our load and store, avoiding lost updates.
     pub fn resize(&self, new_len: usize) {
-        let current = self.data.load();
-        if current.scores.len() < new_len {
-            let mut snapshot = (**current).clone();
-            snapshot.scores.resize(new_len, 0.0);
-            snapshot.unk_flags.resize(new_len, false);
-            snapshot.rare_flags.resize(new_len, false);
-            snapshot.scored_flags.resize(new_len, false);
-            self.data.store(Arc::new(snapshot));
+        // Fast path: skip if already large enough.
+        if self.data.load().scores.len() >= new_len {
+            return;
         }
+        self.data.rcu(|current| {
+            if current.scores.len() >= new_len {
+                // Another resize (or setter with enough data) already handled it.
+                Arc::clone(current)
+            } else {
+                let mut snapshot = (**current).clone();
+                snapshot.scores.resize(new_len, 0.0);
+                snapshot.unk_flags.resize(new_len, false);
+                snapshot.rare_flags.resize(new_len, false);
+                snapshot.scored_flags.resize(new_len, false);
+                Arc::new(snapshot)
+            }
+        });
     }
 }
 
@@ -1181,6 +1204,17 @@ impl LogStore {
             .is_some_and(|store| store.get_scored(line_index))
     }
 
+    /// Get all sidecar fields for a line from a single snapshot load.
+    ///
+    /// Returns `(score, unk, rare, scored)` — a single `DashMap::get` and a
+    /// single `ArcSwap::load`, so all four values are guaranteed to come from
+    /// the same [`ScoreSnapshot`].
+    fn get_sidecar_all(&self, source_id: u64, line_index: usize) -> (f64, bool, bool, bool) {
+        self.sidecar_scores
+            .get(&source_id)
+            .map_or((0.0, false, false, false), |store| store.get_all(line_index))
+    }
+
     /// Check whether any sidecar scores are stored for the given source.
     pub fn has_sidecar_scores(&self, source_id: u64) -> bool {
         self.sidecar_scores.contains_key(&source_id)
@@ -1444,12 +1478,15 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         let mut line = sources.get(&id.source_id)?.get_log_line(id.line_index)?;
-        // Populate anomaly score from store-level score storage
         line.anomaly_score = self.get_score(id.source_id, id.line_index);
-        line.sidecar_anomaly_score = self.get_sidecar_score(id.source_id, id.line_index);
-        line.sidecar_score_is_unk = self.get_sidecar_unk(id.source_id, id.line_index);
-        line.sidecar_score_is_rare = self.get_sidecar_rare(id.source_id, id.line_index);
-        line.sidecar_scored = self.get_sidecar_scored(id.source_id, id.line_index);
+        // Load all sidecar fields from a single snapshot so a concurrent
+        // set_all_with_unk cannot produce a torn combination.
+        let (sidecar_score, sidecar_unk, sidecar_rare, sidecar_scored) =
+            self.get_sidecar_all(id.source_id, id.line_index);
+        line.sidecar_anomaly_score = sidecar_score;
+        line.sidecar_score_is_unk = sidecar_unk;
+        line.sidecar_score_is_rare = sidecar_rare;
+        line.sidecar_scored = sidecar_scored;
         Some(line)
     }
 
