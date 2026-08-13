@@ -47,83 +47,133 @@ use dashmap::DashMap;
 /// Source IDs are stable across the lifetime of a source, even when other sources are removed.
 static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Snapshot of all scoring data for a single source.
+///
+/// Stored behind a single `ArcSwap` in [`ScoreStore`] so that writers swap
+/// all four vectors in one atomic pointer store and readers always see a
+/// consistent combination of score + flags.
+#[derive(Clone)]
+struct ScoreSnapshot {
+    /// Anomaly scores indexed by line position (same length as `lines`).
+    /// Default score is 0.0; scores range from 0 to 100.
+    scores: Vec<f64>,
+    /// Whether each line's score was assigned while the target token was UNK.
+    /// Parallel to `scores`; `false` when not available.
+    unk_flags: Vec<bool>,
+    /// Whether each line's target was a rare template (seen < min_count times).
+    /// Subset of `unk_flags`; `false` when not available or when target is truly unknown.
+    rare_flags: Vec<bool>,
+    /// Whether each line was actually present in the sidecar's scored set.
+    /// `false` means the line was filtered/excluded by the backend (not in corpus).
+    scored_flags: Vec<bool>,
+}
+
+impl Default for ScoreSnapshot {
+    fn default() -> Self {
+        Self {
+            scores: Vec::new(),
+            unk_flags: Vec::new(),
+            rare_flags: Vec::new(),
+            scored_flags: Vec::new(),
+        }
+    }
+}
+
 /// Lock-free storage for anomaly scores.
 ///
 /// Uses `ArcSwap` for atomic pointer swaps — readers never block, and writers
-/// simply build a new `Vec<f64>` and swap it in atomically. This avoids the
-/// need for a write lock on `lines` when updating scores.
+/// simply build a new [`ScoreSnapshot`] and swap it in atomically. This avoids
+/// the need for a write lock on `lines` when updating scores and guarantees
+/// that readers always see a consistent set of score + flag values.
 pub struct ScoreStore {
-    /// Anomaly scores indexed by line position (same length as `lines`).
-    /// Default score is 0.0; scores range from 0 to 100.
-    scores: ArcSwap<Vec<f64>>,
-    /// Whether each line's score was assigned while the target token was UNK.
-    /// Parallel to `scores`; `false` when not available.
-    unk_flags: ArcSwap<Vec<bool>>,
-    /// Whether each line's target was a rare template (seen < min_count times).
-    /// Subset of `unk_flags`; `false` when not available or when target is truly unknown.
-    rare_flags: ArcSwap<Vec<bool>>,
-    /// Whether each line was actually present in the sidecar's scored set.
-    /// `false` means the line was filtered/excluded by the backend (not in corpus).
-    scored_flags: ArcSwap<Vec<bool>>,
+    data: ArcSwap<ScoreSnapshot>,
 }
 
 impl ScoreStore {
     /// Create a new empty score store.
     pub fn new() -> Self {
         Self {
-            scores: ArcSwap::new(Arc::new(Vec::new())),
-            unk_flags: ArcSwap::new(Arc::new(Vec::new())),
-            rare_flags: ArcSwap::new(Arc::new(Vec::new())),
-            scored_flags: ArcSwap::new(Arc::new(Vec::new())),
+            data: ArcSwap::new(Arc::new(ScoreSnapshot::default())),
         }
     }
 
     /// Set all scores atomically. The provided slice is copied into a new `Arc`.
     pub fn set_all(&self, scores: &[f64]) {
-        self.scores.store(Arc::new(scores.to_vec()));
+        self.data.store(Arc::new(ScoreSnapshot {
+            scores: scores.to_vec(),
+            ..ScoreSnapshot::default()
+        }));
     }
 
     /// Set scores, UNK flags, rare flags, and scored flags atomically.
     pub fn set_all_with_unk(&self, scores: &[f64], unk_flags: &[bool], rare_flags: &[bool], scored_flags: &[bool]) {
-        self.scores.store(Arc::new(scores.to_vec()));
-        self.unk_flags.store(Arc::new(unk_flags.to_vec()));
-        self.rare_flags.store(Arc::new(rare_flags.to_vec()));
-        self.scored_flags.store(Arc::new(scored_flags.to_vec()));
+        self.data.store(Arc::new(ScoreSnapshot {
+            scores: scores.to_vec(),
+            unk_flags: unk_flags.to_vec(),
+            rare_flags: rare_flags.to_vec(),
+            scored_flags: scored_flags.to_vec(),
+        }));
     }
 
     /// Get the score for a specific line index. Returns 0.0 if out of bounds.
     pub fn get(&self, index: usize) -> f64 {
-        let guard = self.scores.load();
-        guard.get(index).copied().unwrap_or(0.0)
+        let guard = self.data.load();
+        guard.scores.get(index).copied().unwrap_or(0.0)
     }
 
     /// Get the UNK flag for a specific line index. Returns `false` if out of bounds.
     pub fn get_unk(&self, index: usize) -> bool {
-        let guard = self.unk_flags.load();
-        guard.get(index).copied().unwrap_or(false)
+        let guard = self.data.load();
+        guard.unk_flags.get(index).copied().unwrap_or(false)
     }
 
     /// Get the rare flag for a specific line index. Returns `false` if out of bounds.
     pub fn get_rare(&self, index: usize) -> bool {
-        let guard = self.rare_flags.load();
-        guard.get(index).copied().unwrap_or(false)
+        let guard = self.data.load();
+        guard.rare_flags.get(index).copied().unwrap_or(false)
     }
 
     /// Get the scored flag for a specific line index. Returns `false` if out of bounds.
     pub fn get_scored(&self, index: usize) -> bool {
-        let guard = self.scored_flags.load();
-        guard.get(index).copied().unwrap_or(false)
+        let guard = self.data.load();
+        guard.scored_flags.get(index).copied().unwrap_or(false)
     }
 
-    /// Resize the internal vec to accommodate new lines (fills with 0.0).
+    /// Get all sidecar fields for a specific line index from a single snapshot load.
+    /// Returns `(score, unk, rare, scored)` with out-of-bounds defaults.
+    pub fn get_all(&self, index: usize) -> (f64, bool, bool, bool) {
+        let guard = self.data.load();
+        (
+            guard.scores.get(index).copied().unwrap_or(0.0),
+            guard.unk_flags.get(index).copied().unwrap_or(false),
+            guard.rare_flags.get(index).copied().unwrap_or(false),
+            guard.scored_flags.get(index).copied().unwrap_or(false),
+        )
+    }
+
+    /// Resize the internal vec to accommodate new lines (fills with defaults).
     /// Called when lines are appended to keep scores in sync.
+    ///
+    /// Uses `rcu` (read-copy-update) to retry if a concurrent setter swaps in a
+    /// newer snapshot between our load and store, avoiding lost updates.
     pub fn resize(&self, new_len: usize) {
-        let current = self.scores.load();
-        if current.len() < new_len {
-            let mut new_scores: Vec<f64> = (**current).clone();
-            new_scores.resize(new_len, 0.0);
-            self.scores.store(Arc::new(new_scores));
+        // Fast path: skip if already large enough.
+        if self.data.load().scores.len() >= new_len {
+            return;
         }
+        self.data.rcu(|current| {
+            if current.scores.len() >= new_len {
+                // Another resize (or setter with enough data) already handled it.
+                Arc::clone(current)
+            } else {
+                let mut snapshot = (**current).clone();
+                snapshot.scores.resize(new_len, 0.0);
+                snapshot.unk_flags.resize(new_len, false);
+                snapshot.rare_flags.resize(new_len, false);
+                snapshot.scored_flags.resize(new_len, false);
+                Arc::new(snapshot)
+            }
+        });
     }
 }
 
@@ -136,18 +186,15 @@ impl Default for ScoreStore {
 impl Clone for ScoreStore {
     fn clone(&self) -> Self {
         Self {
-            scores: ArcSwap::new(Arc::clone(&self.scores.load())),
-            unk_flags: ArcSwap::new(Arc::clone(&self.unk_flags.load())),
-            rare_flags: ArcSwap::new(Arc::clone(&self.rare_flags.load())),
-            scored_flags: ArcSwap::new(Arc::clone(&self.scored_flags.load())),
+            data: ArcSwap::new(Arc::clone(&self.data.load())),
         }
     }
 }
 
 impl std::fmt::Debug for ScoreStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let guard = self.scores.load();
-        write!(f, "ScoreStore({} scores)", guard.len())
+        let guard = self.data.load();
+        write!(f, "ScoreStore({} scores)", guard.scores.len())
     }
 }
 
@@ -1157,6 +1204,17 @@ impl LogStore {
             .is_some_and(|store| store.get_scored(line_index))
     }
 
+    /// Get all sidecar fields for a line from a single snapshot load.
+    ///
+    /// Returns `(score, unk, rare, scored)` — a single `DashMap::get` and a
+    /// single `ArcSwap::load`, so all four values are guaranteed to come from
+    /// the same [`ScoreSnapshot`].
+    fn get_sidecar_all(&self, source_id: u64, line_index: usize) -> (f64, bool, bool, bool) {
+        self.sidecar_scores
+            .get(&source_id)
+            .map_or((0.0, false, false, false), |store| store.get_all(line_index))
+    }
+
     /// Check whether any sidecar scores are stored for the given source.
     pub fn has_sidecar_scores(&self, source_id: u64) -> bool {
         self.sidecar_scores.contains_key(&source_id)
@@ -1420,12 +1478,15 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         let mut line = sources.get(&id.source_id)?.get_log_line(id.line_index)?;
-        // Populate anomaly score from store-level score storage
         line.anomaly_score = self.get_score(id.source_id, id.line_index);
-        line.sidecar_anomaly_score = self.get_sidecar_score(id.source_id, id.line_index);
-        line.sidecar_score_is_unk = self.get_sidecar_unk(id.source_id, id.line_index);
-        line.sidecar_score_is_rare = self.get_sidecar_rare(id.source_id, id.line_index);
-        line.sidecar_scored = self.get_sidecar_scored(id.source_id, id.line_index);
+        // Load all sidecar fields from a single snapshot so a concurrent
+        // set_all_with_unk cannot produce a torn combination.
+        let (sidecar_score, sidecar_unk, sidecar_rare, sidecar_scored) =
+            self.get_sidecar_all(id.source_id, id.line_index);
+        line.sidecar_anomaly_score = sidecar_score;
+        line.sidecar_score_is_unk = sidecar_unk;
+        line.sidecar_score_is_rare = sidecar_rare;
+        line.sidecar_scored = sidecar_scored;
         Some(line)
     }
 
