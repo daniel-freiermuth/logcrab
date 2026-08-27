@@ -337,9 +337,7 @@ impl LogFileLoader {
         // before the socket even opens.
         toast.update(0.0, "Preparing lines...");
         let total_lines = data_source.len();
-        let file_name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned());
+        let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned());
 
         let t_prepare = std::time::Instant::now();
         let mut input_lines: Vec<InputLine> = Vec::with_capacity(total_lines);
@@ -397,10 +395,19 @@ impl LogFileLoader {
                         scored_flags[idx] = true;
                     }
                 }
-                store_cb.set_sidecar_scores_with_unk(source_id, &raw_scores, &unk_flags, &rare_flags, &scored_flags);
+                store_cb.set_sidecar_scores_with_unk(
+                    source_id,
+                    &raw_scores,
+                    &unk_flags,
+                    &rare_flags,
+                    &scored_flags,
+                );
 
                 let progress = partial_result.scored.len() as f32 / total as f32;
-                toast_cb.update(0.1 + progress * 0.9, format!("ML scoring... ({}/{})", partial_result.scored.len(), total));
+                toast_cb.update(
+                    0.1 + progress * 0.9,
+                    format!("ML scoring... ({}/{})", partial_result.scored.len(), total),
+                );
             },
         ) {
             Ok((r, session)) => {
@@ -438,7 +445,13 @@ impl LogFileLoader {
             total_lines,
             path.display()
         );
-        store.set_sidecar_scores_with_unk(source_id, &raw_scores, &unk_flags, &rare_flags, &scored_flags);
+        store.set_sidecar_scores_with_unk(
+            source_id,
+            &raw_scores,
+            &unk_flags,
+            &rare_flags,
+            &scored_flags,
+        );
         toast.update(1.0, "ML scoring done!");
     }
 }

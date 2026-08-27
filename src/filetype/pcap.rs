@@ -181,7 +181,9 @@ impl<'de> serde::Deserialize<'de> for PcapFileState {
                 calibration: std::sync::Mutex::new(None),
             },
             someip_sd_decodings: std::sync::Mutex::new(h.someip_sd_decodings.into_iter().collect()),
-            someip_known_endpoints: std::sync::Mutex::new(h.someip_known_endpoints.into_iter().collect()),
+            someip_known_endpoints: std::sync::Mutex::new(
+                h.someip_known_endpoints.into_iter().collect(),
+            ),
         })
     }
 }
@@ -328,7 +330,12 @@ impl LineType for PcapLogLine {
         self.line_number
     }
 
-    fn egui_render_context_menu(&self, ui: &mut Ui, _config: &PcapConfig, file_state: &PcapFileState) {
+    fn egui_render_context_menu(
+        &self,
+        ui: &mut Ui,
+        _config: &PcapConfig,
+        file_state: &PcapFileState,
+    ) {
         if ui.button("⏱ Calibrate Time Here").clicked() {
             let raw_time = self.packet_info.timestamp;
             let display_time =

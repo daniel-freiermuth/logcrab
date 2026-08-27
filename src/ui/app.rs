@@ -506,7 +506,8 @@ impl LogCrabApp {
                         if let Some(first) = paths.first() {
                             if let Some(parent) = first.parent() {
                                 let dir = parent.to_path_buf();
-                                match GlobalConfig::update(|c| c.last_filters_directory = Some(dir)) {
+                                match GlobalConfig::update(|c| c.last_filters_directory = Some(dir))
+                                {
                                     Ok(updated) => self.global_config = updated,
                                     Err(e) => tracing::error!("Failed to update config: {e}"),
                                 }
@@ -533,10 +534,9 @@ impl LogCrabApp {
             }
 
             if ui.button("Sidecar Settings...").clicked() {
-                self.sidecar_settings_window =
-                    Some(windows::SidecarSettingsWindow::open_with_config(
-                        &self.global_config,
-                    ));
+                self.sidecar_settings_window = Some(
+                    windows::SidecarSettingsWindow::open_with_config(&self.global_config),
+                );
                 ui.close();
             }
 
@@ -876,7 +876,9 @@ impl LogCrabApp {
                         }
                         if ui
                             .button("Merge with current session")
-                            .on_hover_text(format!("Add these files to the current session:\n{tooltip}"))
+                            .on_hover_text(format!(
+                                "Add these files to the current session:\n{tooltip}"
+                            ))
                             .clicked()
                         {
                             action = Some(SessionOfferAction::MergeSession(idx));

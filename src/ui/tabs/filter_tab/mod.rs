@@ -110,9 +110,7 @@ impl FilterView {
             // New filter results arrived - invalidate scroll tracking so we re-scroll
             self.state.last_rendered_selection = None;
         }
-        self.state
-            .search
-            .hide_duplicates = global_config.hide_duplicates;
+        self.state.search.hide_duplicates = global_config.hide_duplicates;
         self.state
             .search
             .ensure_cache_valid(&log_view_state.store, &log_view_state.filter_worker);
@@ -217,8 +215,8 @@ impl FilterView {
 
         // Render log table
         let closest_row_index = self.state.closest_row_index;
-        let model_is_active = global_config.use_sidecar_scoring
-            && global_config.selected_model.is_some();
+        let model_is_active =
+            global_config.use_sidecar_scoring && global_config.selected_model.is_some();
         let table_events = {
             profiling::scope!("render_log_table");
             LogTable::render(
@@ -271,7 +269,9 @@ impl FilterView {
                     } else {
                         // Session is closed or was never opened.
                         if let Some(ref sender) = log_view_state.toast_sender {
-                            sender.send("Attention not available: sidecar session is closed".to_string());
+                            sender.send(
+                                "Attention not available: sidecar session is closed".to_string(),
+                            );
                         }
                     }
                 }
@@ -302,7 +302,12 @@ impl FilterView {
                             let client = crate::anomaly::sidecar_client::SidecarClient::connect(
                                 &host, port,
                             )?;
-                            client.submit_sample(&model_id, label, classified_line_number, &input_lines)?;
+                            client.submit_sample(
+                                &model_id,
+                                label,
+                                classified_line_number,
+                                &input_lines,
+                            )?;
                             Ok(())
                         })();
                         match result {
@@ -357,7 +362,9 @@ impl FilterView {
                 store,
                 self.attention_target,
                 self.attention_result.as_ref(),
-                self.attention_pending,                self.attention_error.as_deref(),            );
+                self.attention_pending,
+                self.attention_error.as_deref(),
+            );
         }
 
         events

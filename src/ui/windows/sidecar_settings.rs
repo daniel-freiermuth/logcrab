@@ -71,15 +71,21 @@ impl SidecarSettingsWindow {
             ui.label(RichText::new("Server Configuration").strong());
             ui.add_space(5.0);
 
-            let host_changed = ui.horizontal(|ui| {
-                ui.label("Host:");
-                ui.text_edit_singleline(&mut self.temp_host)
-            }).inner.changed();
+            let host_changed = ui
+                .horizontal(|ui| {
+                    ui.label("Host:");
+                    ui.text_edit_singleline(&mut self.temp_host)
+                })
+                .inner
+                .changed();
 
-            let port_changed = ui.horizontal(|ui| {
-                ui.label("Port:");
-                ui.text_edit_singleline(&mut self.temp_port)
-            }).inner.changed();
+            let port_changed = ui
+                .horizontal(|ui| {
+                    ui.label("Port:");
+                    ui.text_edit_singleline(&mut self.temp_port)
+                })
+                .inner
+                .changed();
 
             if host_changed || port_changed {
                 if self.apply_settings(config) {
@@ -152,8 +158,7 @@ impl SidecarSettingsWindow {
                                 // Show compatibility indicator alongside the name.
                                 let norm_versions =
                                     crate::core::log_store::all_normalization_versions();
-                                let compatible =
-                                    is_normalization_compatible(model, &norm_versions);
+                                let compatible = is_normalization_compatible(model, &norm_versions);
                                 let label = if compatible {
                                     model.name.clone()
                                 } else {
@@ -172,9 +177,11 @@ impl SidecarSettingsWindow {
                         });
 
                     // Details for the selected model
-                    if let Some(model) = config.selected_model.as_ref().and_then(|id| {
-                        self.available_models.iter().find(|m| &m.id == id)
-                    }) {
+                    if let Some(model) = config
+                        .selected_model
+                        .as_ref()
+                        .and_then(|id| self.available_models.iter().find(|m| &m.id == id))
+                    {
                         ui.add_space(5.0);
                         ui.label(RichText::new("Model Details:").weak());
                         ui.label(format!("Architecture: {}", model.architecture));
@@ -192,9 +199,12 @@ impl SidecarSettingsWindow {
                                     "  {slug}: trained on v{trained_on}, frontend is v{current}"
                                 ));
                             }
-                            ui.label(RichText::new(
-                                "Scores may be less accurate for affected file types.",
-                            ).weak());
+                            ui.label(
+                                RichText::new(
+                                    "Scores may be less accurate for affected file types.",
+                                )
+                                .weak(),
+                            );
                         }
                     }
                 }
@@ -214,8 +224,7 @@ impl SidecarSettingsWindow {
         self.available_models.clear();
         self.models_error = None;
         let Ok(port) = self.temp_port.parse::<u16>() else {
-            self.connection_status =
-                ConnectionStatus::Failed("Invalid port number".to_string());
+            self.connection_status = ConnectionStatus::Failed("Invalid port number".to_string());
             return;
         };
 
@@ -303,4 +312,3 @@ fn normalization_mismatches(
         })
         .collect()
 }
-

@@ -299,8 +299,7 @@ impl SessionHistory {
         }
 
         // Sort by most recently used first
-        self.sessions
-            .sort_by(|a, b| b.last_used.cmp(&a.last_used));
+        self.sessions.sort_by(|a, b| b.last_used.cmp(&a.last_used));
 
         // Trim to max
         self.sessions.truncate(MAX_SESSIONS);
@@ -313,6 +312,9 @@ impl SessionHistory {
 
     /// Find all sessions containing the given file
     pub fn sessions_containing(&self, path: &Path) -> Vec<&RecordedSession> {
-        self.sessions.iter().filter(|s| s.contains_file(path)).collect()
+        self.sessions
+            .iter()
+            .filter(|s| s.contains_file(path))
+            .collect()
     }
 }

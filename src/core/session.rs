@@ -367,7 +367,11 @@ impl std::fmt::Display for SessionError {
                 f,
                 ".crab file version {found} is newer than supported version {supported}"
             ),
-            Self::StateVersionTooNew { slug, found, supported } => write!(
+            Self::StateVersionTooNew {
+                slug,
+                found,
+                supported,
+            } => write!(
                 f,
                 "{slug} state version {found} is newer than supported version {supported}"
             ),

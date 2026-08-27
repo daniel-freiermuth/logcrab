@@ -35,8 +35,7 @@ pub fn export_typed<FT: InputFileType>(
     out: &mut impl Write,
 ) -> anyhow::Result<()> {
     let config = <<FT as InputFileType>::LineType as LineType>::Config::default();
-    let file_state =
-        Arc::new(<<FT as InputFileType>::LineType as LineType>::FileState::default());
+    let file_state = Arc::new(<<FT as InputFileType>::LineType as LineType>::FileState::default());
 
     let mut reader = FT::open(path, config.clone(), Arc::clone(&file_state))
         .with_context(|| format!("failed to open {} as {filetype}", path.display()))?;

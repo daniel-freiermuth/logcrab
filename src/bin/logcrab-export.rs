@@ -68,4 +68,3 @@ fn main() -> anyhow::Result<()> {
 fn export_file(path: &Path, out: &mut impl Write) -> anyhow::Result<()> {
     logcrab::core::log_store::export_dispatch(path, out)
 }
-

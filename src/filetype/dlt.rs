@@ -329,10 +329,7 @@ fn string_map_to_boot_times(
 impl serde::Serialize for DltFileState {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let sp = self
-            .sync_points
-            .lock()
-            .expect("sync_points lock poisoned");
+        let sp = self.sync_points.lock().expect("sync_points lock poisoned");
         let mut state = s.serialize_struct("DltFileState", 3)?;
         state.serialize_field("storage_offset_ms", &self.storage_offset_ms())?;
         state.serialize_field("boot_times", &boot_times_to_string_map(&self.boot_times))?;
@@ -424,15 +421,11 @@ impl LineType for DltLogLine {
                 }
                 // Fallback: no boot_time for this app yet
                 self.storage_time
-                    + chrono::Duration::milliseconds(
-                        file_state.storage_offset_ms() + sync_offset,
-                    )
+                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
             }
             DltTimestampSource::StorageTime => {
                 self.storage_time
-                    + chrono::Duration::milliseconds(
-                        file_state.storage_offset_ms() + sync_offset,
-                    )
+                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
             }
         }
     }
@@ -462,7 +455,10 @@ impl LineType for DltLogLine {
                 // In inferred-monotonic mode prepend [<storage_time> (<diff>) <storage_ecu>]
                 // so the user always sees the relationship between storage and monotonic time.
                 let inferred_time = self.timestamp(config, file_state);
-                format!("{sync_prefix}{} {body}", self.format_time_prefix(inferred_time))
+                format!(
+                    "{sync_prefix}{} {body}",
+                    self.format_time_prefix(inferred_time)
+                )
             }
             DltTimestampSource::StorageTime => {
                 // In storage-time mode prepend [<offset>] when a calibration offset
@@ -547,21 +543,20 @@ impl LineType for DltLogLine {
             *file_state
                 .sync_point_calibration
                 .lock()
-                .expect("sync_point_calibration lock poisoned") =
-                Some(DltSyncPointCalibration {
-                    from_line: self.line_number,
-                    storage_time: self.storage_time,
-                    header_timestamp_us: self.header_timestamp_us,
-                    ecu_id: self.ecu_id.clone(),
-                    app_id: self.app_id.clone(),
-                    is_inferred,
-                    window: crate::filetype::CalibrationWindow::new(
-                        current_time,
-                        false, // not DLT-specific "apply to all" mode
-                        Some(current_time),
-                        self.storage_time,
-                    ),
-                });
+                .expect("sync_point_calibration lock poisoned") = Some(DltSyncPointCalibration {
+                from_line: self.line_number,
+                storage_time: self.storage_time,
+                header_timestamp_us: self.header_timestamp_us,
+                ecu_id: self.ecu_id.clone(),
+                app_id: self.app_id.clone(),
+                is_inferred,
+                window: crate::filetype::CalibrationWindow::new(
+                    current_time,
+                    false, // not DLT-specific "apply to all" mode
+                    Some(current_time),
+                    self.storage_time,
+                ),
+            });
             ui.close();
         }
 
@@ -578,9 +573,7 @@ impl LineType for DltLogLine {
 
 impl crate::filetype::LogFileState for DltFileState {
     fn take_pending_jump_line(&self) -> Option<usize> {
-        let val = self
-            .pending_jump_line
-            .swap(usize::MAX, Ordering::Relaxed);
+        let val = self.pending_jump_line.swap(usize::MAX, Ordering::Relaxed);
         if val == usize::MAX {
             None
         } else {
@@ -646,13 +639,10 @@ impl crate::filetype::LogFileState for DltFileState {
                         // that will be applied. We use the storage_time as the raw base.
                         let raw_time = if sp_cal.is_inferred {
                             if let Some(header_us) = sp_cal.header_timestamp_us {
-                                let key =
-                                    (sp_cal.ecu_id.clone(), sp_cal.app_id.clone());
-                                self.boot_times
-                                    .get(&key)
-                                    .map_or(sp_cal.storage_time, |bt| {
-                                        *bt + chrono::TimeDelta::microseconds(header_us)
-                                    })
+                                let key = (sp_cal.ecu_id.clone(), sp_cal.app_id.clone());
+                                self.boot_times.get(&key).map_or(sp_cal.storage_time, |bt| {
+                                    *bt + chrono::TimeDelta::microseconds(header_us)
+                                })
                             } else {
                                 sp_cal.storage_time
                                     + chrono::Duration::milliseconds(self.storage_offset_ms())
@@ -664,10 +654,8 @@ impl crate::filetype::LogFileState for DltFileState {
                         let offset_ms = (target_time - raw_time).num_milliseconds();
                         let from_line = sp_cal.from_line;
 
-                        let mut sync_points = self
-                            .sync_points
-                            .lock()
-                            .expect("sync_points lock poisoned");
+                        let mut sync_points =
+                            self.sync_points.lock().expect("sync_points lock poisoned");
 
                         // Remove any existing sync point at the same line.
                         sync_points.retain(|sp| sp.from_line != from_line);
@@ -675,7 +663,13 @@ impl crate::filetype::LogFileState for DltFileState {
                         let insert_pos = sync_points
                             .binary_search_by_key(&from_line, |sp| sp.from_line)
                             .unwrap_or_else(|pos| pos);
-                        sync_points.insert(insert_pos, SyncPoint { from_line, offset_ms });
+                        sync_points.insert(
+                            insert_pos,
+                            SyncPoint {
+                                from_line,
+                                offset_ms,
+                            },
+                        );
 
                         *sp_cal_guard = None;
                         // Auto-open the sync points window so the user sees the result.
@@ -697,7 +691,10 @@ impl crate::filetype::LogFileState for DltFileState {
             let mut open = true;
             let window_title = format!(
                 "\u{1F4CD} Sync Points — {}",
-                source_path.file_name().unwrap_or(source_path.as_os_str()).to_string_lossy()
+                source_path
+                    .file_name()
+                    .unwrap_or(source_path.as_os_str())
+                    .to_string_lossy()
             );
             egui::Window::new(window_title)
                 .open(&mut open)

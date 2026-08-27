@@ -73,9 +73,11 @@ impl FilterBar {
         let search_text = filter.search.search_text.clone();
         let case_sensitive = filter.search.case_sensitive;
         match GlobalConfig::update(|c| {
-            if let Some(fav) = c.favorite_filters.iter_mut().find(|f| {
-                f.search_text == search_text && f.case_sensitive == case_sensitive
-            }) {
+            if let Some(fav) = c
+                .favorite_filters
+                .iter_mut()
+                .find(|f| f.search_text == search_text && f.case_sensitive == case_sensitive)
+            {
                 fav.name.clone_from(&new_name);
             }
         }) {

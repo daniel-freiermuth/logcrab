@@ -28,10 +28,10 @@
 //! `ExplainPollStatus`) is identical to the V1 WebSocket client so that the
 //! rest of the codebase requires zero changes.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -44,8 +44,7 @@ pub mod proto {
 use proto::{
     score_stream_client_message::Payload as ClientPayload,
     score_stream_server_message::Payload as ServerPayload,
-    sidecar_client::SidecarClient as GrpcClient,
-    *,
+    sidecar_client::SidecarClient as GrpcClient, *,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -136,7 +135,11 @@ impl InputLine {
         filetype: Option<String>,
     ) -> Self {
         Self {
-            line_id: LineId { source_id, line_number, timestamp_unix_ms },
+            line_id: LineId {
+                source_id,
+                line_number,
+                timestamp_unix_ms,
+            },
             message,
             template_key,
             source_file,
@@ -243,7 +246,11 @@ impl ExplainSession {
         std::thread::spawn(move || {
             Self::run_loop(rt_clone, req_tx, stream, explain_req_rx, explain_res_tx);
         });
-        Self { request_tx: explain_req_tx, result_rx: explain_res_rx, _rt: rt }
+        Self {
+            request_tx: explain_req_tx,
+            result_rx: explain_res_rx,
+            _rt: rt,
+        }
     }
 
     /// Request an explanation for `target_line_number`.
@@ -448,7 +455,10 @@ impl SidecarClient {
             .block_on(self.client().health(HealthRequest {}))
             .context("Health RPC failed")?
             .into_inner();
-        Ok(HealthResponse { api_version: resp.api_version, status: resp.status })
+        Ok(HealthResponse {
+            api_version: resp.api_version,
+            status: resp.status,
+        })
     }
 
     /// `ListModels` — discover available models and filter profiles.
@@ -536,8 +546,10 @@ impl SidecarClient {
         lines: &[InputLine],
         on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
-        let norm_map: HashMap<String, u32> =
-            normalization_versions.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let norm_map: HashMap<String, u32> = normalization_versions
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect();
         let proto_lines: Vec<proto::InputLine> = lines.iter().map(input_line_to_proto).collect();
         let model_id = model_id.to_string();
         let n_chunks = proto_lines.len().div_ceil(LINES_PER_CHUNK.max(1));
@@ -548,8 +560,7 @@ impl SidecarClient {
         // Phase 1: send all frames and open the RPC.  This async block owns
         // only `Send + 'static` data so no unsafe pointer tricks are needed.
         let (req_tx, mut stream) = self.rt.block_on(async move {
-            let (tx, rx) =
-                tokio::sync::mpsc::unbounded_channel::<ScoreStreamClientMessage>();
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ScoreStreamClientMessage>();
 
             tx.send(ScoreStreamClientMessage {
                 payload: Some(ClientPayload::Start(StartFrame {
@@ -593,7 +604,11 @@ impl SidecarClient {
         // `on_frame` is called directly — no async capture, no unsafe needed.
         let mut result = ScoreStreamResult::default();
         loop {
-            match self.rt.block_on(stream.message()).context("stream read error")? {
+            match self
+                .rt
+                .block_on(stream.message())
+                .context("stream read error")?
+            {
                 Some(msg) => {
                     if Self::handle_server_msg(msg, &mut result, on_frame)? {
                         break;

@@ -41,8 +41,8 @@ impl LogcatLogLine {
         message_text: String,
         line_number: usize,
     ) -> Self {
-        let tag_message = extract_tag_message(&message_text)
-            .unwrap_or_else(|| message_text.clone());
+        let tag_message =
+            extract_tag_message(&message_text).unwrap_or_else(|| message_text.clone());
         Self {
             raw_line,
             timestamp,

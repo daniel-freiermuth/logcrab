@@ -251,8 +251,13 @@ impl HistogramWorker {
             filtered_indices
         };
 
-        let (buckets, anomaly_buckets) =
-            Self::create_buckets(store, &zoomed_indices, start_time, bucket_size, request.color_by_ml_score);
+        let (buckets, anomaly_buckets) = Self::create_buckets(
+            store,
+            &zoomed_indices,
+            start_time,
+            bucket_size,
+            request.color_by_ml_score,
+        );
 
         HistogramResult {
             cache_key: request.key.clone(),

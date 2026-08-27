@@ -233,10 +233,8 @@ impl GlobalConfig {
             serde_json::from_str::<serde_json::Value>(contents)
                 .ok()
                 .and_then(|mut v| {
-                    v.as_object_mut()?.insert(
-                        "schema_version".to_string(),
-                        serde_json::json!(0u32),
-                    );
+                    v.as_object_mut()?
+                        .insert("schema_version".to_string(), serde_json::json!(0u32));
                     serde_json::from_value::<Self>(v).ok()
                 })
         } else {
@@ -339,7 +337,9 @@ impl GlobalConfig {
         f(&mut config);
 
         if config.read_only {
-            tracing::warn!("Config is read-only (on-disk version is newer) — changes not persisted");
+            tracing::warn!(
+                "Config is read-only (on-disk version is newer) — changes not persisted"
+            );
             file.unlock().ok();
             return Ok(config);
         }

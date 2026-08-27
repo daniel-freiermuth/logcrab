@@ -362,7 +362,11 @@ where
                 // Drop `file` here to release the OS lock.
                 (None, None)
             }
-            Err(SessionError::StateVersionTooNew { slug, found, supported }) => {
+            Err(SessionError::StateVersionTooNew {
+                slug,
+                found,
+                supported,
+            }) => {
                 let msg = format!(
                     ".crab file {}: {slug} state was written by a newer LogCrab \
                      (state v{found}, app supports up to v{supported}); \
@@ -580,10 +584,10 @@ where
         if changed {
             self.rebuild_time_index();
         }
-        let jump = self.file_state.take_pending_jump_line().map(|line_idx| StoreID::make(
-            self.source_id,
-            line_idx,
-        ));
+        let jump = self
+            .file_state
+            .take_pending_jump_line()
+            .map(|line_idx| StoreID::make(self.source_id, line_idx));
         (changed, jump)
     }
 
@@ -854,8 +858,18 @@ impl std::fmt::Debug for LogStore {
             .field("sources_version", &self.sources_version)
             .field("scores_count", &self.scores.len())
             .field("sidecar_scores_count", &self.sidecar_scores.len())
-            .field("sidecar_enabled", &self.sidecar_config.read().map(|c| c.is_some()).unwrap_or(false))
-            .field("explain_sessions", &self.explain_sessions.lock().map(|g| g.len()).unwrap_or(0))
+            .field(
+                "sidecar_enabled",
+                &self
+                    .sidecar_config
+                    .read()
+                    .map(|c| c.is_some())
+                    .unwrap_or(false),
+            )
+            .field(
+                "explain_sessions",
+                &self.explain_sessions.lock().map(|g| g.len()).unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -914,7 +928,10 @@ impl StoreID {
 
     /// Construct a `StoreID` directly from a source identifier and line index.
     pub const fn make(source_id: u64, line_index: usize) -> Self {
-        Self { source_id, line_index }
+        Self {
+            source_id,
+            line_index,
+        }
     }
 
     /// Compare two `StoreIDs` by their line timestamps.
@@ -1105,10 +1122,7 @@ impl LogStore {
     /// This is lock-free for readers — scores are swapped atomically.
     pub fn set_scores(&self, source_id: u64, scores: &[f64]) {
         profiling::scope!("LogStore::set_scores");
-        self.scores
-            .entry(source_id)
-            .or_default()
-            .set_all(scores);
+        self.scores.entry(source_id).or_default().set_all(scores);
         // Bump version so UI knows to refresh
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
     }
@@ -1131,7 +1145,14 @@ impl LogStore {
     }
 
     /// Set ML sidecar scores, UNK flags, rare flags, and scored flags for a source.
-    pub fn set_sidecar_scores_with_unk(&self, source_id: u64, scores: &[f64], unk_flags: &[bool], rare_flags: &[bool], scored_flags: &[bool]) {
+    pub fn set_sidecar_scores_with_unk(
+        &self,
+        source_id: u64,
+        scores: &[f64],
+        unk_flags: &[bool],
+        rare_flags: &[bool],
+        scored_flags: &[bool],
+    ) {
         profiling::scope!("LogStore::set_sidecar_scores_with_unk");
         self.sidecar_scores
             .entry(source_id)
@@ -1142,7 +1163,11 @@ impl LogStore {
 
     /// Store the explain session for the given `source_id`.
     /// Replaces any previous session for that source (dropping it, which closes the connection).
-    pub fn set_explain_session(&self, source_id: u64, session: crate::anomaly::sidecar_client::ExplainSession) {
+    pub fn set_explain_session(
+        &self,
+        source_id: u64,
+        session: crate::anomaly::sidecar_client::ExplainSession,
+    ) {
         self.explain_sessions
             .lock()
             .expect("explain_sessions lock poisoned")
@@ -1161,7 +1186,10 @@ impl LogStore {
 
     /// Poll for a completed explanation on the session for `source_id` without blocking.
     /// Returns `None` if no result is available yet or there is no session for that source.
-    pub fn poll_explanation(&self, source_id: u64) -> Option<crate::anomaly::sidecar_client::ExplainResult> {
+    pub fn poll_explanation(
+        &self,
+        source_id: u64,
+    ) -> Option<crate::anomaly::sidecar_client::ExplainResult> {
         self.explain_sessions
             .lock()
             .expect("explain_sessions lock poisoned")
@@ -1171,7 +1199,10 @@ impl LogStore {
 
     /// Poll the explain session with a richer status that distinguishes "still pending"
     /// from "the WebSocket thread has exited".
-    pub fn poll_explain_status(&self, source_id: u64) -> crate::anomaly::sidecar_client::ExplainPollStatus {
+    pub fn poll_explain_status(
+        &self,
+        source_id: u64,
+    ) -> crate::anomaly::sidecar_client::ExplainPollStatus {
         use crate::anomaly::sidecar_client::ExplainPollStatus;
         self.explain_sessions
             .lock()
@@ -1226,7 +1257,10 @@ impl LogStore {
 
     /// Set the sidecar scoring configuration for this store.
     pub fn set_sidecar_config(&self, config: crate::core::log_file::ScoringConfig) {
-        *self.sidecar_config.write().expect("sidecar_config lock poisoned") = Some(config);
+        *self
+            .sidecar_config
+            .write()
+            .expect("sidecar_config lock poisoned") = Some(config);
     }
 
     /// Retrieve a clone of the sidecar scoring configuration (if set).
