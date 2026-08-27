@@ -439,7 +439,7 @@ impl Histogram {
             };
             painter.add(egui::Shape::line(
                 points,
-                egui::Stroke::new(2.0, spinner_color),
+                egui::Stroke::new(2.0_f32, spinner_color),
             ));
             ui.ctx().request_repaint();
         }
@@ -568,7 +568,7 @@ impl Histogram {
                     selection_rect,
                     0.0,
                     fill_color,
-                    egui::Stroke::new(1.0, stroke_color),
+                    egui::Stroke::new(1.0_f32, stroke_color),
                     egui::StrokeKind::Inside,
                 );
             }

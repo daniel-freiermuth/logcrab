@@ -735,6 +735,10 @@ where
     /// by `display_message(config, file_state)` — which includes any active overlays such
     /// as SOME/IP SD decoded entries — and the raw string.  All config and file-state locks
     /// are acquired once for the whole scan.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal source lock is poisoned.
     pub fn filter_sorted_by_search<F, C>(
         &self,
         predicate: &F,
@@ -1413,6 +1417,10 @@ impl LogStore {
     ///
     /// Uses the pre-sorted `by_timestamp` index within each source, then merges.
     /// Returns `None` when `should_cancel` requests early termination.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the source collection lock is poisoned.
     pub fn get_matching_ids<F, C>(&self, predicate: F, should_cancel: &C) -> Option<Vec<StoreID>>
     where
         F: Fn(&str, &str) -> bool + Sync,
