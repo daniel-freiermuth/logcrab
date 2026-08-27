@@ -19,7 +19,10 @@
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::session::CRAB_FILTERS_VERSION;
-use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule};
+use crate::core::{
+    CrabFilters, FilterRequestPriority, LogFileLoader, LogStore, SavedFilter, SavedHighlight,
+    SearchRule,
+};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -282,9 +285,11 @@ impl CrabSession {
                     highlight.name.clone()
                 };
                 highlight.search.check_filter_results();
-                highlight
-                    .search
-                    .ensure_cache_valid(&self.state.store, &self.state.filter_worker);
+                highlight.search.ensure_cache_valid(
+                    &self.state.store,
+                    &self.state.filter_worker,
+                    FilterRequestPriority::Background,
+                );
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name,
                     color: highlight.color,

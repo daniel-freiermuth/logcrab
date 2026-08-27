@@ -27,7 +27,7 @@ pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
 use crate::core::log_store::StoreID;
-use crate::core::SavedFilter;
+use crate::core::{FilterRequestPriority, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::{FilterToHighlightData, SessionState};
@@ -111,9 +111,11 @@ impl FilterView {
             self.state.last_rendered_selection = None;
         }
         self.state.search.hide_duplicates = global_config.hide_duplicates;
-        self.state
-            .search
-            .ensure_cache_valid(&log_view_state.store, &log_view_state.filter_worker);
+        self.state.search.ensure_cache_valid(
+            &log_view_state.store,
+            &log_view_state.filter_worker,
+            FilterRequestPriority::Interactive,
+        );
 
         // Render filter bar
         let filter_bar_events = {

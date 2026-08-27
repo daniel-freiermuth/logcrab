@@ -29,7 +29,51 @@ use crate::core::LogStore;
 use fancy_regex::Regex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// Cancels a filter request when a newer search snapshot supersedes it.
+#[derive(Clone)]
+pub struct FilterCancellation(Arc<AtomicBool>);
+
+impl FilterCancellation {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for FilterCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Let short-lived snapshots complete so live search remains responsive while typing.
+const SUPERSEDED_SEARCH_GRACE: Duration = Duration::from_millis(300);
+
+fn should_abort_superseded_search(is_superseded: bool, elapsed: Duration) -> bool {
+    is_superseded && elapsed >= SUPERSEDED_SEARCH_GRACE
+}
+
+fn should_abort_filter(request: &FilterRequest, started_at: Instant) -> bool {
+    should_abort_superseded_search(request.cancellation.is_cancelled(), started_at.elapsed())
+}
+
+/// Schedules interactive filter-tab searches ahead of background highlight searches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FilterRequestPriority {
+    Interactive,
+    Background,
+}
 
 /// Request to compute filtered indices in background
 #[derive(Clone)]
@@ -47,6 +91,10 @@ pub struct FilterRequest {
     pub case_sensitive: bool,
     /// Whether to deduplicate exact matches (same timestamp, source, message)
     pub hide_duplicates: bool,
+    /// Cancels this snapshot after the live-search grace period if it is superseded.
+    pub cancellation: FilterCancellation,
+    /// Controls whether this request may preempt background work.
+    pub priority: FilterRequestPriority,
 }
 
 /// Result from background filtering
@@ -64,6 +112,58 @@ pub struct FilterResult {
     pub store_version: StoreVersion,
 }
 
+/// Coordinates active work with newly submitted interactive requests.
+struct FilterWorkerScheduler {
+    active_cancellation: Mutex<Option<FilterCancellation>>,
+}
+
+impl FilterWorkerScheduler {
+    fn cancel_active(&self) {
+        match self.active_cancellation.lock() {
+            Ok(active) => {
+                if let Some(cancellation) = active.as_ref() {
+                    cancellation.cancel();
+                }
+            }
+            Err(error) => tracing::error!("Filter scheduler lock poisoned: {error}"),
+        }
+    }
+
+    fn activate(&self, cancellation: FilterCancellation) {
+        match self.active_cancellation.lock() {
+            Ok(mut active) => *active = Some(cancellation),
+            Err(error) => tracing::error!("Filter scheduler lock poisoned: {error}"),
+        }
+    }
+
+    fn deactivate(&self) {
+        match self.active_cancellation.lock() {
+            Ok(mut active) => *active = None,
+            Err(error) => tracing::error!("Filter scheduler lock poisoned: {error}"),
+        }
+    }
+}
+
+/// Clears the active request even when filtering exits early.
+struct ActiveFilterRequest {
+    scheduler: Arc<FilterWorkerScheduler>,
+}
+
+impl ActiveFilterRequest {
+    fn new(scheduler: &Arc<FilterWorkerScheduler>, cancellation: FilterCancellation) -> Self {
+        scheduler.activate(cancellation);
+        Self {
+            scheduler: Arc::clone(scheduler),
+        }
+    }
+}
+
+impl Drop for ActiveFilterRequest {
+    fn drop(&mut self) {
+        self.scheduler.deactivate();
+    }
+}
+
 /// Handle to send filter requests to the background worker.
 ///
 /// Clone this to send requests from multiple places.
@@ -72,11 +172,15 @@ pub struct FilterResult {
 pub struct FilterWorkerHandle {
     request_tx: Sender<FilterRequest>,
     pub is_filtering: Arc<AtomicBool>,
+    scheduler: Arc<FilterWorkerScheduler>,
 }
 
 impl FilterWorkerHandle {
-    /// Send a filter request to the background worker
+    /// Send a filter request to the background worker.
     pub fn send_request(&self, request: FilterRequest) {
+        if request.priority == FilterRequestPriority::Interactive {
+            self.scheduler.cancel_active();
+        }
         let _ = self.request_tx.send(request);
     }
 }
@@ -96,16 +200,21 @@ impl FilterWorker {
     pub fn new() -> Self {
         let (request_tx, request_rx) = channel::<FilterRequest>();
         let is_filtering = Arc::new(AtomicBool::new(false));
-        let is_filtering_copy = is_filtering.clone();
+        let is_filtering_copy = Arc::clone(&is_filtering);
+        let scheduler = Arc::new(FilterWorkerScheduler {
+            active_cancellation: Mutex::new(None),
+        });
+        let worker_scheduler = Arc::clone(&scheduler);
 
         let thread = std::thread::spawn(move || {
-            Self::worker_loop(&request_rx, &is_filtering_copy);
+            Self::worker_loop(&request_rx, &is_filtering_copy, &worker_scheduler);
         });
 
         Self {
             handle: FilterWorkerHandle {
                 request_tx,
                 is_filtering,
+                scheduler,
             },
             _thread: thread,
         }
@@ -117,88 +226,141 @@ impl FilterWorker {
         self.handle.clone()
     }
 
+    fn enqueue_request(
+        request: FilterRequest,
+        interactive_requests: &mut QueueMap<usize, FilterRequest>,
+        background_requests: &mut QueueMap<usize, FilterRequest>,
+    ) {
+        let filter_id = request.filter_id;
+        let pending_requests = if request.priority == FilterRequestPriority::Interactive {
+            interactive_requests
+        } else {
+            background_requests
+        };
+        if !pending_requests.insert(filter_id, request) {
+            tracing::trace!("Coalescing request for filter {filter_id}");
+        }
+    }
+
     /// Background worker loop that processes filter requests.
-    fn worker_loop(request_rx: &Receiver<FilterRequest>, is_filtering: &Arc<AtomicBool>) {
+    fn worker_loop(
+        request_rx: &Receiver<FilterRequest>,
+        is_filtering: &Arc<AtomicBool>,
+        scheduler: &Arc<FilterWorkerScheduler>,
+    ) {
         profiling::function_scope!();
 
         tracing::debug!("Filter worker thread started");
 
-        // Queue-map for fair FIFO processing with coalescing
-        let mut pending_requests = QueueMap::new();
+        let mut interactive_requests = QueueMap::new();
+        let mut background_requests = QueueMap::new();
 
-        // Helper to drain all available requests from the channel
-        let drain_pending = |pending: &mut QueueMap<usize, FilterRequest>| {
-            while let Ok(request) = request_rx.try_recv() {
-                let filter_id = request.filter_id;
-                if !pending.insert(filter_id, request) {
-                    tracing::trace!("Coalescing request for filter {filter_id}");
+        let drain_pending =
+            |interactive: &mut QueueMap<usize, FilterRequest>,
+             background: &mut QueueMap<usize, FilterRequest>| {
+                while let Ok(request) = request_rx.try_recv() {
+                    Self::enqueue_request(request, interactive, background);
                 }
-            }
-        };
+            };
 
         // Main processing loop - exits when all senders are dropped
         while let Ok(first_request) = request_rx.recv() {
             is_filtering.store(true, Ordering::Relaxed);
             profiling::scope!("process_filter_request");
-            pending_requests.insert(first_request.filter_id, first_request);
+            Self::enqueue_request(
+                first_request,
+                &mut interactive_requests,
+                &mut background_requests,
+            );
 
             // Collect any additional pending requests
-            drain_pending(&mut pending_requests);
+            drain_pending(&mut interactive_requests, &mut background_requests);
 
-            while let Some((filter_id, request)) = pending_requests.pop_front() {
+            while let Some((filter_id, request)) = interactive_requests
+                .pop_front()
+                .or_else(|| background_requests.pop_front())
+            {
+                let _active_request =
+                    ActiveFilterRequest::new(scheduler, request.cancellation.clone());
+                drain_pending(&mut interactive_requests, &mut background_requests);
+                if !interactive_requests.is_empty() {
+                    request.cancellation.cancel();
+                }
                 profiling::scope!("process_single_filter");
                 tracing::trace!("Processing filter request (search: '{:?}')", request.regex);
 
                 let store_version = request.store.version();
-                // Filter lines in parallel
+                let started_at = Instant::now();
+                let should_cancel = || should_abort_filter(&request, started_at);
                 let filtered_indices = {
                     profiling::scope!("filter_lines");
 
-                    // Parallel filtering with rayon
-                    request.store.get_matching_ids(|display_msg, raw| {
-                        let matches_include = request.regex.is_match(display_msg).unwrap_or(false)
-                            || request.regex.is_match(raw).unwrap_or(false);
+                    let Some(filtered_indices) = request.store.get_matching_ids(
+                        |display_msg, raw| {
+                            let matches_include =
+                                request.regex.is_match(display_msg).unwrap_or(false)
+                                    || request.regex.is_match(raw).unwrap_or(false);
 
-                        if !matches_include {
-                            return false;
-                        }
+                            if !matches_include {
+                                return false;
+                            }
 
-                        // If there's an exclude pattern, check if the line matches it
-                        request.exclude_regex.as_ref().is_none_or(|exclude_regex| {
-                            let matches_exclude =
-                                exclude_regex.is_match(display_msg).unwrap_or(false)
-                                    || exclude_regex.is_match(raw).unwrap_or(false);
-                            // Return true only if it doesn't match the exclusion pattern
-                            !matches_exclude
-                        })
-                    })
+                            request.exclude_regex.as_ref().is_none_or(|exclude_regex| {
+                                let matches_exclude =
+                                    exclude_regex.is_match(display_msg).unwrap_or(false)
+                                        || exclude_regex.is_match(raw).unwrap_or(false);
+                                !matches_exclude
+                            })
+                        },
+                        &should_cancel,
+                    ) else {
+                        tracing::trace!("Discarding superseded filter {filter_id}");
+                        drain_pending(&mut interactive_requests, &mut background_requests);
+                        continue;
+                    };
+                    filtered_indices
                 };
 
                 // Apply deduplication if requested (serial pass after parallel regex filter)
                 let filtered_indices = if request.hide_duplicates {
                     profiling::scope!("dedup_filter");
                     let mut seen = std::collections::HashSet::new();
-                    filtered_indices
-                        .into_iter()
-                        .filter(|id| {
-                            if let (Some(ts), Some(line)) = (
-                                request.store.adjusted_timestamp(id),
-                                request.store.get_by_id(id),
-                            ) {
-                                let key = (
-                                    ts.timestamp_nanos_opt().unwrap_or(0),
-                                    id.source_id(),
-                                    line.message,
-                                );
-                                seen.insert(key)
-                            } else {
-                                true
+                    let mut deduplicated = Vec::with_capacity(filtered_indices.len());
+                    for id in filtered_indices {
+                        if should_cancel() {
+                            break;
+                        }
+                        if let (Some(ts), Some(line)) = (
+                            request.store.adjusted_timestamp(&id),
+                            request.store.get_by_id(&id),
+                        ) {
+                            let key = (
+                                ts.timestamp_nanos_opt().unwrap_or(0),
+                                id.source_id(),
+                                line.message,
+                            );
+                            if seen.insert(key) {
+                                deduplicated.push(id);
                             }
-                        })
-                        .collect()
+                        } else {
+                            deduplicated.push(id);
+                        }
+                    }
+                    if should_cancel() {
+                        tracing::trace!("Discarding superseded filter {filter_id}");
+                        drain_pending(&mut interactive_requests, &mut background_requests);
+                        continue;
+                    }
+                    deduplicated
                 } else {
                     filtered_indices
                 };
+
+                if should_cancel() {
+                    tracing::trace!("Discarding superseded filter {filter_id}");
+                    drain_pending(&mut interactive_requests, &mut background_requests);
+                    continue;
+                }
 
                 tracing::trace!(
                     "Filter {} complete: {} matches",
@@ -223,10 +385,52 @@ impl FilterWorker {
                 }
 
                 // Check one more time if a newer request arrived during processing
-                drain_pending(&mut pending_requests);
+                drain_pending(&mut interactive_requests, &mut background_requests);
             }
             is_filtering.store(false, Ordering::Relaxed);
         }
         tracing::debug!("Filter worker thread shutting down (channel closed)");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn superseded_searches_finish_within_grace_period() {
+        assert!(!should_abort_superseded_search(
+            true,
+            Duration::from_millis(299)
+        ));
+        assert!(should_abort_superseded_search(
+            true,
+            SUPERSEDED_SEARCH_GRACE
+        ));
+        assert!(!should_abort_superseded_search(
+            false,
+            SUPERSEDED_SEARCH_GRACE
+        ));
+    }
+
+    #[test]
+    fn filter_cancellation_marks_the_replaced_snapshot() {
+        let cancellation = FilterCancellation::new();
+        assert!(!cancellation.is_cancelled());
+        cancellation.cancel();
+        assert!(cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn interactive_requests_cancel_active_work() {
+        let scheduler = FilterWorkerScheduler {
+            active_cancellation: Mutex::new(None),
+        };
+        let cancellation = FilterCancellation::new();
+        scheduler.activate(cancellation.clone());
+
+        scheduler.cancel_active();
+
+        assert!(cancellation.is_cancelled());
     }
 }

@@ -540,13 +540,18 @@ macro_rules! register_filetypes {
             ///
             /// Predicate receives `(display_message, raw)` — the display message includes
             /// any active per-source overlays (e.g. SOME/IP SD decoding for PCAP).
-            pub fn filter_sorted_by_search<F>(&self, predicate: &F) -> Vec<usize>
+            pub fn filter_sorted_by_search<F, C>(
+                &self,
+                predicate: &F,
+                should_cancel: &C,
+            ) -> Option<Vec<usize>>
             where
                 F: Fn(&str, &str) -> bool + Sync,
+                C: Fn() -> bool + Sync,
             {
                 match self {
-                    $( Self::$b_arm(s) => s.filter_sorted_by_search(predicate), )*
-                    $( Self::$t_arm(s) => s.filter_sorted_by_search(predicate), )*
+                    $( Self::$b_arm(s) => s.filter_sorted_by_search(predicate, should_cancel), )*
+                    $( Self::$t_arm(s) => s.filter_sorted_by_search(predicate, should_cancel), )*
                 }
             }
         }

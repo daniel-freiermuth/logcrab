@@ -21,7 +21,9 @@
 //! This module provides the core regex-based search functionality
 //! with background filtering support via the global filter worker.
 
-use crate::core::filter_worker::{FilterRequest, FilterResult, FilterWorkerHandle};
+use crate::core::filter_worker::{
+    FilterCancellation, FilterRequest, FilterRequestPriority, FilterResult, FilterWorkerHandle,
+};
 use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::LogStore;
 use fancy_regex::{Error, Regex};
@@ -68,6 +70,8 @@ pub struct SearchState {
     filter_result_rx: Receiver<FilterResult>,
     /// Sender kept to create new requests
     filter_result_tx: Sender<FilterResult>,
+    /// Cancels the last submitted snapshot when this search changes.
+    current_request_cancellation: FilterCancellation,
 }
 
 impl SearchState {
@@ -95,6 +99,7 @@ impl SearchState {
             last_requested_version: StoreVersion::default(),
             filter_result_rx: result_rx,
             filter_result_tx: result_tx,
+            current_request_cancellation: FilterCancellation::new(),
         }
     }
 
@@ -134,7 +139,13 @@ impl SearchState {
     }
 
     /// Request a background filter update for the given store.
-    fn request_filter_update(&self, store: Arc<LogStore>, worker: &FilterWorkerHandle) {
+    fn request_filter_update(
+        &self,
+        store: Arc<LogStore>,
+        worker: &FilterWorkerHandle,
+        cancellation: FilterCancellation,
+        priority: FilterRequestPriority,
+    ) {
         if !self.search_text.is_empty() {
             tracing::trace!(
                 "Search {}: requesting background filter for '{}'",
@@ -155,10 +166,19 @@ impl SearchState {
                 exclude_text: self.exclude_text.clone(),
                 case_sensitive: self.case_sensitive,
                 hide_duplicates: self.hide_duplicates,
+                cancellation,
+                priority,
             };
 
             worker.send_request(request);
         }
+    }
+
+    /// Cancel the previously submitted snapshot and return a fresh cancellation handle.
+    fn replace_request_cancellation(&mut self) -> FilterCancellation {
+        self.current_request_cancellation.cancel();
+        self.current_request_cancellation = FilterCancellation::new();
+        self.current_request_cancellation.clone()
     }
 
     /// Check for completed filter results from background thread.
@@ -197,15 +217,21 @@ impl SearchState {
         )
     }
 
-    /// Check if cache is valid for the given store version, request update if not.
-    pub fn ensure_cache_valid(&mut self, store: &Arc<LogStore>, worker: &FilterWorkerHandle) {
+    /// Check if cache is valid for the given store version, request an update if not.
+    pub fn ensure_cache_valid(
+        &mut self,
+        store: &Arc<LogStore>,
+        worker: &FilterWorkerHandle,
+        priority: FilterRequestPriority,
+    ) {
         if self.last_requested_version != store.version()
             || self.last_requested_text != self.search_text
             || self.last_requested_exclude != self.exclude_text
             || self.last_requested_case != self.case_sensitive
             || self.last_requested_dedup != self.hide_duplicates
         {
-            self.request_filter_update(Arc::clone(store), worker);
+            let cancellation = self.replace_request_cancellation();
+            self.request_filter_update(Arc::clone(store), worker, cancellation, priority);
             self.last_requested_version = store.version();
             self.last_requested_text = self.search_text.clone();
             self.last_requested_exclude = self.exclude_text.clone();
@@ -351,6 +377,7 @@ mod tests {
             search_text: "first".to_string(),
             exclude_text: String::new(),
             case_sensitive: false,
+            hide_duplicates: false,
             store_version: StoreVersion::default(),
         })
         .expect("Failed to send FilterResult for 'first'");
@@ -360,6 +387,7 @@ mod tests {
             search_text: "second".to_string(),
             exclude_text: String::new(),
             case_sensitive: false,
+            hide_duplicates: false,
             store_version: StoreVersion::default(),
         })
         .expect("Failed to send FilterResult for 'second'");
@@ -371,5 +399,16 @@ mod tests {
 
         // Second call should return false (channel drained)
         assert!(!state.check_filter_results());
+    }
+
+    #[test]
+    fn replacing_request_cancellation_cancels_the_previous_snapshot() {
+        let mut state = SearchState::new();
+        let previous = state.current_request_cancellation.clone();
+
+        let current = state.replace_request_cancellation();
+
+        assert!(previous.is_cancelled());
+        assert!(!current.is_cancelled());
     }
 }

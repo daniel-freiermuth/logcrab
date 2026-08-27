@@ -735,25 +735,49 @@ where
     /// by `display_message(config, file_state)` — which includes any active overlays such
     /// as SOME/IP SD decoded entries — and the raw string.  All config and file-state locks
     /// are acquired once for the whole scan.
-    pub fn filter_sorted_by_search<F>(&self, predicate: &F) -> Vec<usize>
+    pub fn filter_sorted_by_search<F, C>(
+        &self,
+        predicate: &F,
+        should_cancel: &C,
+    ) -> Option<Vec<usize>>
     where
         F: Fn(&str, &str) -> bool + Sync,
+        C: Fn() -> bool + Sync,
     {
         profiling::scope!("SourceData::filter_sorted_by_search");
         let lines = self.lines.read().expect("lines lock poisoned");
         let config = self.config.read().expect("config lock poisoned");
         let file_state = &*self.file_state;
-        self.by_timestamp
+        let chunks: Option<Vec<Vec<usize>>> = self
+            .by_timestamp
             .read()
             .expect("by_timestamp lock poisoned")
-            .par_iter()
-            .filter_map(|&idx| {
-                let line = &lines[idx];
-                let display_msg = line.display_message(&*config, file_state);
-                let raw = line.raw();
-                predicate(&display_msg, &raw).then_some(idx)
+            .par_chunks(256)
+            .map(|line_indices| {
+                let mut matches = Vec::new();
+                for &idx in line_indices {
+                    if should_cancel() {
+                        return None;
+                    }
+                    let line = &lines[idx];
+                    let display_msg = line.display_message(&*config, file_state);
+                    let raw = line.raw();
+                    if predicate(&display_msg, &raw) {
+                        matches.push(idx);
+                    }
+                }
+                Some(matches)
             })
-            .collect()
+            .collect();
+
+        chunks.map(|chunks| {
+            let match_count = chunks.iter().map(Vec::len).sum();
+            let mut matches = Vec::with_capacity(match_count);
+            for mut chunk in chunks {
+                matches.append(&mut chunk);
+            }
+            matches
+        })
     }
 
     /// Render format-specific context menu items for the line at `line_index`.
@@ -1385,46 +1409,58 @@ impl LogStore {
     // Line Queries
     // ========================================================================
 
-    /// Get line indices matching a predicate, sorted by timestamp
+    /// Get line indices matching a predicate, sorted by timestamp.
     ///
     /// Uses the pre-sorted `by_timestamp` index within each source, then merges.
-    /// Returns `StoreIDs` for matching lines, sorted by timestamp.
-    pub fn get_matching_ids<F>(&self, predicate: F) -> Vec<StoreID>
+    /// Returns `None` when `should_cancel` requests early termination.
+    pub fn get_matching_ids<F, C>(&self, predicate: F, should_cancel: &C) -> Option<Vec<StoreID>>
     where
         F: Fn(&str, &str) -> bool + Sync,
+        C: Fn() -> bool + Sync,
     {
         profiling::scope!("LogStore::get_matching_ids");
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
 
-        // Parallel filter each source, collect results
-        let per_source: Vec<Vec<StoreID>> = {
-            profiling::scope!("parallel_filter_sources");
-            sources
-                .par_values()
-                .map(|source| {
-                    let source_id = source.source_id();
-                    source
-                        .filter_sorted_by_search(&predicate)
-                        .into_iter()
-                        .map(|line_index| StoreID {
-                            source_id,
-                            line_index,
-                        })
-                        .collect()
-                })
-                .collect()
-        };
+        // Parallel filter each source, collecting only if none were cancelled.
+        let per_source: Option<Vec<Vec<StoreID>>> = sources
+            .par_values()
+            .map(|source| {
+                if should_cancel() {
+                    return None;
+                }
+                let source_id = source.source_id();
+                source
+                    .filter_sorted_by_search(&predicate, should_cancel)
+                    .map(|line_indices| {
+                        line_indices
+                            .into_iter()
+                            .map(|line_index| StoreID {
+                                source_id,
+                                line_index,
+                            })
+                            .collect()
+                    })
+            })
+            .collect();
 
         // Release sources lock before merge
         drop(sources);
 
-        // K-way merge of sorted sources by timestamp
-        self.merge_sorted_sources(per_source)
+        per_source.and_then(|per_source| self.merge_sorted_sources(per_source, should_cancel))
     }
 
-    /// K-way merge of pre-sorted `StoreID` vectors by timestamp
-    fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>) -> Vec<StoreID> {
+    /// K-way merge of sorted sources by timestamp.
+    ///
+    /// Returns `None` when `should_cancel` requests early termination.
+    fn merge_sorted_sources<C>(
+        &self,
+        sources: Vec<Vec<StoreID>>,
+        should_cancel: &C,
+    ) -> Option<Vec<StoreID>>
+    where
+        C: Fn() -> bool + Sync,
+    {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
@@ -1440,28 +1476,39 @@ impl LogStore {
         let mut heap: BinaryHeap<Reverse<(chrono::DateTime<Local>, usize, StoreID)>> =
             BinaryHeap::new();
 
-        // Initialize heap with first element from each non-empty source
+        // Initialize heap with the first timestamped element from every source.
         for (src_idx, iter) in iters.iter_mut().enumerate() {
-            if let Some((id, adjusted_time)) =
-                iter.find_map(|id| self.adjusted_timestamp(&id).map(|time| (id, time)))
-            {
-                heap.push(Reverse((adjusted_time, src_idx, id)));
+            for id in iter {
+                if should_cancel() {
+                    return None;
+                }
+                if let Some(adjusted_time) = self.adjusted_timestamp(&id) {
+                    heap.push(Reverse((adjusted_time, src_idx, id)));
+                    break;
+                }
             }
         }
 
         // Merge
         while let Some(Reverse((_, src_idx, id))) = heap.pop() {
+            if should_cancel() {
+                return None;
+            }
             result.push(id);
 
-            // Push the next element from this source onto the heap
-            if let Some((next_id, adjusted_time)) =
-                iters[src_idx].find_map(|id| self.adjusted_timestamp(&id).map(|time| (id, time)))
-            {
-                heap.push(Reverse((adjusted_time, src_idx, next_id)));
+            // Push the next timestamped element from this source onto the heap.
+            for next_id in &mut iters[src_idx] {
+                if should_cancel() {
+                    return None;
+                }
+                if let Some(adjusted_time) = self.adjusted_timestamp(&next_id) {
+                    heap.push(Reverse((adjusted_time, src_idx, next_id)));
+                    break;
+                }
             }
         }
 
-        result
+        Some(result)
     }
 
     /// Get the fully-calibrated timestamp for the line identified by `id`.
