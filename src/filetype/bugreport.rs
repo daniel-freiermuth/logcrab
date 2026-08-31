@@ -31,6 +31,7 @@ static UPTIME_LINE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Detect the year from bugreport header lines.
 /// Delegates to [`detect_header_info`] to avoid a duplicate scan.
+#[must_use]
 pub fn detect_year_from_header(content: &str) -> Option<i32> {
     detect_header_info(content).map(|(year, _)| year)
 }
@@ -76,24 +77,24 @@ pub fn detect_header_info(content: &str) -> Option<(i32, i64)> {
     let dumpstate = dumpstate_dt?;
     let year = dumpstate.year();
 
-    let boot_time_ms = match uptime_minutes {
-        Some(minutes) => {
-            let boot_time = dumpstate - chrono::Duration::milliseconds(minutes * 60 * 1000);
-            let ms = boot_time.timestamp_millis();
-            tracing::info!(
-                "Bugreport: dumpstate={dumpstate}, uptime={minutes}min → boot_time_ms={ms}"
-            );
-            ms
-        }
-        None => {
+    let boot_time_ms = uptime_minutes.map_or_else(
+        || {
             tracing::warn!(
                 "Bugreport: dumpstate={dumpstate} found but no 'Uptime:' line in the \
                  preview buffer — dmesg boot-time offset cannot be auto-detected. \
                  Use 'Calibrate Dmesg Time Here' to align dmesg timestamps manually."
             );
             0
-        }
-    };
+        },
+        |minutes| {
+            let boot_time = dumpstate - chrono::Duration::milliseconds(minutes * 60 * 1000);
+            let ms = boot_time.timestamp_millis();
+            tracing::info!(
+                "Bugreport: dumpstate={dumpstate}, uptime={minutes}min → boot_time_ms={ms}"
+            );
+            ms
+        },
+    );
 
     Some((year, boot_time_ms))
 }
@@ -148,7 +149,7 @@ impl BugreportFileState {
     /// v0 only had one time offset (the logcat side). `dmesg_offset_ms` is left
     /// at 0 so that [`BugreportFileType::open_inner`] will auto-detect the boot
     /// time from the dumpstate header on first open.
-    fn migrate_from_v0(v0: BugreportFileStateV0) -> Self {
+    fn migrate_from_v0(v0: &BugreportFileStateV0) -> Self {
         let s = Self::default();
         s.set_logcat_offset_ms(v0.time_offset_ms);
         s
@@ -245,31 +246,27 @@ impl<'de> serde::Deserialize<'de> for BugreportFileState {
             rest: serde_json::Value,
         }
         let peeked = VersionPeek::deserialize(d)?;
-        match peeked.state_version {
-            0 => {
-                let v0: BugreportFileStateV0 =
-                    serde_json::from_value(peeked.rest).map_err(serde::de::Error::custom)?;
-                Ok(Self::migrate_from_v0(v0))
+        if peeked.state_version == 0 {
+            let v0: BugreportFileStateV0 =
+                serde_json::from_value(peeked.rest).map_err(serde::de::Error::custom)?;
+            Ok(Self::migrate_from_v0(&v0))
+        } else {
+            // v1 (current). Any version that somehow slips past the upstream
+            // check is also handled here best-effort.
+            #[derive(serde::Deserialize)]
+            struct V1 {
+                #[serde(default)]
+                logcat_offset_ms: i64,
+                #[serde(default)]
+                dmesg_offset_ms: i64,
             }
-            _ => {
-                // v1 (current). Any version that somehow slips past the upstream
-                // check is also handled here best-effort.
-                #[derive(serde::Deserialize)]
-                struct V1 {
-                    #[serde(default)]
-                    logcat_offset_ms: i64,
-                    #[serde(default)]
-                    dmesg_offset_ms: i64,
-                }
-                let v1: V1 =
-                    serde_json::from_value(peeked.rest).map_err(serde::de::Error::custom)?;
-                Ok(Self {
-                    logcat_offset_ms: AtomicI64::new(v1.logcat_offset_ms),
-                    dmesg_offset_ms: AtomicI64::new(v1.dmesg_offset_ms),
-                    logcat_calibration: Mutex::new(None),
-                    dmesg_calibration: Mutex::new(None),
-                })
-            }
+            let v1: V1 = serde_json::from_value(peeked.rest).map_err(serde::de::Error::custom)?;
+            Ok(Self {
+                logcat_offset_ms: AtomicI64::new(v1.logcat_offset_ms),
+                dmesg_offset_ms: AtomicI64::new(v1.dmesg_offset_ms),
+                logcat_calibration: Mutex::new(None),
+                dmesg_calibration: Mutex::new(None),
+            })
         }
     }
 }
@@ -331,10 +328,10 @@ impl LineType for BugreportLogLine {
 
     fn timestamp(&self, _config: &(), file_state: &BugreportFileState) -> DateTime<Local> {
         match self {
-            BugreportLogLine::Logcat(l) => {
+            Self::Logcat(l) => {
                 l.timestamp + chrono::Duration::milliseconds(file_state.logcat_offset_ms())
             }
-            BugreportLogLine::Dmesg(l) => {
+            Self::Dmesg(l) => {
                 l.timestamp + chrono::Duration::milliseconds(file_state.dmesg_offset_ms())
             }
         }
@@ -342,14 +339,14 @@ impl LineType for BugreportLogLine {
 
     fn message(&self) -> String {
         match self {
-            BugreportLogLine::Logcat(l) => l.message(),
-            BugreportLogLine::Dmesg(l) => l.message(),
+            Self::Logcat(l) => l.message(),
+            Self::Dmesg(l) => l.message(),
         }
     }
 
     fn display_message(&self, _config: &(), file_state: &BugreportFileState) -> String {
         match self {
-            BugreportLogLine::Logcat(l) => {
+            Self::Logcat(l) => {
                 let offset_ms = file_state.logcat_offset_ms();
                 if offset_ms != 0 {
                     format!(
@@ -364,27 +361,27 @@ impl LineType for BugreportLogLine {
             // Dmesg timestamps are boot-relative and always shifted by the
             // boot-time offset — showing that offset as a prefix would be
             // meaningless noise ("+20,000d"). Display the raw message only.
-            BugreportLogLine::Dmesg(l) => l.message(),
+            Self::Dmesg(l) => l.message(),
         }
     }
 
     fn raw(&self) -> String {
         match self {
-            BugreportLogLine::Logcat(l) => l.raw(),
-            BugreportLogLine::Dmesg(l) => l.raw(),
+            Self::Logcat(l) => l.raw(),
+            Self::Dmesg(l) => l.raw(),
         }
     }
 
     fn line_number(&self) -> usize {
         match self {
-            BugreportLogLine::Logcat(l) => l.line_number,
-            BugreportLogLine::Dmesg(l) => l.line_number,
+            Self::Logcat(l) => l.line_number,
+            Self::Dmesg(l) => l.line_number,
         }
     }
 
     fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &BugreportFileState) {
         match self {
-            BugreportLogLine::Logcat(line) => {
+            Self::Logcat(line) => {
                 if ui.button("⏱ Calibrate Logcat Time Here").clicked() {
                     let raw_time = line.timestamp;
                     let display_time =
@@ -404,7 +401,7 @@ impl LineType for BugreportLogLine {
                     ui.close();
                 }
             }
-            BugreportLogLine::Dmesg(line) => {
+            Self::Dmesg(line) => {
                 if ui.button("⏱ Calibrate Dmesg Time Here").clicked() {
                     let raw_time = line.timestamp;
                     let display_time =
@@ -645,10 +642,11 @@ mod tests {
         // Boot time ≈ dumpstate − 6 minutes
         let dumpstate_ms = Local
             .from_local_datetime(
-                &NaiveDateTime::parse_from_str("2026-03-11 14:25:49", "%Y-%m-%d %H:%M:%S").unwrap(),
+                &NaiveDateTime::parse_from_str("2026-03-11 14:25:49", "%Y-%m-%d %H:%M:%S")
+                    .expect("test fixture timestamp must parse"),
             )
             .single()
-            .unwrap()
+            .expect("local test fixture timestamp must be unambiguous")
             .timestamp_millis();
         let expected = dumpstate_ms - 6 * 60 * 1000;
         assert_eq!(boot_ms, expected);

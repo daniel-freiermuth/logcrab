@@ -23,6 +23,7 @@ pub struct HciPacketInfo {
 }
 
 impl HciPacketInfo {
+    #[must_use]
     pub fn format_message(&self) -> String {
         format!(
             "{} {} {} Len={}",
@@ -30,6 +31,7 @@ impl HciPacketInfo {
         )
     }
 
+    #[must_use]
     pub fn format_raw(&self) -> String {
         format!(
             "[{}] {} {} {} Length={}",

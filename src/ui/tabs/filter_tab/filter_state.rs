@@ -51,6 +51,7 @@ pub struct FilterState {
 }
 
 impl FilterState {
+    #[must_use]
     pub fn new(name: String, color: Color32) -> Self {
         let rule = SearchRule::new(name, color);
         let filter_id = rule.id();
@@ -66,6 +67,7 @@ impl FilterState {
     }
 
     /// Get the unique filter ID
+    #[must_use]
     pub const fn get_id(&self) -> usize {
         self.rule.id()
     }

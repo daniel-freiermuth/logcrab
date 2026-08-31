@@ -16,12 +16,14 @@ pub struct CompositeScorer {
 }
 
 impl CompositeScorer {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             scorers: Vec::new(),
         }
     }
 
+    #[must_use]
     pub fn add_scorer(mut self, scorer: Box<dyn AnomalyScorer>, weight: f64) -> Self {
         self.scorers.push((scorer, weight));
         self

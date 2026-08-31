@@ -37,6 +37,7 @@ enum ConnectionStatus {
 }
 
 impl SidecarSettingsWindow {
+    #[must_use]
     pub fn open_with_config(config: &GlobalConfig) -> Self {
         let mut window = Self {
             temp_host: config.sidecar_host.clone(),
@@ -87,10 +88,8 @@ impl SidecarSettingsWindow {
                 .inner
                 .changed();
 
-            if host_changed || port_changed {
-                if self.apply_settings(config) {
-                    changed = true;
-                }
+            if (host_changed || port_changed) && self.apply_settings(config) {
+                changed = true;
             }
 
             ui.add_space(5.0);
@@ -304,10 +303,10 @@ fn normalization_mismatches(
         .iter()
         .filter_map(|(slug, &trained_on)| {
             let current = *frontend_versions.get(slug.as_str()).unwrap_or(&1);
-            if current != trained_on {
-                Some((slug.clone(), trained_on, current))
-            } else {
+            if current == trained_on {
                 None
+            } else {
+                Some((slug.clone(), trained_on, current))
             }
         })
         .collect()

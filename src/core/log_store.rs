@@ -52,7 +52,7 @@ static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// Stored behind a single `ArcSwap` in [`ScoreStore`] so that writers swap
 /// all four vectors in one atomic pointer store and readers always see a
 /// consistent combination of score + flags.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct ScoreSnapshot {
     /// Anomaly scores indexed by line position (same length as `lines`).
     /// Default score is 0.0; scores range from 0 to 100.
@@ -60,23 +60,12 @@ struct ScoreSnapshot {
     /// Whether each line's score was assigned while the target token was UNK.
     /// Parallel to `scores`; `false` when not available.
     unk_flags: Vec<bool>,
-    /// Whether each line's target was a rare template (seen < min_count times).
+    /// Whether each line's target was a rare template (seen < `min_count` times).
     /// Subset of `unk_flags`; `false` when not available or when target is truly unknown.
     rare_flags: Vec<bool>,
     /// Whether each line was actually present in the sidecar's scored set.
     /// `false` means the line was filtered/excluded by the backend (not in corpus).
     scored_flags: Vec<bool>,
-}
-
-impl Default for ScoreSnapshot {
-    fn default() -> Self {
-        Self {
-            scores: Vec::new(),
-            unk_flags: Vec::new(),
-            rare_flags: Vec::new(),
-            scored_flags: Vec::new(),
-        }
-    }
 }
 
 /// Lock-free storage for anomaly scores.
@@ -91,6 +80,7 @@ pub struct ScoreStore {
 
 impl ScoreStore {
     /// Create a new empty score store.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             data: ArcSwap::new(Arc::new(ScoreSnapshot::default())),
@@ -106,7 +96,13 @@ impl ScoreStore {
     }
 
     /// Set scores, UNK flags, rare flags, and scored flags atomically.
-    pub fn set_all_with_unk(&self, scores: &[f64], unk_flags: &[bool], rare_flags: &[bool], scored_flags: &[bool]) {
+    pub fn set_all_with_unk(
+        &self,
+        scores: &[f64],
+        unk_flags: &[bool],
+        rare_flags: &[bool],
+        scored_flags: &[bool],
+    ) {
         self.data.store(Arc::new(ScoreSnapshot {
             scores: scores.to_vec(),
             unk_flags: unk_flags.to_vec(),
@@ -198,7 +194,11 @@ impl std::fmt::Debug for ScoreStore {
     }
 }
 
-/// A single log source with its lines, wrapped in `RwLock` for thread-safe access
+/// A single log source with its lines, wrapped in `RwLock` for thread-safe access.
+///
+/// # Panics
+///
+/// Methods accessing internal locks panic if a prior holder poisoned a lock.
 pub struct SourceData<FT>
 where
     FT: InputFileType,
@@ -245,6 +245,14 @@ impl<FT: InputFileType> std::fmt::Debug for SourceData<FT> {
     }
 }
 
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "the shared lock-poisoning precondition is documented on SourceData"
+)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "read guards intentionally span related reads to preserve a consistent source snapshot"
+)]
 impl<FT: InputFileType> SourceData<FT>
 where
     FT::LineType: Clone,
@@ -834,7 +842,7 @@ pub struct LogLine {
     /// Whether the sidecar score was assigned while the target token was UNK.
     /// Only meaningful when `sidecar_anomaly_score > 0.0`.
     pub sidecar_score_is_unk: bool,
-    /// Whether the sidecar score's target was a rare template (seen < min_count times).
+    /// Whether the sidecar score's target was a rare template (seen < `min_count` times).
     /// Only meaningful when `sidecar_score_is_unk` is true.
     pub sidecar_score_is_rare: bool,
     /// Whether this line appeared in the sidecar's scored set.
@@ -846,15 +854,20 @@ impl LogLine {
     /// Compute the normalised template key for anomaly detection.
     /// This is computed on-demand rather than stored to avoid expensive
     /// regex normalization when not needed (e.g., histogram rendering).
+    #[must_use]
     pub fn template_key(&self) -> String {
         crate::parser::normalize_message(&self.message)
     }
 }
 
-/// Central storage for log lines from one or more sources
+/// Central storage for log lines from one or more sources.
 ///
-/// Thread-safe: can be shared across threads with Arc<LogStore>
+/// Thread-safe: can be shared across threads with `Arc<LogStore>`.
 /// Uses `IndexMap` for O(1) source lookup by ID while maintaining insertion order.
+///
+/// # Panics
+///
+/// Methods accessing internal locks panic if a prior holder poisoned a lock.
 pub struct LogStore {
     /// Sources indexed by their stable `source_id` for O(1) lookup.
     /// `IndexMap` maintains insertion order for consistent UI display.
@@ -866,7 +879,7 @@ pub struct LogStore {
     /// Stored at `LogStore` level (not `SourceData`) because scores are analysis metadata.
     scores: DashMap<u64, ScoreStore>,
     /// ML sidecar anomaly scores keyed by `source_id`.
-    /// Parallel to `scores` but populated by the LogBERT sidecar service.
+    /// Parallel to `scores` but populated by the `LogBERT` sidecar service.
     sidecar_scores: DashMap<u64, ScoreStore>,
     /// Sidecar scoring configuration, set once during session creation.
     /// Read by background loading threads to decide if sidecar scoring should run.
@@ -879,24 +892,17 @@ pub struct LogStore {
 impl std::fmt::Debug for LogStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LogStore")
-            .field(
-                "sources_count",
-                &self.sources.read().map(|s| s.len()).unwrap_or(0),
-            )
+            .field("sources_count", &self.sources.read().map_or(0, |s| s.len()))
             .field("sources_version", &self.sources_version)
             .field("scores_count", &self.scores.len())
             .field("sidecar_scores_count", &self.sidecar_scores.len())
             .field(
                 "sidecar_enabled",
-                &self
-                    .sidecar_config
-                    .read()
-                    .map(|c| c.is_some())
-                    .unwrap_or(false),
+                &self.sidecar_config.read().is_ok_and(|c| c.is_some()),
             )
             .field(
                 "explain_sessions",
-                &self.explain_sessions.lock().map(|g| g.len()).unwrap_or(0),
+                &self.explain_sessions.lock().map_or(0, |g| g.len()),
             )
             .finish()
     }
@@ -945,16 +951,19 @@ pub struct StoreID {
 
 impl StoreID {
     /// Return the stable source identifier for this line.
+    #[must_use]
     pub const fn source_id(&self) -> u64 {
         self.source_id
     }
 
     /// Return the 0-based line index within this source.
+    #[must_use]
     pub const fn line_index_within_source(&self) -> usize {
         self.line_index
     }
 
     /// Construct a `StoreID` directly from a source identifier and line index.
+    #[must_use]
     pub const fn make(source_id: u64, line_index: usize) -> Self {
         Self {
             source_id,
@@ -987,8 +996,17 @@ impl StoreID {
     }
 }
 
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "the shared lock-poisoning precondition is documented on LogStore"
+)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "read guards intentionally span related store operations to preserve consistent views"
+)]
 impl LogStore {
     /// Create a new empty `LogStore`
+    #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sources: RwLock::new(IndexMap::new()),
@@ -1222,7 +1240,7 @@ impl LogStore {
             .lock()
             .expect("explain_sessions lock poisoned")
             .get(&source_id)
-            .and_then(|s| s.try_recv())
+            .and_then(super::super::anomaly::sidecar_client::ExplainSession::try_recv)
     }
 
     /// Poll the explain session with a richer status that distinguishes "still pending"
@@ -1236,7 +1254,10 @@ impl LogStore {
             .lock()
             .expect("explain_sessions lock poisoned")
             .get(&source_id)
-            .map_or(ExplainPollStatus::Dead, |s| s.poll_status())
+            .map_or(
+                ExplainPollStatus::Dead,
+                super::super::anomaly::sidecar_client::ExplainSession::poll_status,
+            )
     }
 
     /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.
@@ -1275,7 +1296,9 @@ impl LogStore {
     fn get_sidecar_all(&self, source_id: u64, line_index: usize) -> (f64, bool, bool, bool) {
         self.sidecar_scores
             .get(&source_id)
-            .map_or((0.0, false, false, false), |store| store.get_all(line_index))
+            .map_or((0.0, false, false, false), |store| {
+                store.get_all(line_index)
+            })
     }
 
     /// Check whether any sidecar scores are stored for the given source.

@@ -287,7 +287,7 @@ impl LogFileLoader {
         );
     }
 
-    /// Score lines using the LogBERT sidecar server — V1 WebSocket protocol.
+    /// Score lines using the `LogBERT` sidecar server — V1 WebSocket protocol.
     ///
     /// Builds `InputLine`s from the source data, sends them over a WebSocket
     /// connection, and stores the resulting scores in the store's sidecar score
@@ -309,7 +309,7 @@ impl LogFileLoader {
         };
 
         tracing::info!("Starting sidecar scoring with model {model_id}");
-        toast.set_title(&format!("ML Scoring ({model_id})"));
+        toast.set_title(format!("ML Scoring ({model_id})"));
         toast.update(0.0, "Connecting to sidecar...");
 
         let client = match SidecarClient::connect(&config.sidecar_host, config.sidecar_port) {
@@ -405,7 +405,7 @@ impl LogFileLoader {
 
                 let progress = partial_result.scored.len() as f32 / total as f32;
                 toast_cb.update(
-                    0.1 + progress * 0.9,
+                    progress.mul_add(0.9, 0.1),
                     format!("ML scoring... ({}/{})", partial_result.scored.len(), total),
                 );
             },
@@ -420,6 +420,7 @@ impl LogFileLoader {
                 return;
             }
         };
+        drop(client);
 
         for warning in &result.warnings {
             tracing::warn!("Sidecar: {warning}");

@@ -69,7 +69,7 @@ pub struct LogCrabApp {
 
     /// Pending session restore offer: when the user opens a file that belongs
     /// to one or more previous sessions, we show a dialog to let them choose.
-    /// Contains (files_being_opened, matching_sessions).
+    /// Contains (`files_being_opened`, `matching_sessions`).
     pending_session_offer: Option<PendingSessionOffer>,
 }
 
@@ -108,6 +108,7 @@ impl LogCrabApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
     }
 
+    #[must_use]
     pub fn new(cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
         // Load global configuration
         let global_config = GlobalConfig::load();
@@ -652,8 +653,8 @@ impl LogCrabApp {
                 }
             }
 
-            if self.global_config.color_by_ml_score {
-                if ui
+            if self.global_config.color_by_ml_score
+                && ui
                     .checkbox(
                         &mut self.global_config.grey_rare_ml_lines,
                         "Grey out rare lines",
@@ -667,7 +668,6 @@ impl LogCrabApp {
                         Err(e) => tracing::error!("Failed to update config: {e}"),
                     }
                 }
-            }
 
             ui.separator();
 
@@ -806,7 +806,9 @@ impl LogCrabApp {
                     });
 
                 if let Some(files) = &session_to_remove {
-                    match SessionHistory::update(|h| { h.sessions.retain(|s| !s.same_files(files)); }) {
+                    match SessionHistory::update(|h| {
+                        h.sessions.retain(|s| !s.same_files(files));
+                    }) {
                         Ok(updated) => self.session_history = updated,
                         Err(e) => tracing::error!("Failed to save session history: {e}"),
                     }
@@ -895,7 +897,9 @@ impl LogCrabApp {
 
         if let Some(act) = action {
             // Take ownership of the offer to avoid borrow issues
-            let offer = self.pending_session_offer.take().unwrap();
+            let Some(offer) = self.pending_session_offer.take() else {
+                return;
+            };
             match act {
                 SessionOfferAction::JustTheFiles => {
                     if self.session.is_none() {

@@ -112,10 +112,10 @@ fn parse_avc_frame(data: &[u8]) -> String {
                     None
                 };
 
-                match detail {
-                    Some(d) => format!("AVRCP {ctype_str} {pdu_name}{param_type_str} {d}"),
-                    None => format!("AVRCP {ctype_str} {pdu_name}{param_type_str}"),
-                }
+                detail.map_or_else(
+                    || format!("AVRCP {ctype_str} {pdu_name}{param_type_str}"),
+                    |detail| format!("AVRCP {ctype_str} {pdu_name}{param_type_str} {detail}"),
+                )
             } else {
                 format!("AVRCP {ctype_str} Vendor_Dependent")
             }
@@ -509,10 +509,10 @@ fn parse_avrcp_pdu_params(
             let event_name = get_avrcp_notification_event(event_id);
             if is_response {
                 let extra = decode_notification_response(event_id, params.get(1..).unwrap_or(&[]));
-                match extra {
-                    Some(e) => Some(format!("Event={event_name} {e}")),
-                    None => Some(format!("Event={event_name}")),
-                }
+                Some(extra.map_or_else(
+                    || format!("Event={event_name}"),
+                    |extra| format!("Event={event_name} {extra}"),
+                ))
             } else if event_id == 0x05 && params.len() >= 5 {
                 let interval_ms = u32::from_be_bytes([params[1], params[2], params[3], params[4]]);
                 Some(format!("Event={event_name} Interval={interval_ms}ms"))

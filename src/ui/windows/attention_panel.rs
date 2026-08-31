@@ -183,7 +183,7 @@ fn render_content(
     ui.add_space(4.0);
 
     // ── Attention table ───────────────────────────────────────────────────────
-    let source_id = target.map(|t| t.source_id()).unwrap_or(0);
+    let source_id = target.map_or(0, |t| t.source_id());
 
     // Entries are already sorted by weight descending from the sidecar.
     let max_weight = result
@@ -217,8 +217,7 @@ fn render_content(
                         let sid = StoreID::make(source_id, entry.line_number);
                         let msg = store
                             .get_by_id(&sid)
-                            .map(|l| l.message.clone())
-                            .unwrap_or_else(|| format!("<line {}>", entry.line_number));
+                            .map_or_else(|| format!("<line {}>", entry.line_number), |l| l.message);
 
                         row.col(|ui| {
                             ui.label(entry.line_number.to_string());
@@ -248,6 +247,10 @@ fn render_content(
 }
 
 /// Map a normalized attention weight (0 → 1) to a color: gray → orange → red.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "r, g, and b are conventional color channels in this interpolation"
+)]
 fn weight_color(normalized: f32) -> Color32 {
     let t = normalized.clamp(0.0, 1.0);
     if t < 0.5 {

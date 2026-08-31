@@ -47,6 +47,7 @@ pub struct RecordedSession {
 impl RecordedSession {
     /// Check whether this session contains the given file path.
     /// Compares canonicalized paths when possible, falls back to direct comparison.
+    #[must_use]
     pub fn contains_file(&self, path: &Path) -> bool {
         let canonical = path.canonicalize().ok();
         self.files.iter().any(|f| {
@@ -60,6 +61,7 @@ impl RecordedSession {
     }
 
     /// Display-friendly label: comma-separated file names
+    #[must_use]
     pub fn display_label(&self) -> String {
         self.files
             .iter()
@@ -70,11 +72,13 @@ impl RecordedSession {
     }
 
     /// Check if all files in this session still exist on disk
+    #[must_use]
     pub fn all_files_exist(&self) -> bool {
         self.files.iter().all(|f| f.exists())
     }
 
     /// Check if this session has the exact same set of files (order-independent)
+    #[must_use]
     pub fn same_files(&self, other_files: &[PathBuf]) -> bool {
         if self.files.len() != other_files.len() {
             return false;
@@ -134,8 +138,7 @@ impl SessionHistory {
         }
 
         let file_version = serde_json::from_str::<VersionProbe>(contents)
-            .map(|p| p.schema_version.unwrap_or(0))
-            .unwrap_or(0);
+            .map_or(0, |p| p.schema_version.unwrap_or(0));
 
         if file_version > SESSION_HISTORY_VERSION {
             tracing::warn!(
@@ -225,7 +228,10 @@ impl SessionHistory {
     /// and no write occurs, preserving the file.
     ///
     /// Returns the updated history so the caller can replace its cached copy.
-    pub fn update(f: impl FnOnce(&mut SessionHistory)) -> Result<SessionHistory, String> {
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
+    pub fn update(f: impl FnOnce(&mut Self)) -> Result<Self, String> {
         let path = Self::history_path().ok_or("Could not determine config directory")?;
 
         if let Some(parent) = path.parent() {
@@ -299,7 +305,8 @@ impl SessionHistory {
         }
 
         // Sort by most recently used first
-        self.sessions.sort_by(|a, b| b.last_used.cmp(&a.last_used));
+        self.sessions
+            .sort_by_key(|session| std::cmp::Reverse(session.last_used));
 
         // Trim to max
         self.sessions.truncate(MAX_SESSIONS);
@@ -307,10 +314,11 @@ impl SessionHistory {
 
     /// Remove sessions whose files no longer exist
     pub fn prune_missing(&mut self) {
-        self.sessions.retain(|s| s.all_files_exist());
+        self.sessions.retain(RecordedSession::all_files_exist);
     }
 
     /// Find all sessions containing the given file
+    #[must_use]
     pub fn sessions_containing(&self, path: &Path) -> Vec<&RecordedSession> {
         self.sessions
             .iter()

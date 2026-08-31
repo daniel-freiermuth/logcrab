@@ -144,6 +144,7 @@ impl HistogramWorker {
     }
 
     /// Get a handle to send requests to this worker.
+    #[must_use]
     pub fn handle(&self) -> HistogramWorkerHandle {
         self.handle.clone()
     }

@@ -53,6 +53,7 @@ impl LogcatLogLine {
     }
 
     /// Full message portion including PID/TID/LEVEL prefix.
+    #[must_use]
     pub fn message_text(&self) -> &str {
         &self.message_text
     }
@@ -259,6 +260,7 @@ pub fn is_logcat_line(line: &str) -> bool {
 ///
 /// Returns `None` when no level marker is found; callers fall back to the full
 /// `message_text` in that case.
+#[must_use]
 pub fn extract_tag_message(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let n = bytes.len();
@@ -381,7 +383,7 @@ mod tests {
     fn test_parse_with_detected_year() {
         let raw = "11-20 14:23:45.123 Test message".to_string();
         let line = parse_logcat_line(raw, 1, 2023).expect("should parse logcat line");
-        assert!(line.timestamp.year() == 2023);
+        assert_eq!(line.timestamp.year(), 2023);
     }
 
     #[test]

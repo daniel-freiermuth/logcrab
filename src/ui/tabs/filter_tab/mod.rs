@@ -34,7 +34,7 @@ use crate::ui::session_state::{FilterToHighlightData, SessionState};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table::TimestampMode;
 use crate::ui::tabs::LogCrabTab;
-use crate::ui::windows::ChangeFilternameWindow;
+use crate::ui::windows::{ChangeFilternameWindow, RenameFilterResult};
 use egui::Ui;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -73,6 +73,7 @@ pub struct FilterView {
 }
 
 impl FilterView {
+    #[must_use]
     pub const fn new(state: FilterState) -> Self {
         Self {
             should_focus_search: false,
@@ -279,10 +280,8 @@ impl FilterView {
                 }
                 LogTableEvent::ClassifyLine { line_index, label } => {
                     let source_id = line_index.source_id();
-                    let classified_line_number = store
-                        .get_by_id(&line_index)
-                        .map(|l| l.line_number)
-                        .unwrap_or(0);
+                    let classified_line_number =
+                        store.get_by_id(&line_index).map_or(0, |l| l.line_number);
                     let Some(sidecar_config) = store.sidecar_config() else {
                         tracing::warn!("classify: no sidecar config set");
                         continue;
@@ -310,6 +309,7 @@ impl FilterView {
                                 classified_line_number,
                                 &input_lines,
                             )?;
+                            drop(client);
                             Ok(())
                         })();
                         match result {
@@ -351,7 +351,7 @@ impl FilterView {
                         self.attention_pending = false;
                         self.attention_error = Some("Sidecar connection lost".to_string());
                     }
-                    _ => {}
+                    ExplainPollStatus::Pending | ExplainPollStatus::Ready(_) => {}
                 }
             }
         }
@@ -456,15 +456,15 @@ impl FilterView {
         // Handle filter name editing dialog
         if let Some(ref mut window) = self.change_filtername_window {
             match window.render(ui) {
-                Ok(Some(new_name)) => {
+                RenameFilterResult::Saved(new_name) => {
                     self.state.name = new_name;
                     self.change_filtername_window = None;
                     data_state.modified = true;
                 }
-                Ok(None) => {
+                RenameFilterResult::Pending => {
                     // Still editing
                 }
-                Err(()) => {
+                RenameFilterResult::Cancelled => {
                     // Cancelled
                     self.change_filtername_window = None;
                 }

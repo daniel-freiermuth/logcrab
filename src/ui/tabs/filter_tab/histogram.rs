@@ -72,6 +72,7 @@ impl HistogramZoomState {
     }
 
     /// Check if currently zoomed in
+    #[must_use]
     pub const fn is_zoomed(&self) -> bool {
         self.visible_range.is_some()
     }
@@ -118,6 +119,7 @@ pub struct HistogramCache {
 
 impl HistogramCache {
     /// Create a new histogram cache with the given filter ID
+    #[must_use]
     pub fn new(filter_id: usize) -> Self {
         let (tx, rx) = mpsc::channel();
         Self {

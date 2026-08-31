@@ -192,6 +192,9 @@ impl CrabSession {
         );
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn export_filters(&self, path: &Path) -> Result<(), String> {
         tracing::debug!("Exporting filters to: {}", path.display());
         let filters = self
@@ -217,6 +220,9 @@ impl CrabSession {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn import_filters(&mut self, path: &Path) -> Result<usize, String> {
         tracing::debug!("Importing filters from: {}", path.display());
 

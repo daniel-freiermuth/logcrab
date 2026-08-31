@@ -39,6 +39,7 @@ pub struct DltLogLine {
 }
 
 impl DltLogLine {
+    #[must_use]
     pub const fn new(
         dlt_message: dlt_core::dlt::Message,
         storage_time: DateTime<Local>,
@@ -228,6 +229,10 @@ pub struct DltFileState {
     pub pending_jump_line: std::sync::atomic::AtomicUsize,
 }
 
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "sync-point locks intentionally span UI edits to keep each frame's state coherent"
+)]
 impl DltFileState {
     #[inline]
     pub fn storage_offset_ms(&self) -> i64 {
@@ -236,6 +241,10 @@ impl DltFileState {
 
     /// Look up the sync-point offset that applies to a given line number.
     /// Returns 0 if no sync point applies.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the sync-points mutex is poisoned.
     pub fn sync_point_offset_ms(&self, line_number: usize) -> i64 {
         let sync_points = self.sync_points.lock().expect("sync_points lock poisoned");
         // Binary search: find the last sync point with from_line <= line_number
@@ -263,7 +272,7 @@ impl Default for DltFileState {
 
 impl std::fmt::Debug for DltFileState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let sp_count = self.sync_points.lock().map(|v| v.len()).unwrap_or(0);
+        let sp_count = self.sync_points.lock().map_or(0, |v| v.len());
         f.debug_struct("DltFileState")
             .field("storage_offset_ms", &self.storage_offset_ms())
             .field("boot_times_count", &self.boot_times.len())
@@ -326,6 +335,10 @@ fn string_map_to_boot_times(
         .collect()
 }
 
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "the lock must span serialization of the sync-point snapshot"
+)]
 impl serde::Serialize for DltFileState {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -581,6 +594,10 @@ impl crate::filetype::LogFileState for DltFileState {
         }
     }
 
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "sync-point locks intentionally span each interactive UI update"
+    )]
     fn egui_render_file_state(&self, ui: &egui::Ui, source_path: &std::path::Path) -> bool {
         let mut changed = false;
 
@@ -589,7 +606,10 @@ impl crate::filetype::LogFileState for DltFileState {
             let mut cal_guard = self.calibration.lock().expect("calibration lock poisoned");
             if let Some(cal) = cal_guard.as_mut() {
                 match cal.window.render(ui) {
-                    Ok(Some((target_time, apply_to_all_apps))) => {
+                    crate::filetype::CalibrationResult::Confirmed {
+                        target_time,
+                        apply_to_all_apps,
+                    } => {
                         if cal.is_inferred {
                             let new_boot_time = target_time
                                 - chrono::TimeDelta::microseconds(cal.header_timestamp_us);
@@ -602,13 +622,11 @@ impl crate::filetype::LogFileState for DltFileState {
                                         *entry.value_mut() = new_boot_time;
                                     }
                                 }
-                                // Insert if no entry for this ECU existed yet.
                                 self.boot_times.entry(key).or_insert(new_boot_time);
                             } else {
                                 self.boot_times.insert(key, new_boot_time);
                             }
                         } else {
-                            // Storage-time mode: derive the offset from the raw storage timestamp.
                             let offset_ms = (target_time - cal.storage_time).num_milliseconds();
                             self.storage_offset_ms
                                 .store(offset_ms, std::sync::atomic::Ordering::Relaxed);
@@ -617,8 +635,8 @@ impl crate::filetype::LogFileState for DltFileState {
                         *cal_guard = None;
                         changed = true;
                     }
-                    Ok(None) => {}
-                    Err(()) => {
+                    crate::filetype::CalibrationResult::Pending => {}
+                    crate::filetype::CalibrationResult::Cancelled => {
                         *cal_guard = None;
                     }
                 }
@@ -633,7 +651,7 @@ impl crate::filetype::LogFileState for DltFileState {
                 .expect("sync_point_calibration lock poisoned");
             if let Some(sp_cal) = sp_cal_guard.as_mut() {
                 match sp_cal.window.render(ui) {
-                    Ok(Some((target_time, _apply_to_all))) => {
+                    crate::filetype::CalibrationResult::Confirmed { target_time, .. } => {
                         // Compute the offset: target_time - raw_time_of_this_line
                         // The raw time is the timestamp *without* the sync point offset
                         // that will be applied. We use the storage_time as the raw base.
@@ -676,8 +694,8 @@ impl crate::filetype::LogFileState for DltFileState {
                         self.show_sync_points_window.store(true, Ordering::Relaxed);
                         changed = true;
                     }
-                    Ok(None) => {}
-                    Err(()) => {
+                    crate::filetype::CalibrationResult::Pending => {}
+                    crate::filetype::CalibrationResult::Cancelled => {
                         *sp_cal_guard = None;
                     }
                 }
@@ -886,6 +904,7 @@ impl BinaryFileType for DltFileType {
 // DLT parsing utilities (moved from parser/dlt.rs)
 // ============================================================================
 
+#[must_use]
 pub fn storage_time_to_datetime(
     storage_time: &dlt_core::dlt::DltTimeStamp,
 ) -> Option<DateTime<Local>> {

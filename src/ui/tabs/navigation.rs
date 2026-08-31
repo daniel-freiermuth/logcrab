@@ -1,6 +1,7 @@
 use crate::ui::PaneDirection;
 
 /// Find a neighboring leaf node in the specified direction
+#[must_use]
 pub fn find_neighbor<T>(
     tree: &egui_dock::Tree<T>,
     current: egui_dock::NodeIndex,

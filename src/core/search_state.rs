@@ -37,6 +37,10 @@ static NEXT_SEARCH_ID: AtomicUsize = AtomicUsize::new(0);
 /// Core search state shared between filters and highlights.
 ///
 /// Handles regex compilation, background filtering, and result caching.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the booleans independently describe search options and cache validity"
+)]
 pub struct SearchState {
     /// Unique identifier for this search instance
     id: usize,
@@ -74,6 +78,12 @@ pub struct SearchState {
     current_request_cancellation: FilterCancellation,
 }
 
+impl Default for SearchState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SearchState {
     /// Create a new search state with empty search text.
     pub fn new() -> Self {
@@ -104,6 +114,7 @@ impl SearchState {
     }
 
     /// Get the unique identifier for this search.
+    #[must_use]
     pub const fn id(&self) -> usize {
         self.id
     }
@@ -112,11 +123,15 @@ impl SearchState {
     ///
     /// Uses Arc internally so cloning is just a reference count increment,
     /// not a deep copy of the potentially huge vector.
+    #[must_use]
     pub fn get_filtered_indices_cached(&self) -> Arc<Vec<StoreID>> {
         profiling::scope!("SearchState::get_filtered_indices");
         Arc::clone(&self.filtered_indices)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn get_regex(&self) -> Result<Regex, Box<Error>> {
         let pattern = if self.case_sensitive {
             &self.search_text
@@ -126,6 +141,9 @@ impl SearchState {
         Regex::new(pattern).map_err(Box::new)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn get_exclude_regex(&self) -> Result<Option<Regex>, Box<Error>> {
         if self.exclude_text.is_empty() {
             return Ok(None);
@@ -207,6 +225,7 @@ impl SearchState {
     }
 
     /// Get the search text that the current filtered indices were computed for.
+    #[must_use]
     pub fn indices_computed_for(&self) -> (&str, &str, bool, bool, StoreVersion) {
         (
             &self.indices_computed_for_text,

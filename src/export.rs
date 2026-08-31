@@ -29,6 +29,10 @@ const EXPORT_CHUNK: usize = 4096;
 ///
 /// Config and file-state are both `Default`, so timestamps are raw and
 /// uncalibrated — honouring the stability invariant on [`LineType::timestamp`].
+///
+/// # Errors
+///
+/// Returns an error when the source cannot be opened, read, or written.
 pub fn export_typed<FT: InputFileType>(
     path: &Path,
     filetype: &str,
@@ -42,7 +46,7 @@ pub fn export_typed<FT: InputFileType>(
 
     let source_file = path
         .file_name()
-        .unwrap_or_else(|| path.as_os_str())
+        .unwrap_or(path.as_os_str())
         .to_string_lossy();
 
     loop {

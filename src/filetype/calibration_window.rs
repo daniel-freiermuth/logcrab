@@ -9,6 +9,16 @@ use chrono::{DateTime, Local, TimeZone};
 /// `egui_render_context_menu` when the user clicks "Calibrate Time Here"; driven
 /// each frame by `LineType::egui_render_file_state`.
 #[derive(Debug, Clone)]
+pub enum CalibrationResult {
+    Confirmed {
+        target_time: DateTime<Local>,
+        apply_to_all_apps: bool,
+    },
+    Pending,
+    Cancelled,
+}
+
+#[derive(Debug, Clone)]
 pub struct CalibrationWindow {
     target_time_str: String,
     focus_requested: bool,
@@ -19,6 +29,7 @@ pub struct CalibrationWindow {
 }
 
 impl CalibrationWindow {
+    #[must_use]
     pub fn new(
         current_time: DateTime<Local>,
         is_dlt: bool,
@@ -36,13 +47,9 @@ impl CalibrationWindow {
     }
 
     /// Render the calibration window.
-    ///
-    /// Returns:
-    /// - `Ok(Some((target_time, apply_to_all_apps)))` — user confirmed
-    /// - `Ok(None)` — window still open
-    /// - `Err(())` — user cancelled
-    pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<(DateTime<Local>, bool)>, ()> {
-        let mut result = Ok(None);
+    #[must_use]
+    pub fn render(&mut self, ui: &egui::Ui) -> CalibrationResult {
+        let mut result = CalibrationResult::Pending;
 
         let title = if self.is_dlt {
             "\u{23F1} Calibrate DLT Time"
@@ -134,11 +141,14 @@ impl CalibrationWindow {
 
                     if should_sync {
                         if let Ok(target_time) = parsed_time {
-                            result = Ok(Some((target_time, self.apply_to_all_apps)));
+                            result = CalibrationResult::Confirmed {
+                                target_time,
+                                apply_to_all_apps: self.apply_to_all_apps,
+                            };
                         }
                     }
                     if should_cancel {
-                        result = Err(());
+                        result = CalibrationResult::Cancelled;
                     }
                 });
             });

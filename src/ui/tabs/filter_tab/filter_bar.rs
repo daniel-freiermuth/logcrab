@@ -57,7 +57,14 @@ pub struct FilterBar {
     pre_history_text: String,
 }
 
+impl Default for FilterBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FilterBar {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             editing_favorite: false,

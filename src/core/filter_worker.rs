@@ -195,8 +195,15 @@ pub struct FilterWorker {
     _thread: std::thread::JoinHandle<()>,
 }
 
+impl Default for FilterWorker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FilterWorker {
     /// Create a new filter worker with a background thread.
+    #[must_use]
     pub fn new() -> Self {
         let (request_tx, request_rx) = channel::<FilterRequest>();
         let is_filtering = Arc::new(AtomicBool::new(false));
@@ -222,6 +229,7 @@ impl FilterWorker {
 
     /// Get a handle to send requests to this worker.
     /// The handle can be cloned and shared across the application.
+    #[must_use]
     pub fn handle(&self) -> FilterWorkerHandle {
         self.handle.clone()
     }

@@ -33,6 +33,7 @@ pub struct DmesgLogLine {
 }
 
 impl DmesgLogLine {
+    #[must_use]
     pub const fn new(
         raw_line: String,
         timestamp: DateTime<Local>,

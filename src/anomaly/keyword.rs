@@ -30,6 +30,7 @@ pub struct KeywordScorer {
 }
 
 impl KeywordScorer {
+    #[must_use]
     pub const fn new() -> Self {
         Self {}
     }
