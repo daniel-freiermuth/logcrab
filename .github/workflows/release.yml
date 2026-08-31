@@ -6,6 +6,12 @@ on:
       - main
     paths:
       - Cargo.toml
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA, branch, or tag to release
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -47,6 +53,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -54,10 +61,15 @@ jobs:
         name: Detect package version change
         env:
           BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           current="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "logcrab").version')"
-          previous="$(git show "$BEFORE:Cargo.toml" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }')"
           echo "tag=v${current}" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous="$(git show "$BEFORE:Cargo.toml" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }')"
           echo "release=$([[ "$current" != "$previous" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - if: steps.version.outputs.release == 'true'
@@ -112,6 +124,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -119,14 +132,18 @@ jobs:
         name: Detect package version change
         env:
           BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           current="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "logcrab").version')"
-          previous="$(git show "$BEFORE:Cargo.toml" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }')"
           tag="v${current}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          if [[ "$current" == "$previous" ]]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
+            previous="$(git show "$BEFORE:Cargo.toml" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }')"
+            if [[ "$current" == "$previous" ]]; then
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
             echo "::error::Release tag ${tag} already exists"
@@ -149,7 +166,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.version.outputs.commit }}
           generate_release_notes: true
           files: dist/*
           fail_on_unmatched_files: true
