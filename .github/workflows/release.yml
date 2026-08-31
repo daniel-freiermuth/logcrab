@@ -11,8 +11,101 @@ permissions:
   contents: write
 
 jobs:
-  ubuntu-package:
-    name: Build Ubuntu 24.04 release artifacts
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ubuntu22
+            name: Ubuntu 22.04 x86_64
+            os: ubuntu-22.04
+            arch: amd64
+            platform: ubuntu22
+            deb: true
+          - id: ubuntu24
+            name: Ubuntu 24.04 x86_64
+            os: ubuntu-24.04
+            arch: amd64
+            platform: ubuntu24
+            deb: true
+          - id: macos-x86_64
+            name: macOS x86_64
+            os: macos-13
+            arch: x86_64
+            platform: macos
+            deb: false
+          - id: macos-aarch64
+            name: macOS aarch64
+            os: macos-14
+            arch: aarch64
+            platform: macos
+            deb: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - id: version
+        name: Detect package version change
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          current="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "logcrab").version')"
+          previous="$(git show "$BEFORE:Cargo.toml" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }')"
+          echo "tag=v${current}" >> "$GITHUB_OUTPUT"
+          echo "release=$([[ "$current" != "$previous" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - if: steps.version.outputs.release == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - if: steps.version.outputs.release == 'true' && runner.os == 'Linux'
+        name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes dpkg-dev protobuf-compiler
+
+      - if: steps.version.outputs.release == 'true' && runner.os == 'macOS'
+        name: Install macOS build dependencies
+        run: brew install protobuf
+
+      - if: steps.version.outputs.release == 'true' && matrix.deb
+        uses: taiki-e/install-action@cargo-deb
+
+      - if: steps.version.outputs.release == 'true'
+        name: Build release binary
+        run: cargo build --release --locked --bin logcrab
+
+      - if: steps.version.outputs.release == 'true' && matrix.deb
+        name: Build Debian package
+        run: cargo deb --locked
+
+      - if: steps.version.outputs.release == 'true'
+        name: Assemble release artifacts
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          DEB: ${{ matrix.deb }}
+        run: |
+          mkdir dist
+          tar -C target/release -czf "dist/logcrab_${VERSION}_${ARCH}_${PLATFORM}.tar.gz" logcrab
+          if [[ "$DEB" == "true" ]]; then
+            cp target/debian/*.deb "dist/logcrab_${VERSION}_${ARCH}_${PLATFORM}.deb"
+          fi
+
+      - if: steps.version.outputs.release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.id }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
     runs-on: ubuntu-24.04
 
     steps:
@@ -42,35 +135,17 @@ jobs:
           echo "release=true" >> "$GITHUB_OUTPUT"
 
       - if: steps.version.outputs.release == 'true'
-        uses: Swatinem/rust-cache@v2
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
 
       - if: steps.version.outputs.release == 'true'
-        name: Install release build dependencies
-        run: sudo apt-get update && sudo apt-get install --yes dpkg-dev protobuf-compiler
+        name: Add source package recipe
+        run: cp PKGBUILD dist/
 
       - if: steps.version.outputs.release == 'true'
-        uses: taiki-e/install-action@cargo-deb
-
-      - if: steps.version.outputs.release == 'true'
-        name: Build release binaries
-        run: cargo build --release --locked --bins
-
-      - if: steps.version.outputs.release == 'true'
-        name: Build Debian package
-        run: cargo deb --locked
-
-      - if: steps.version.outputs.release == 'true'
-        name: Assemble release artifacts
-        env:
-          VERSION: ${{ steps.version.outputs.tag }}
-        run: |
-          mkdir dist
-          tar -C target/release -czf "dist/logcrab_${VERSION}_amd64_ubuntu24.tar.gz" logcrab logcrab-export logcrab-mcp
-          cp target/debian/*.deb dist/
-          cp PKGBUILD dist/
-
-      - if: steps.version.outputs.release == 'true'
-        name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
