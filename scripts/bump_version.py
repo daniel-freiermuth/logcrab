@@ -153,18 +153,12 @@ def commit_changes(new_version: str) -> None:
     print(f"Committed version bump to {new_version}")
 
 
-def create_tag(new_version: str) -> None:
-    """Create a git tag for the new version."""
-    tag = f"v{new_version}"
-    run(["git", "tag", "-a", tag, "-m", f"Release {new_version}"])
-    print(f"Created tag {tag}")
 
 
 def git_push(remote: str) -> None:
-    """Push commits and tags to remote."""
+    """Push the version-bump commit."""
     run(["git", "push", remote], capture=False)
-    run(["git", "push", remote, "--tags"], capture=False)
-    print(f"Pushed commits and tags to '{remote}'")
+    print(f"Pushed version bump to '{remote}'")
 
 
 def cargo_deb() -> str:
@@ -275,18 +269,15 @@ def main() -> int:
     # Step 4: Commit changes
     commit_changes(new_version)
 
-    # Step 5: Create tag
-    create_tag(new_version)
-
-    # Step 6: Push
+    # Step 5: Push. The GitHub release workflow creates the version tag.
     if not args.no_push:
         git_push(args.remote)
 
-    # Step 7: Build deb package
+    # Step 6: Build a local Debian package when requested.
     if not args.skip_deb:
         cargo_deb()
 
-    print(f"\n✓ Successfully released version {new_version}")
+    print(f"\n✓ Successfully bumped version to {new_version}")
     return 0
 
 
