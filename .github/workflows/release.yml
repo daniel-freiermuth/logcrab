@@ -78,13 +78,16 @@ jobs:
           cache-targets: false
           cache-bin: false
 
-      - if: steps.version.outputs.release == 'true' && runner.os == 'Linux'
-        name: Install Linux build dependencies
-        run: sudo apt-get update && sudo apt-get install --yes dpkg-dev protobuf-compiler
+      - if: steps.version.outputs.release == 'true'
+        name: Install protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - if: steps.version.outputs.release == 'true' && runner.os == 'macOS'
-        name: Install macOS build dependencies
-        run: brew install protobuf
+      - if: steps.version.outputs.release == 'true' && runner.os == 'Linux'
+        name: Install Linux packaging dependencies
+        run: sudo apt-get update && sudo apt-get install --yes dpkg-dev
 
       - if: steps.version.outputs.release == 'true' && matrix.deb
         name: Install cargo-deb
