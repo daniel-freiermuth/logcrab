@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-01
+
+### Added
+
+- Option to merge the current session with an earlier session.
+- Time calibration for DLT files from a selected line onward.
+- Per-tab control to opt out of global scroll synchronization.
+- Cancellation of superseded long-running search queries.
+
+### Fixed
+
+- File-drop hover overlay visibility.
+- Session removal now identifies sessions by identity instead of index.
+- Atomic replacement of score-store entries containing unknown values.
+- Histogram caching now accounts for the duplicate-hiding setting.
+- Scores are removed with their source.
+
 ## [1.2.0] - 2026-06-08
 
 ### Added
