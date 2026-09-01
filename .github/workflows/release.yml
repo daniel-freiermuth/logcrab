@@ -106,15 +106,15 @@ jobs:
       - if: steps.version.outputs.release == 'true'
         name: Assemble release artifacts
         env:
-          VERSION: ${{ steps.version.outputs.tag }}
           ARCH: ${{ matrix.arch }}
           PLATFORM: ${{ matrix.platform }}
           DEB: ${{ matrix.deb }}
         run: |
           mkdir dist
-          tar -C target/release -czf "dist/logcrab_${VERSION}_${ARCH}_${PLATFORM}.tar.gz" logcrab
           if [[ "$DEB" == "true" ]]; then
-            cp target/debian/*.deb "dist/logcrab_${VERSION}_${ARCH}_${PLATFORM}.deb"
+            cp target/debian/*.deb "dist/logcrab_${ARCH}_${PLATFORM}.deb"
+          else
+            tar -C target/release -czf "dist/logcrab_${ARCH}_${PLATFORM}.tar.gz" logcrab
           fi
 
       - if: steps.version.outputs.release == 'true'
