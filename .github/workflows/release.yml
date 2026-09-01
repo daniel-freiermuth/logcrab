@@ -74,6 +74,9 @@ jobs:
 
       - if: steps.version.outputs.release == 'true'
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          cache-bin: false
 
       - if: steps.version.outputs.release == 'true' && runner.os == 'Linux'
         name: Install Linux build dependencies
