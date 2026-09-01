@@ -531,8 +531,13 @@ impl SidecarClient {
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
     ) -> Result<ScoreStreamResult> {
-        let (result, _session) =
-            self.open_score_stream(model_id, normalization_versions, lines, &mut |_, _| {})?;
+        let (result, _session) = self.open_score_stream(
+            model_id,
+            normalization_versions,
+            lines,
+            &|| false,
+            &mut |_, _| {},
+        )?;
         Ok(result)
     }
 
@@ -546,7 +551,13 @@ impl SidecarClient {
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
-        self.open_score_stream(model_id, normalization_versions, lines, &mut |_, _| {})
+        self.open_score_stream(
+            model_id,
+            normalization_versions,
+            lines,
+            &|| false,
+            &mut |_, _| {},
+        )
     }
 
     /// Like [`score_stream_with_explain`], invoking `on_scores` incrementally
@@ -563,6 +574,7 @@ impl SidecarClient {
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
+        is_cancelled: &dyn Fn() -> bool,
         on_scores: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult, usize),
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
         let total = lines.len();
@@ -570,6 +582,7 @@ impl SidecarClient {
             model_id,
             normalization_versions,
             lines,
+            is_cancelled,
             &mut |new_entries, result| on_scores(new_entries, result, total),
         )
     }
@@ -585,6 +598,7 @@ impl SidecarClient {
         model_id: &str,
         normalization_versions: &HashMap<&str, u32>,
         lines: &[InputLine],
+        is_cancelled: &dyn Fn() -> bool,
         on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
         let norm_map: HashMap<String, u32> = normalization_versions
@@ -645,11 +659,18 @@ impl SidecarClient {
         // `on_frame` is called directly — no async capture, no unsafe needed.
         let mut result = ScoreStreamResult::default();
         loop {
-            match self
-                .rt
-                .block_on(stream.message())
-                .context("stream read error")?
-            {
+            if is_cancelled() {
+                bail!("score stream cancelled");
+            }
+
+            let message = match self.rt.block_on(tokio::time::timeout(
+                Duration::from_millis(100),
+                stream.message(),
+            )) {
+                Ok(message) => message.context("stream read error")?,
+                Err(_) => continue,
+            };
+            match message {
                 Some(msg) => {
                     if Self::handle_server_msg(msg, &mut result, on_frame)? {
                         break;
