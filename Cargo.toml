@@ -24,6 +24,7 @@ priority = "optional"
 assets = [
     ["target/release/logcrab", "usr/bin/", "755"],
     ["README.md", "usr/share/doc/logcrab/README", "644"],
+    ["CHANGELOG.md", "usr/share/doc/logcrab/CHANGELOG", "644"],
     ["logcrab-system.desktop", "usr/share/applications/logcrab.desktop", "644"],
     ["logcrab-mime.xml", "usr/share/mime/packages/", "644"],
     ["logo.png", "usr/share/icons/hicolor/256x256/apps/logcrab.png", "644"],
