@@ -84,7 +84,10 @@ jobs:
         run: brew install protobuf
 
       - if: steps.version.outputs.release == 'true' && matrix.deb
-        uses: taiki-e/install-action@cargo-deb
+        name: Install cargo-deb
+        run: |
+          cargo install cargo-deb --version 3.6.3 --locked --root "$RUNNER_TEMP/cargo-deb"
+          echo "$RUNNER_TEMP/cargo-deb/bin" >> "$GITHUB_PATH"
 
       - if: steps.version.outputs.release == 'true'
         name: Build release binary
@@ -145,8 +148,13 @@ jobs:
               exit 0
             fi
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
-            echo "::error::Release tag ${tag} already exists"
+          commit="$(git rev-parse HEAD)"
+          remote_tag_commit="$(git ls-remote origin "refs/tags/${tag}^{}" | awk 'NR == 1 { print $1 }')"
+          if [[ -z "$remote_tag_commit" ]]; then
+            remote_tag_commit="$(git ls-remote origin "refs/tags/${tag}" | awk 'NR == 1 { print $1 }')"
+          fi
+          if [[ -n "$remote_tag_commit" && "$remote_tag_commit" != "$commit" ]]; then
+            echo "::error::Release tag ${tag} points to ${remote_tag_commit}, not ${commit}"
             exit 1
           fi
           echo "release=true" >> "$GITHUB_OUTPUT"
