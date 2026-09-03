@@ -16,16 +16,23 @@ jobs:
     name: Publish formula
     runs-on: ubuntu-24.04
 
+    concurrency:
+      group: homebrew-tap
+      cancel-in-progress: false
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: source
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: daniel-freiermuth/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
+          persist-credentials: false
 
       - name: Generate formula
         env:
@@ -45,6 +52,7 @@ jobs:
         working-directory: tap
         env:
           TAG: ${{ inputs.tag }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           git add Formula/logcrab.rb
           if git diff --cached --quiet; then
@@ -53,4 +61,4 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit -m "logcrab ${TAG#v}"
-          git push
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64 --wrap=0)" push
