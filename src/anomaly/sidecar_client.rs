@@ -605,18 +605,28 @@ impl SidecarClient {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect();
-        let proto_lines: Vec<proto::InputLine> = lines.iter().map(input_line_to_proto).collect();
+        let mut proto_lines = Vec::with_capacity(lines.len());
+        for (index, line) in lines.iter().enumerate() {
+            if index % 1_000 == 0 && is_cancelled() {
+                bail!("score stream cancelled");
+            }
+            proto_lines.push(input_line_to_proto(line));
+        }
         let model_id = model_id.to_string();
         let n_chunks = proto_lines.len().div_ceil(LINES_PER_CHUNK.max(1));
 
         let rt = Arc::clone(&self.rt);
         let mut client = self.client();
 
-        // Phase 1: send all frames and open the RPC.  This async block owns
-        // only `Send + 'static` data so no unsafe pointer tricks are needed.
-        let (req_tx, mut stream) = self.rt.block_on(async move {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ScoreStreamClientMessage>();
+        // Phase 1: queue all frames and open the RPC. The cancellation future
+        // races the response-header wait; dropping that RPC future sends a
+        // cancellation to tonic's underlying HTTP/2 stream.
+        let (req_tx, mut stream) = self.rt.block_on(async {
+            if is_cancelled() {
+                bail!("score stream cancelled");
+            }
 
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ScoreStreamClientMessage>();
             tx.send(ScoreStreamClientMessage {
                 payload: Some(ClientPayload::Start(StartFrame {
                     api_version: "2".to_string(),
@@ -631,6 +641,9 @@ impl SidecarClient {
                 proto_lines.len()
             );
             for (chunk_index, chunk) in proto_lines.chunks(LINES_PER_CHUNK).enumerate() {
+                if chunk_index % 16 == 0 && is_cancelled() {
+                    bail!("score stream cancelled");
+                }
                 tx.send(ScoreStreamClientMessage {
                     payload: Some(ClientPayload::Lines(LinesFrame {
                         chunk_index: chunk_index as u32,
@@ -646,11 +659,17 @@ impl SidecarClient {
             })?;
             tracing::info!("all {n_chunks} chunks + End frame sent — waiting for Complete");
 
-            let stream = client
-                .score_stream(UnboundedReceiverStream::new(rx))
-                .await
-                .context("ScoreStream RPC failed")?
-                .into_inner();
+            let cancellation = async {
+                while !is_cancelled() {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            };
+            let stream = tokio::select! {
+                response = client.score_stream(UnboundedReceiverStream::new(rx)) => {
+                    response.context("ScoreStream RPC failed")?.into_inner()
+                }
+                () = cancellation => bail!("score stream cancelled"),
+            };
 
             Ok::<_, anyhow::Error>((tx, stream))
         })?;
@@ -744,5 +763,49 @@ impl SidecarClient {
             }
         }
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SidecarClient;
+    use std::collections::HashMap;
+    use std::net::TcpListener;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn streaming_cancellation_aborts_header_wait() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("read listener address").port();
+        let server = std::thread::spawn(move || {
+            let (_connection, _) = listener.accept().expect("accept client connection");
+            std::thread::sleep(Duration::from_secs(1));
+        });
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancellation = Arc::clone(&cancelled);
+        let cancellation_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            cancellation.store(true, Ordering::Relaxed);
+        });
+        let start = Instant::now();
+        let result = {
+            let client = SidecarClient::connect("127.0.0.1", port).expect("create lazy client");
+            client.score_stream_streaming(
+                "model",
+                &HashMap::new(),
+                &[],
+                &|| cancelled.load(Ordering::Relaxed),
+                &mut |_, _, _| {},
+            )
+        };
+
+        assert!(result.is_err_and(|error| error.to_string() == "score stream cancelled"));
+        assert!(start.elapsed() < Duration::from_millis(500));
+        cancellation_thread.join().expect("join canceller");
+        server.join().expect("join test server");
     }
 }
