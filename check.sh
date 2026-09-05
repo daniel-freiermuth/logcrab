@@ -86,22 +86,12 @@ echo ""
 # fi
 # echo ""
 
-# 6. Clippy - standard lints
-print_step "Running clippy (-D warnings)..."
+# 6. Clippy - configured required lints
+print_step "Running clippy (configured lints, warnings denied)..."
 if cargo clippy --all-targets --quiet -- -D warnings > /dev/null 2>&1; then
-    print_success "Clippy checks passed (standard)"
+    print_success "Clippy checks passed"
 else
-    print_error "Clippy found issues (standard lints)"
-    FAILED=1
-fi
-echo ""
-
-# 6b. Clippy - standard lints
-print_step "Running clippy (standard lints)..."
-if cargo clippy --all-targets --quiet > /dev/null 2>&1; then
-    print_success "Clippy checks passed (standard)"
-else
-    print_error "Clippy found issues (standard lints)"
+    print_error "Clippy found required-lint issues"
     FAILED=1
 fi
 echo ""

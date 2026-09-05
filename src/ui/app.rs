@@ -69,7 +69,7 @@ pub struct LogCrabApp {
 
     /// Pending session restore offer: when the user opens a file that belongs
     /// to one or more previous sessions, we show a dialog to let them choose.
-    /// Contains (files_being_opened, matching_sessions).
+    /// Contains (`files_being_opened`, `matching_sessions`).
     pending_session_offer: Option<PendingSessionOffer>,
 }
 
@@ -85,6 +85,7 @@ struct PendingSessionOffer {
 enum SessionOfferAction {
     JustTheFiles,
     RestoreSession(usize),
+    MergeSession(usize),
     Cancel,
 }
 
@@ -107,6 +108,7 @@ impl LogCrabApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
     }
 
+    #[must_use]
     pub fn new(cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
         // Load global configuration
         let global_config = GlobalConfig::load();
@@ -505,7 +507,8 @@ impl LogCrabApp {
                         if let Some(first) = paths.first() {
                             if let Some(parent) = first.parent() {
                                 let dir = parent.to_path_buf();
-                                match GlobalConfig::update(|c| c.last_filters_directory = Some(dir)) {
+                                match GlobalConfig::update(|c| c.last_filters_directory = Some(dir))
+                                {
                                     Ok(updated) => self.global_config = updated,
                                     Err(e) => tracing::error!("Failed to update config: {e}"),
                                 }
@@ -532,10 +535,9 @@ impl LogCrabApp {
             }
 
             if ui.button("Sidecar Settings...").clicked() {
-                self.sidecar_settings_window =
-                    Some(windows::SidecarSettingsWindow::open_with_config(
-                        &self.global_config,
-                    ));
+                self.sidecar_settings_window = Some(
+                    windows::SidecarSettingsWindow::open_with_config(&self.global_config),
+                );
                 ui.close();
             }
 
@@ -651,8 +653,8 @@ impl LogCrabApp {
                 }
             }
 
-            if self.global_config.color_by_ml_score {
-                if ui
+            if self.global_config.color_by_ml_score
+                && ui
                     .checkbox(
                         &mut self.global_config.grey_rare_ml_lines,
                         "Grey out rare lines",
@@ -666,7 +668,6 @@ impl LogCrabApp {
                         Err(e) => tracing::error!("Failed to update config: {e}"),
                     }
                 }
-            }
 
             ui.separator();
 
@@ -764,7 +765,7 @@ impl LogCrabApp {
                 ui.add_space(8.0);
 
                 let mut session_to_restore: Option<usize> = None;
-                let mut session_to_remove: Option<usize> = None;
+                let mut session_to_remove: Option<Vec<PathBuf>> = None;
 
                 egui::ScrollArea::vertical()
                     .max_height(ui.available_height() - 20.0)
@@ -798,14 +799,16 @@ impl LogCrabApp {
                                     .on_hover_text("Remove from history")
                                     .clicked()
                                 {
-                                    session_to_remove = Some(idx);
+                                    session_to_remove = Some(session.files.clone());
                                 }
                             });
                         }
                     });
 
-                if let Some(idx) = session_to_remove {
-                    match SessionHistory::update(|h| { h.sessions.remove(idx); }) {
+                if let Some(files) = &session_to_remove {
+                    match SessionHistory::update(|h| {
+                        h.sessions.retain(|s| !s.same_files(files));
+                    }) {
                         Ok(updated) => self.session_history = updated,
                         Err(e) => tracing::error!("Failed to save session history: {e}"),
                     }
@@ -863,13 +866,27 @@ impl LogCrabApp {
                         .collect::<Vec<_>>()
                         .join("\n");
 
-                    if ui
-                        .button(format!("Restore session: {label}  ({time_str})"))
-                        .on_hover_text(tooltip)
-                        .clicked()
-                    {
-                        action = Some(SessionOfferAction::RestoreSession(idx));
-                    }
+                    ui.label(format!("{label}  ({time_str})"))
+                        .on_hover_text(&tooltip);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Replace current session")
+                            .on_hover_text(format!("Close current files and restore:\n{tooltip}"))
+                            .clicked()
+                        {
+                            action = Some(SessionOfferAction::RestoreSession(idx));
+                        }
+                        if ui
+                            .button("Merge with current session")
+                            .on_hover_text(format!(
+                                "Add these files to the current session:\n{tooltip}"
+                            ))
+                            .clicked()
+                        {
+                            action = Some(SessionOfferAction::MergeSession(idx));
+                        }
+                    });
+                    ui.add_space(4.0);
                 }
 
                 ui.add_space(6.0);
@@ -880,7 +897,9 @@ impl LogCrabApp {
 
         if let Some(act) = action {
             // Take ownership of the offer to avoid borrow issues
-            let offer = self.pending_session_offer.take().unwrap();
+            let Some(offer) = self.pending_session_offer.take() else {
+                return;
+            };
             match act {
                 SessionOfferAction::JustTheFiles => {
                     if self.session.is_none() {
@@ -895,6 +914,17 @@ impl LogCrabApp {
                     let session = &offer.matching_sessions[idx];
                     self.restore_session(session);
                 }
+                SessionOfferAction::MergeSession(idx) => {
+                    let session = &offer.matching_sessions[idx];
+                    if self.session.is_none() {
+                        self.start_new_session();
+                    }
+                    for path in &session.files {
+                        if path.exists() {
+                            self.add_file_to_session(path.clone());
+                        }
+                    }
+                }
                 SessionOfferAction::Cancel => {}
             }
         }
@@ -902,10 +932,12 @@ impl LogCrabApp {
 
     /// Preview hovering files - shows overlay when dragging files over window
     fn preview_files_being_dropped(ctx: &egui::Context) {
-        // Also guard on window focus: if the OS fails to send HoveredFileCancelled (a known
-        // XWayland/X11 edge case), hovered_files can remain non-empty after the drag leaves.
-        // Requiring focus prevents the overlay from being stuck on screen indefinitely.
-        let active = ctx.input(|i| !i.raw.hovered_files.is_empty() && i.focused);
+        // Show overlay whenever the backend reports hovered files.
+        // The XWayland/X11 stuck-overlay edge case (HoveredFileCancelled never
+        // sent) is unlikely in practice and less harmful than not showing the
+        // overlay at all on Wayland where neither focus nor pointer position are
+        // reliably reported during drag-and-drop.
+        let active = ctx.input(|i| !i.raw.hovered_files.is_empty());
         if active {
             let text = ctx.input(|i| {
                 let mut text = "Drop to open:\n".to_owned();
@@ -917,9 +949,9 @@ impl LogCrabApp {
                 text
             });
 
+            let screen_rect = ctx.content_rect();
             let painter =
                 ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
-            let screen_rect = ctx.content_rect();
             painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
 
             let font = TextStyle::Heading.resolve(&ctx.style());

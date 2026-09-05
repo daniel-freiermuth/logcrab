@@ -11,6 +11,7 @@ pub struct EntropyScorer {
 }
 
 impl EntropyScorer {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             avg_length: 0.0,
@@ -37,7 +38,7 @@ impl EntropyScorer {
         for &count in &char_counts {
             if count > 0 {
                 let p = f64::from(count) / total;
-                entropy -= p * p.log2();
+                entropy = p.mul_add(-p.log2(), entropy);
             }
         }
 

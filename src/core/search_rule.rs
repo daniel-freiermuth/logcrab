@@ -49,6 +49,7 @@ pub struct SearchRule {
 
 impl SearchRule {
     /// Create a new search rule with the given name and color.
+    #[must_use]
     pub fn new(name: String, color: Color32) -> Self {
         Self {
             search: SearchState::new(),
@@ -60,11 +61,13 @@ impl SearchRule {
     }
 
     /// Get the unique identifier for this rule (delegates to `SearchState`).
+    #[must_use]
     pub const fn id(&self) -> usize {
         self.search.id()
     }
 
     /// Check if this rule matches a favorite filter's search criteria.
+    #[must_use]
     pub fn matches_search(&self, search_text: &str, case_sensitive: bool) -> bool {
         self.search.search_text == search_text && self.search.case_sensitive == case_sensitive
     }

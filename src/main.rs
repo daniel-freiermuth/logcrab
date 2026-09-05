@@ -45,7 +45,7 @@ struct Args {
 
 fn main() -> eframe::Result<()> {
     println!(
-        r#"
+        r"
                     %@@@@@@@                                           -@@@@@@@
                  @@@@@@@@@@                                              @@@@@@@@@@
                @@@@@@@@@@                                                 @@@@@@@@@@@
@@ -84,7 +84,7 @@ fn main() -> eframe::Result<()> {
                    @@@@                                                      @@@
                    @@@@                                                      @@@
                     :-                                                        %
-"#
+"
     );
 
     // Initialize tracing subscriber with millisecond precision timestamps.

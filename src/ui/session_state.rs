@@ -130,11 +130,13 @@ impl SessionState {
     // ========================================================================
 
     /// Get a bookmark by `StoreID`
+    #[must_use]
     pub fn get_bookmark(&self, id: &StoreID) -> Option<BookmarkData> {
         self.store.get_bookmark(id)
     }
 
     /// Get all bookmarks
+    #[must_use]
     pub fn get_all_bookmarks(&self) -> Vec<BookmarkData> {
         self.store.get_all_bookmarks()
     }

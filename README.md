@@ -73,6 +73,10 @@ update-mime-database ~/.local/share/mime
 
 After installation, LogCrab will appear in your application launcher and can open log files and `.crab` files directly.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Anomaly Scoring Components
 
 1. **Rarity Scorer**

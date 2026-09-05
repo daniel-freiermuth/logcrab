@@ -37,8 +37,10 @@ pub enum DltTimestampSource {
 }
 
 /// Current schema version. Bump this whenever the config format changes in a
-/// backwards-incompatible way. Old binaries that don't know this version will
-/// fall back to defaults on load rather than silently corrupting the file.
+/// backwards-incompatible way.
+///
+/// Old binaries that do not know this version fall back to defaults on load
+/// rather than silently corrupting the file.
 ///
 /// History:
 ///   unversioned (v0) — no `schema_version` field
@@ -49,7 +51,11 @@ pub enum DltTimestampSource {
 ///   v4 — added `file_config.pcap` (`PcapConfig`) with `show_mac_addresses`
 pub const SCHEMA_VERSION: u32 = 4;
 
-/// Global user configuration stored in config directory
+/// Global user configuration stored in config directory.
+///
+/// The boolean fields are independent persisted user preferences, so combining
+/// them into enums would introduce invalid coupling.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     /// Schema version — no `#[serde(default)]` so that configs written by old
@@ -87,12 +93,12 @@ pub struct GlobalConfig {
     pub show_bookmarks_in_timeline: bool,
 
     /// If `true`, `save()` is a no-op. Set when the on-disk config was written
-    /// by a newer binary (version > SCHEMA_VERSION) so we never silently
+    /// by a newer binary (version > `SCHEMA_VERSION`) so we never silently
     /// downgrade it.
     #[serde(skip)]
     pub read_only: bool,
 
-    /// Use LogBERT sidecar for anomaly scoring (default: false)
+    /// Use `LogBERT` sidecar for anomaly scoring (default: false)
     #[serde(default)]
     pub use_sidecar_scoring: bool,
 
@@ -168,6 +174,7 @@ pub struct FavoriteFilter {
 
 impl FavoriteFilter {
     /// Create a new favorite with the given parameters, using `search_text` as the default name
+    #[must_use]
     pub fn new(search_text: String, case_sensitive: bool) -> Self {
         let name = search_text.clone();
         Self {
@@ -178,6 +185,7 @@ impl FavoriteFilter {
     }
 
     /// Get the display name for this favorite (returns name if set, otherwise `search_text`)
+    #[must_use]
     pub fn display_name(&self) -> &str {
         if self.name.is_empty() {
             &self.search_text
@@ -187,6 +195,7 @@ impl FavoriteFilter {
     }
 
     /// Check if this favorite matches a search rule's search criteria.
+    #[must_use]
     pub fn matches(&self, rule: &SearchRule) -> bool {
         rule.matches_search(&self.search_text, self.case_sensitive)
     }
@@ -194,6 +203,7 @@ impl FavoriteFilter {
 
 impl GlobalConfig {
     /// Get the path to the global config file
+    #[must_use]
     pub fn config_path() -> Option<PathBuf> {
         dirs::config_dir().map(|config_dir| {
             let app_config = config_dir.join("logcrab");
@@ -210,8 +220,7 @@ impl GlobalConfig {
             schema_version: Option<u32>,
         }
         let file_version = serde_json::from_str::<VersionProbe>(contents)
-            .map(|p| p.schema_version.unwrap_or(0))
-            .unwrap_or(0);
+            .map_or(0, |p| p.schema_version.unwrap_or(0));
 
         if file_version > SCHEMA_VERSION {
             tracing::warn!(
@@ -233,10 +242,8 @@ impl GlobalConfig {
             serde_json::from_str::<serde_json::Value>(contents)
                 .ok()
                 .and_then(|mut v| {
-                    v.as_object_mut()?.insert(
-                        "schema_version".to_string(),
-                        serde_json::json!(0u32),
-                    );
+                    v.as_object_mut()?
+                        .insert("schema_version".to_string(), serde_json::json!(0u32));
                     serde_json::from_value::<Self>(v).ok()
                 })
         } else {
@@ -304,7 +311,10 @@ impl GlobalConfig {
     /// the file.
     ///
     /// Returns the updated config so the caller can replace its cached copy.
-    pub fn update(f: impl FnOnce(&mut GlobalConfig)) -> Result<GlobalConfig, String> {
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
+    pub fn update(f: impl FnOnce(&mut Self)) -> Result<Self, String> {
         let path = Self::config_path().ok_or("Could not determine config directory")?;
 
         if let Some(parent) = path.parent() {
@@ -318,6 +328,7 @@ impl GlobalConfig {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)
             .map_err(|e| format!("Failed to open config file: {e}"))?;
 
@@ -339,7 +350,9 @@ impl GlobalConfig {
         f(&mut config);
 
         if config.read_only {
-            tracing::warn!("Config is read-only (on-disk version is newer) — changes not persisted");
+            tracing::warn!(
+                "Config is read-only (on-disk version is newer) — changes not persisted"
+            );
             file.unlock().ok();
             return Ok(config);
         }

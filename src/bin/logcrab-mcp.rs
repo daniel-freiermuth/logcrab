@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-//! `logcrab-mcp` — MCP server that exposes LogBERT ML anomaly scoring.
+//! `logcrab-mcp` — MCP server that exposes `LogBERT` ML anomaly scoring.
 //!
 //! Tools:
 //!   - `list_models`       — list available models from the sidecar
@@ -34,21 +34,19 @@ use std::collections::HashMap;
 
 use logcrab::anomaly::sidecar_client::{InputLine, SidecarClient};
 use rmcp::{
+    handler::server::wrapper::Parameters, tool, tool_handler, tool_router, transport::stdio,
     ServerHandler, ServiceExt,
-    handler::server::wrapper::Parameters,
-    tool, tool_handler, tool_router,
-    transport::stdio,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::task;
 
 // ── Parameter types ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ScoreParams {
-    /// ID of the LogBERT model to use (from `list_models`)
+    /// ID of the `LogBERT` model to use (from `list_models`)
     model_id: String,
     /// Raw log lines to score
     lines: Vec<String>,
@@ -61,7 +59,7 @@ struct ScoreParams {
 struct AnalyzeParams {
     /// Absolute path to the log file to analyze
     path: String,
-    /// ID of the LogBERT model to use (from `list_models`)
+    /// ID of the `LogBERT` model to use (from `list_models`)
     model_id: String,
     /// Maximum number of results to return sorted by anomaly score (default: 50)
     top_n: Option<usize>,
@@ -95,9 +93,13 @@ impl LogcrabMcp {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(SidecarClient::default_port());
-        let export_bin = std::env::var("LOGCRAB_EXPORT_BIN")
-            .unwrap_or_else(|_| "logcrab-export".to_string());
-        Self { host, port, export_bin }
+        let export_bin =
+            std::env::var("LOGCRAB_EXPORT_BIN").unwrap_or_else(|_| "logcrab-export".to_string());
+        Self {
+            host,
+            port,
+            export_bin,
+        }
     }
 }
 
@@ -114,7 +116,11 @@ fn normalize_scores(scores: &HashMap<usize, f64>) -> HashMap<usize, f64> {
     scores
         .iter()
         .map(|(&ln, &s)| {
-            let normalized = if range < 1e-10 { 0.0 } else { (s - min) / range * 100.0 };
+            let normalized = if range < 1e-10 {
+                0.0
+            } else {
+                (s - min) / range * 100.0
+            };
             (ln, normalized)
         })
         .collect()
@@ -122,9 +128,7 @@ fn normalize_scores(scores: &HashMap<usize, f64>) -> HashMap<usize, f64> {
 
 // ── Helper: build norm_versions map from a ModelInfo ────────────────────────
 
-fn norm_versions_for(
-    model: &logcrab::anomaly::sidecar_client::ModelInfo,
-) -> HashMap<String, u32> {
+fn norm_versions_for(model: &logcrab::anomaly::sidecar_client::ModelInfo) -> HashMap<String, u32> {
     model.training_corpus.normalization_versions.clone()
 }
 
@@ -132,8 +136,10 @@ fn norm_versions_for(
 
 #[tool_router]
 impl LogcrabMcp {
-    /// List all available LogBERT models from the running sidecar.
-    #[tool(description = "List available LogBERT models from the logcrab sidecar. Returns a JSON array of model objects including id, name, architecture, status, and training corpus info.")]
+    /// List all available `LogBERT` models from the running sidecar.
+    #[tool(
+        description = "List available LogBERT models from the logcrab sidecar. Returns a JSON array of model objects including id, name, architecture, status, and training corpus info."
+    )]
     async fn list_models(&self) -> String {
         let host = self.host.clone();
         let port = self.port;
@@ -149,11 +155,17 @@ impl LogcrabMcp {
         }
     }
 
-    /// Score a list of raw log lines for anomaly using the LogBERT sidecar.
-    #[tool(description = "Score raw log lines for anomaly using the LogBERT sidecar. Returns a JSON object with a `lines` array sorted by anomaly score (0–100, higher = more anomalous), plus any sidecar warnings. Provide a model_id obtained from list_models. Optionally pass filetype (e.g. logcat, dlt, dmesg) for better normalisation accuracy.")]
+    /// Score a list of raw log lines for anomaly using the `LogBERT` sidecar.
+    #[tool(
+        description = "Score raw log lines for anomaly using the LogBERT sidecar. Returns a JSON object with a `lines` array sorted by anomaly score (0–100, higher = more anomalous), plus any sidecar warnings. Provide a model_id obtained from list_models. Optionally pass filetype (e.g. logcat, dlt, dmesg) for better normalisation accuracy."
+    )]
     async fn score_log_lines(
         &self,
-        Parameters(ScoreParams { model_id, lines, filetype }): Parameters<ScoreParams>,
+        Parameters(ScoreParams {
+            model_id,
+            lines,
+            filetype,
+        }): Parameters<ScoreParams>,
     ) -> String {
         let host = self.host.clone();
         let port = self.port;
@@ -166,8 +178,10 @@ impl LogcrabMcp {
                 .ok_or_else(|| anyhow::anyhow!("model '{model_id}' not found"))?;
 
             let owned_versions = norm_versions_for(model);
-            let norm_versions: HashMap<&str, u32> =
-                owned_versions.iter().map(|(k, &v)| (k.as_str(), v)).collect();
+            let norm_versions: HashMap<&str, u32> = owned_versions
+                .iter()
+                .map(|(k, &v)| (k.as_str(), v))
+                .collect();
 
             let ft = filetype.as_deref();
             let input_lines: Vec<InputLine> = lines
@@ -179,6 +193,7 @@ impl LogcrabMcp {
                 .collect();
 
             let scored = client.score_stream(&model_id, &norm_versions, &input_lines)?;
+            drop(client);
 
             let raw: HashMap<usize, f64> =
                 scored.scored.iter().map(|(&ln, e)| (ln, e.score)).collect();
@@ -195,8 +210,8 @@ impl LogcrabMcp {
                         "line_number": ln,
                         "message": msg,
                         "score": score,
-                        "is_unk": entry.map(|e| e.target_is_unk).unwrap_or(false),
-                        "is_rare": entry.map(|e| e.target_is_rare).unwrap_or(false),
+                        "is_unk": entry.is_some_and(|e| e.target_is_unk),
+                        "is_rare": entry.is_some_and(|e| e.target_is_rare),
                         "filtered": entry.is_none(),
                     })
                 })
@@ -225,10 +240,16 @@ impl LogcrabMcp {
     }
 
     /// Parse a log file via `logcrab-export` (auto-detecting format) then score it.
-    #[tool(description = "Parse a log file using logcrab-export (which auto-detects the format: logcat, DLT, PCAP, BT Snoop, dmesg, generic text, etc.) and score it for anomalies using the LogBERT sidecar. Returns the top_n most anomalous lines (default 50) as a JSON object with line metadata and anomaly scores.")]
+    #[tool(
+        description = "Parse a log file using logcrab-export (which auto-detects the format: logcat, DLT, PCAP, BT Snoop, dmesg, generic text, etc.) and score it for anomalies using the LogBERT sidecar. Returns the top_n most anomalous lines (default 50) as a JSON object with line metadata and anomaly scores."
+    )]
     async fn analyze_log_file(
         &self,
-        Parameters(AnalyzeParams { path, model_id, top_n }): Parameters<AnalyzeParams>,
+        Parameters(AnalyzeParams {
+            path,
+            model_id,
+            top_n,
+        }): Parameters<AnalyzeParams>,
     ) -> String {
         let host = self.host.clone();
         let port = self.port;
@@ -250,7 +271,7 @@ impl LogcrabMcp {
             let records: Vec<ExportRecord> = stdout
                 .lines()
                 .filter(|l| !l.is_empty())
-                .map(|l| serde_json::from_str(l))
+                .map(serde_json::from_str)
                 .collect::<Result<_, _>>()
                 .map_err(|e| anyhow::anyhow!("failed to parse export output: {e}"))?;
 
@@ -267,8 +288,10 @@ impl LogcrabMcp {
                 .ok_or_else(|| anyhow::anyhow!("model '{model_id}' not found"))?;
 
             let owned_versions = norm_versions_for(model);
-            let norm_versions: HashMap<&str, u32> =
-                owned_versions.iter().map(|(k, &v)| (k.as_str(), v)).collect();
+            let norm_versions: HashMap<&str, u32> = owned_versions
+                .iter()
+                .map(|(k, &v)| (k.as_str(), v))
+                .collect();
 
             // ── Build InputLine vec ──────────────────────────────────────────
             let input_lines: Vec<InputLine> = records
@@ -288,6 +311,7 @@ impl LogcrabMcp {
 
             // ── Score ────────────────────────────────────────────────────────
             let scored = client.score_stream(&model_id, &norm_versions, &input_lines)?;
+            drop(client);
 
             let raw: HashMap<usize, f64> =
                 scored.scored.iter().map(|(&ln, e)| (ln, e.score)).collect();
@@ -306,8 +330,8 @@ impl LogcrabMcp {
                         "filetype": r.filetype,
                         "timestamp_unix_ms": r.timestamp_unix_ms,
                         "score": score,
-                        "is_unk": entry.map(|e| e.target_is_unk).unwrap_or(false),
-                        "is_rare": entry.map(|e| e.target_is_rare).unwrap_or(false),
+                        "is_unk": entry.is_some_and(|e| e.target_is_unk),
+                        "is_rare": entry.is_some_and(|e| e.target_is_rare),
                         "filtered": entry.is_none(),
                     })
                 })
@@ -337,6 +361,10 @@ impl LogcrabMcp {
     }
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "the tool_handler macro generates the required ServerHandler async implementation"
+)]
 #[tool_handler]
 impl ServerHandler for LogcrabMcp {}
 

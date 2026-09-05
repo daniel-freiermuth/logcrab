@@ -33,6 +33,7 @@ pub struct DmesgLogLine {
 }
 
 impl DmesgLogLine {
+    #[must_use]
     pub const fn new(
         raw_line: String,
         timestamp: DateTime<Local>,
@@ -324,8 +325,8 @@ mod tests {
     #[test]
     fn test_parse_android_bugreport_format() {
         // Android bugreport kernel log: syslog priority prefix + thread-ID field
-        let raw = "<14>[ 1400.067717][    T1] init: Untracked pid 22963 exited with status 0"
-            .to_string();
+        let raw =
+            "<14>[ 1400.067717][    T1] init: Untracked pid 22963 exited with status 0".to_string();
         let line = parse_dmesg_line(raw, 1).expect("should parse Android dmesg line");
         assert_eq!(
             line.message_text,

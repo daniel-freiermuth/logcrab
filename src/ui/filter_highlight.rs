@@ -10,6 +10,7 @@ pub struct FilterHighlight {
 
 impl FilterHighlight {
     /// Highlight matches from all filters in the text with alpha blending for overlaps
+    #[must_use]
     pub fn highlight_text_with_filters(
         text: &str,
         base_color: Color32,

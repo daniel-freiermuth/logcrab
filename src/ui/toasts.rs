@@ -55,6 +55,7 @@ impl Default for ProgressToastState {
 
 impl ProgressToastState {
     /// Check if this toast should be removed.
+    #[must_use]
     pub const fn should_remove(&self) -> bool {
         self.dismissed_at.is_some()
     }
@@ -129,12 +130,9 @@ impl ProgressToastHandle {
 
     /// Create a new sibling progress toast that renders alongside this one.
     /// Can be called from any thread.
-    pub fn spawn_sibling(
-        &self,
-        title: impl Into<String>,
-        message: impl Into<String>,
-    ) -> ProgressToastHandle {
-        ProgressToastHandle::new(
+    #[must_use]
+    pub fn spawn_sibling(&self, title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(
             self.ctx.clone(),
             Arc::clone(&self.progress_handles),
             title.into(),
@@ -201,6 +199,7 @@ pub struct ToastManager {
 
 impl ToastManager {
     /// Create a new `ToastManager` with the egui context already set
+    #[must_use]
     pub fn new(ctx: egui::Context) -> Self {
         let toasts = Toasts::new()
             .anchor(Align2::RIGHT_BOTTOM, (-10.0, -40.0))
@@ -232,6 +231,7 @@ impl ToastManager {
 
     /// Return a [`ToastSender`] that can enqueue toasts from any thread.
     /// Drained each frame inside [`Self::show`].
+    #[must_use]
     pub fn sender(&self) -> ToastSender {
         ToastSender {
             queue: Arc::clone(&self.pending_notifications),
@@ -301,7 +301,7 @@ impl ToastManager {
                 .lock()
                 .expect("progress_handles lock poisoned");
             // Remove toasts that have been dismissed long enough
-            handles.retain(|state| state.read().map(|s| !s.should_remove()).unwrap_or(false));
+            handles.retain(|state| state.read().is_ok_and(|s| !s.should_remove()));
             handles
                 .iter()
                 .enumerate()

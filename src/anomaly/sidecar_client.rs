@@ -28,15 +28,22 @@
 //! `ExplainPollStatus`) is identical to the V1 WebSocket client so that the
 //! rest of the codebase requires zero changes.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 // ── Proto generated code ──────────────────────────────────────────────────────
 
+#[allow(
+    clippy::derive_partial_eq_without_eq,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::result_large_err,
+    reason = "tonic-build generates this module from proto/sidecar_v2.proto"
+)]
 pub mod proto {
     tonic::include_proto!("sidecar.v2");
 }
@@ -44,8 +51,9 @@ pub mod proto {
 use proto::{
     score_stream_client_message::Payload as ClientPayload,
     score_stream_server_message::Payload as ServerPayload,
-    sidecar_client::SidecarClient as GrpcClient,
-    *,
+    sidecar_client::SidecarClient as GrpcClient, CloseFrame, EndFrame, ExplainFrame, HealthRequest,
+    LinesFrame, ListModelsRequest, ScoreStreamClientMessage, ScoreStreamServerMessage, StartFrame,
+    SubmitSampleRequest,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -126,7 +134,8 @@ pub struct InputLine {
 }
 
 impl InputLine {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         source_id: u16,
         line_number: usize,
         timestamp_unix_ms: u64,
@@ -136,7 +145,11 @@ impl InputLine {
         filetype: Option<String>,
     ) -> Self {
         Self {
-            line_id: LineId { source_id, line_number, timestamp_unix_ms },
+            line_id: LineId {
+                source_id,
+                line_number,
+                timestamp_unix_ms,
+            },
             message,
             template_key,
             source_file,
@@ -155,6 +168,7 @@ pub enum SampleLabel {
 }
 
 impl SampleLabel {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Benign => "benign",
@@ -241,22 +255,29 @@ impl ExplainSession {
         let (explain_res_tx, explain_res_rx) = mpsc::sync_channel::<ExplainResult>(4);
         let rt_clone = Arc::clone(&rt);
         std::thread::spawn(move || {
-            Self::run_loop(rt_clone, req_tx, stream, explain_req_rx, explain_res_tx);
+            Self::run_loop(&rt_clone, &req_tx, stream, &explain_req_rx, &explain_res_tx);
         });
-        Self { request_tx: explain_req_tx, result_rx: explain_res_rx, _rt: rt }
+        Self {
+            request_tx: explain_req_tx,
+            result_rx: explain_res_rx,
+            _rt: rt,
+        }
     }
 
     /// Request an explanation for `target_line_number`.
     /// Returns `false` if the session has ended or the queue is full.
+    #[must_use]
     pub fn request(&self, target_line_number: usize) -> bool {
         self.request_tx.try_send(target_line_number).is_ok()
     }
 
     /// Poll for a completed explanation without blocking.
+    #[must_use]
     pub fn try_recv(&self) -> Option<ExplainResult> {
         self.result_rx.try_recv().ok()
     }
 
+    #[must_use]
     pub fn poll_status(&self) -> ExplainPollStatus {
         match self.result_rx.try_recv() {
             Ok(result) => ExplainPollStatus::Ready(result),
@@ -266,11 +287,11 @@ impl ExplainSession {
     }
 
     fn run_loop(
-        rt: Arc<tokio::runtime::Runtime>,
-        req_tx: tokio::sync::mpsc::UnboundedSender<ScoreStreamClientMessage>,
+        rt: &Arc<tokio::runtime::Runtime>,
+        req_tx: &tokio::sync::mpsc::UnboundedSender<ScoreStreamClientMessage>,
         mut stream: tonic::codec::Streaming<ScoreStreamServerMessage>,
-        explain_req_rx: mpsc::Receiver<usize>,
-        explain_res_tx: mpsc::SyncSender<ExplainResult>,
+        explain_req_rx: &mpsc::Receiver<usize>,
+        explain_res_tx: &mpsc::SyncSender<ExplainResult>,
     ) {
         tracing::debug!("explain session: started");
         loop {
@@ -279,7 +300,7 @@ impl ExplainSession {
             let target_ln = loop {
                 match explain_req_rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(ln) => break ln,
-                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
                         tracing::debug!("explain session: all senders dropped — sending close");
                         let _ = req_tx.send(ScoreStreamClientMessage {
@@ -396,17 +417,19 @@ fn proto_to_model_info(m: proto::ModelInfo) -> ModelInfo {
 
 // ── SidecarClient ─────────────────────────────────────────────────────────────
 
-/// gRPC client for the LogBERT sidecar — V2 protocol.
+/// gRPC client for the `LogBERT` sidecar — V2 protocol.
 pub struct SidecarClient {
     rt: Arc<tokio::runtime::Runtime>,
     channel: tonic::transport::Channel,
 }
 
 impl SidecarClient {
+    #[must_use]
     pub const fn default_host() -> &'static str {
         DEFAULT_HOST
     }
 
+    #[must_use]
     pub const fn default_port() -> u16 {
         DEFAULT_PORT
     }
@@ -415,6 +438,9 @@ impl SidecarClient {
     ///
     /// Creates a dedicated tokio runtime (2 worker threads) and establishes a
     /// lazy gRPC channel.  The actual TCP handshake happens on the first RPC.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn connect(host: &str, port: u16) -> Result<Self> {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
@@ -442,16 +468,25 @@ impl SidecarClient {
     // ── Unary RPCs ────────────────────────────────────────────────────────────
 
     /// `Health` — liveness / readiness probe.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn health_check(&self) -> Result<HealthResponse> {
         let resp = self
             .rt
             .block_on(self.client().health(HealthRequest {}))
             .context("Health RPC failed")?
             .into_inner();
-        Ok(HealthResponse { api_version: resp.api_version, status: resp.status })
+        Ok(HealthResponse {
+            api_version: resp.api_version,
+            status: resp.status,
+        })
     }
 
     /// `ListModels` — discover available models and filter profiles.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let resp = self
             .rt
@@ -462,6 +497,9 @@ impl SidecarClient {
     }
 
     /// `SubmitSample` — upload a manually labelled log sample.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn submit_sample(
         &self,
         model_id: &str,
@@ -484,6 +522,9 @@ impl SidecarClient {
     // ── ScoreStream ───────────────────────────────────────────────────────────
 
     /// Score lines; discard the explain session.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn score_stream(
         &self,
         model_id: &str,
@@ -496,6 +537,9 @@ impl SidecarClient {
     }
 
     /// Like [`score_stream`], keeping the stream open for explain requests.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn score_stream_with_explain(
         &self,
         model_id: &str,
@@ -507,6 +551,13 @@ impl SidecarClient {
 
     /// Like [`score_stream_with_explain`], invoking `on_scores` incrementally
     /// after each GPU batch so the UI can update as scores arrive.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
+    #[allow(
+        clippy::type_complexity,
+        reason = "the callback is single-use and an alias would obscure its scoring contract"
+    )]
     pub fn score_stream_streaming(
         &self,
         model_id: &str,
@@ -536,8 +587,10 @@ impl SidecarClient {
         lines: &[InputLine],
         on_frame: &mut dyn FnMut(&HashMap<usize, ScoreEntry>, &ScoreStreamResult),
     ) -> Result<(ScoreStreamResult, ExplainSession)> {
-        let norm_map: HashMap<String, u32> =
-            normalization_versions.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let norm_map: HashMap<String, u32> = normalization_versions
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect();
         let proto_lines: Vec<proto::InputLine> = lines.iter().map(input_line_to_proto).collect();
         let model_id = model_id.to_string();
         let n_chunks = proto_lines.len().div_ceil(LINES_PER_CHUNK.max(1));
@@ -548,8 +601,7 @@ impl SidecarClient {
         // Phase 1: send all frames and open the RPC.  This async block owns
         // only `Send + 'static` data so no unsafe pointer tricks are needed.
         let (req_tx, mut stream) = self.rt.block_on(async move {
-            let (tx, rx) =
-                tokio::sync::mpsc::unbounded_channel::<ScoreStreamClientMessage>();
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ScoreStreamClientMessage>();
 
             tx.send(ScoreStreamClientMessage {
                 payload: Some(ClientPayload::Start(StartFrame {
@@ -593,7 +645,11 @@ impl SidecarClient {
         // `on_frame` is called directly — no async capture, no unsafe needed.
         let mut result = ScoreStreamResult::default();
         loop {
-            match self.rt.block_on(stream.message()).context("stream read error")? {
+            match self
+                .rt
+                .block_on(stream.message())
+                .context("stream read error")?
+            {
                 Some(msg) => {
                     if Self::handle_server_msg(msg, &mut result, on_frame)? {
                         break;

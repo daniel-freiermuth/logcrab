@@ -1,9 +1,16 @@
+pub enum RenameFilterResult {
+    Saved(String),
+    Pending,
+    Cancelled,
+}
+
 pub struct ChangeFilternameWindow {
     new_name: String,
     focus_requested: bool,
 }
 
 impl ChangeFilternameWindow {
+    #[must_use]
     pub const fn new(initial_name: String) -> Self {
         Self {
             new_name: initial_name,
@@ -11,13 +18,10 @@ impl ChangeFilternameWindow {
         }
     }
 
-    /// Render the change filter name window
-    ///
-    /// Returns `Ok(Some(new_name))` if the name was changed,
-    /// Ok(None) if the window is still open,
-    /// Err(()) if the operation was cancelled.
-    pub fn render(&mut self, ui: &egui::Ui) -> Result<Option<String>, ()> {
-        let mut result = Ok(None);
+    /// Render the change filter name window.
+    #[must_use]
+    pub fn render(&mut self, ui: &egui::Ui) -> RenameFilterResult {
+        let mut result = RenameFilterResult::Pending;
         egui::Window::new("Rename Filter")
             .collapsible(false)
             .resizable(false)
@@ -44,10 +48,10 @@ impl ChangeFilternameWindow {
                     let should_cancel = ui.button("Cancel").clicked() || escape_pressed;
 
                     if should_save {
-                        result = Ok(Some(self.new_name.clone()));
+                        result = RenameFilterResult::Saved(self.new_name.clone());
                     }
                     if should_cancel {
-                        result = Err(());
+                        result = RenameFilterResult::Cancelled;
                     }
                 });
             });

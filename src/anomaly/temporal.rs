@@ -13,6 +13,7 @@ pub struct TemporalScorer {
 }
 
 impl TemporalScorer {
+    #[must_use]
     pub fn new(window_seconds: i64) -> Self {
         Self {
             window_duration: Duration::seconds(window_seconds),

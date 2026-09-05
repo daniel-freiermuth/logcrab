@@ -19,7 +19,10 @@
 use crate::config::GlobalConfig;
 use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::session::CRAB_FILTERS_VERSION;
-use crate::core::{CrabFilters, LogFileLoader, LogStore, SavedFilter, SavedHighlight, SearchRule};
+use crate::core::{
+    CrabFilters, FilterRequestPriority, LogFileLoader, LogStore, SavedFilter, SavedHighlight,
+    SearchRule,
+};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
@@ -189,6 +192,9 @@ impl CrabSession {
         );
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn export_filters(&self, path: &Path) -> Result<(), String> {
         tracing::debug!("Exporting filters to: {}", path.display());
         let filters = self
@@ -214,6 +220,9 @@ impl CrabSession {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn import_filters(&mut self, path: &Path) -> Result<usize, String> {
         tracing::debug!("Importing filters from: {}", path.display());
 
@@ -282,9 +291,11 @@ impl CrabSession {
                     highlight.name.clone()
                 };
                 highlight.search.check_filter_results();
-                highlight
-                    .search
-                    .ensure_cache_valid(&self.state.store, &self.state.filter_worker);
+                highlight.search.ensure_cache_valid(
+                    &self.state.store,
+                    &self.state.filter_worker,
+                    FilterRequestPriority::Background,
+                );
                 histogram_markers.push(crate::ui::tabs::filter_tab::HistogramMarker {
                     name,
                     color: highlight.color,
@@ -352,8 +363,12 @@ impl CrabSession {
         }
 
         // Drive any open calibration windows for all sources (one per source per frame).
-        if self.state.store.render_file_states(ui) {
+        let (file_state_changed, jump_target) = self.state.store.render_file_states(ui);
+        if file_state_changed {
             self.state.modified = true;
+        }
+        if let Some(store_id) = jump_target {
+            self.state.selected_line_index = Some(store_id);
         }
 
         // Handle highlight-to-filter conversion

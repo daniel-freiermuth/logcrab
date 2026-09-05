@@ -29,21 +29,24 @@ const EXPORT_CHUNK: usize = 4096;
 ///
 /// Config and file-state are both `Default`, so timestamps are raw and
 /// uncalibrated — honouring the stability invariant on [`LineType::timestamp`].
+///
+/// # Errors
+///
+/// Returns an error when the source cannot be opened, read, or written.
 pub fn export_typed<FT: InputFileType>(
     path: &Path,
     filetype: &str,
     out: &mut impl Write,
 ) -> anyhow::Result<()> {
     let config = <<FT as InputFileType>::LineType as LineType>::Config::default();
-    let file_state =
-        Arc::new(<<FT as InputFileType>::LineType as LineType>::FileState::default());
+    let file_state = Arc::new(<<FT as InputFileType>::LineType as LineType>::FileState::default());
 
     let mut reader = FT::open(path, config.clone(), Arc::clone(&file_state))
         .with_context(|| format!("failed to open {} as {filetype}", path.display()))?;
 
     let source_file = path
         .file_name()
-        .unwrap_or_else(|| path.as_os_str())
+        .unwrap_or(path.as_os_str())
         .to_string_lossy();
 
     loop {

@@ -332,7 +332,13 @@ impl LogCrabTab for BookmarksView {
 
         ui.separator();
 
-        self.render_bookmarks(ui, data_state, all_filter_highlights, global_config.color_by_ml_score, global_config.grey_rare_ml_lines);
+        self.render_bookmarks(
+            ui,
+            data_state,
+            all_filter_highlights,
+            global_config.color_by_ml_score,
+            global_config.grey_rare_ml_lines,
+        );
     }
 
     fn process_events(

@@ -74,6 +74,8 @@ pub struct HistogramCacheKey {
     pub zoom_range_ms: Option<(i64, i64)>,
     /// Whether to use ML sidecar score instead of heuristic score
     pub color_by_ml_score: bool,
+    /// Whether deduplication is active
+    pub hide_duplicates: bool,
 }
 
 /// Result from background histogram computation
@@ -142,6 +144,7 @@ impl HistogramWorker {
     }
 
     /// Get a handle to send requests to this worker.
+    #[must_use]
     pub fn handle(&self) -> HistogramWorkerHandle {
         self.handle.clone()
     }
@@ -249,8 +252,13 @@ impl HistogramWorker {
             filtered_indices
         };
 
-        let (buckets, anomaly_buckets) =
-            Self::create_buckets(store, &zoomed_indices, start_time, bucket_size, request.color_by_ml_score);
+        let (buckets, anomaly_buckets) = Self::create_buckets(
+            store,
+            &zoomed_indices,
+            start_time,
+            bucket_size,
+            request.color_by_ml_score,
+        );
 
         HistogramResult {
             cache_key: request.key.clone(),

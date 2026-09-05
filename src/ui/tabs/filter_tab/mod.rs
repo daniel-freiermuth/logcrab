@@ -27,14 +27,14 @@ pub use log_table::{LogTable, LogTableEvent};
 
 use crate::config::GlobalConfig;
 use crate::core::log_store::StoreID;
-use crate::core::SavedFilter;
+use crate::core::{FilterRequestPriority, SavedFilter};
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::{FilterToHighlightData, SessionState};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table::TimestampMode;
 use crate::ui::tabs::LogCrabTab;
-use crate::ui::windows::ChangeFilternameWindow;
+use crate::ui::windows::{ChangeFilternameWindow, RenameFilterResult};
 use egui::Ui;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -73,6 +73,7 @@ pub struct FilterView {
 }
 
 impl FilterView {
+    #[must_use]
     pub const fn new(state: FilterState) -> Self {
         Self {
             should_focus_search: false,
@@ -110,12 +111,12 @@ impl FilterView {
             // New filter results arrived - invalidate scroll tracking so we re-scroll
             self.state.last_rendered_selection = None;
         }
-        self.state
-            .search
-            .hide_duplicates = global_config.hide_duplicates;
-        self.state
-            .search
-            .ensure_cache_valid(&log_view_state.store, &log_view_state.filter_worker);
+        self.state.search.hide_duplicates = global_config.hide_duplicates;
+        self.state.search.ensure_cache_valid(
+            &log_view_state.store,
+            &log_view_state.filter_worker,
+            FilterRequestPriority::Interactive,
+        );
 
         // Render filter bar
         let filter_bar_events = {
@@ -175,7 +176,10 @@ impl FilterView {
         // Check for completed filter results from background thread
         let scroll_to_row = {
             profiling::scope!("find_scroll_position");
-            if self.state.last_rendered_selection == selected_line_index {
+            if self.state.scroll_locked {
+                // Scroll lock active — don't follow the global selection
+                None
+            } else if self.state.last_rendered_selection == selected_line_index {
                 None
             } else {
                 self.state.last_rendered_selection = selected_line_index;
@@ -214,8 +218,8 @@ impl FilterView {
 
         // Render log table
         let closest_row_index = self.state.closest_row_index;
-        let model_is_active = global_config.use_sidecar_scoring
-            && global_config.selected_model.is_some();
+        let model_is_active =
+            global_config.use_sidecar_scoring && global_config.selected_model.is_some();
         let table_events = {
             profiling::scope!("render_log_table");
             LogTable::render(
@@ -268,7 +272,9 @@ impl FilterView {
                     } else {
                         // Session is closed or was never opened.
                         if let Some(ref sender) = log_view_state.toast_sender {
-                            sender.send("Attention not available: sidecar session is closed".to_string());
+                            sender.send(
+                                "Attention not available: sidecar session is closed".to_string(),
+                            );
                         }
                     }
                 }
@@ -298,7 +304,13 @@ impl FilterView {
                             let client = crate::anomaly::sidecar_client::SidecarClient::connect(
                                 &host, port,
                             )?;
-                            client.submit_sample(&model_id, label, classified_line_number, &input_lines)?;
+                            client.submit_sample(
+                                &model_id,
+                                label,
+                                classified_line_number,
+                                &input_lines,
+                            )?;
+                            drop(client);
                             Ok(())
                         })();
                         match result {
@@ -340,7 +352,7 @@ impl FilterView {
                         self.attention_pending = false;
                         self.attention_error = Some("Sidecar connection lost".to_string());
                     }
-                    _ => {}
+                    ExplainPollStatus::Pending | ExplainPollStatus::Ready(_) => {}
                 }
             }
         }
@@ -353,7 +365,9 @@ impl FilterView {
                 store,
                 self.attention_target,
                 self.attention_result.as_ref(),
-                self.attention_pending,                self.attention_error.as_deref(),            );
+                self.attention_pending,
+                self.attention_error.as_deref(),
+            );
         }
 
         events
@@ -443,15 +457,15 @@ impl FilterView {
         // Handle filter name editing dialog
         if let Some(ref mut window) = self.change_filtername_window {
             match window.render(ui) {
-                Ok(Some(new_name)) => {
+                RenameFilterResult::Saved(new_name) => {
                     self.state.name = new_name;
                     self.change_filtername_window = None;
                     data_state.modified = true;
                 }
-                Ok(None) => {
+                RenameFilterResult::Pending => {
                     // Still editing
                 }
-                Err(()) => {
+                RenameFilterResult::Cancelled => {
                     // Cancelled
                     self.change_filtername_window = None;
                 }

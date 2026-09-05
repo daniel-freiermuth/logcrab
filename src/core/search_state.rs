@@ -21,7 +21,9 @@
 //! This module provides the core regex-based search functionality
 //! with background filtering support via the global filter worker.
 
-use crate::core::filter_worker::{FilterRequest, FilterResult, FilterWorkerHandle};
+use crate::core::filter_worker::{
+    FilterCancellation, FilterRequest, FilterRequestPriority, FilterResult, FilterWorkerHandle,
+};
 use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::LogStore;
 use fancy_regex::{Error, Regex};
@@ -35,6 +37,10 @@ static NEXT_SEARCH_ID: AtomicUsize = AtomicUsize::new(0);
 /// Core search state shared between filters and highlights.
 ///
 /// Handles regex compilation, background filtering, and result caching.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the booleans independently describe search options and cache validity"
+)]
 pub struct SearchState {
     /// Unique identifier for this search instance
     id: usize,
@@ -68,6 +74,14 @@ pub struct SearchState {
     filter_result_rx: Receiver<FilterResult>,
     /// Sender kept to create new requests
     filter_result_tx: Sender<FilterResult>,
+    /// Cancels the last submitted snapshot when this search changes.
+    current_request_cancellation: FilterCancellation,
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SearchState {
@@ -95,10 +109,12 @@ impl SearchState {
             last_requested_version: StoreVersion::default(),
             filter_result_rx: result_rx,
             filter_result_tx: result_tx,
+            current_request_cancellation: FilterCancellation::new(),
         }
     }
 
     /// Get the unique identifier for this search.
+    #[must_use]
     pub const fn id(&self) -> usize {
         self.id
     }
@@ -107,11 +123,15 @@ impl SearchState {
     ///
     /// Uses Arc internally so cloning is just a reference count increment,
     /// not a deep copy of the potentially huge vector.
+    #[must_use]
     pub fn get_filtered_indices_cached(&self) -> Arc<Vec<StoreID>> {
         profiling::scope!("SearchState::get_filtered_indices");
         Arc::clone(&self.filtered_indices)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn get_regex(&self) -> Result<Regex, Box<Error>> {
         let pattern = if self.case_sensitive {
             &self.search_text
@@ -121,6 +141,9 @@ impl SearchState {
         Regex::new(pattern).map_err(Box::new)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn get_exclude_regex(&self) -> Result<Option<Regex>, Box<Error>> {
         if self.exclude_text.is_empty() {
             return Ok(None);
@@ -134,7 +157,13 @@ impl SearchState {
     }
 
     /// Request a background filter update for the given store.
-    fn request_filter_update(&self, store: Arc<LogStore>, worker: &FilterWorkerHandle) {
+    fn request_filter_update(
+        &self,
+        store: Arc<LogStore>,
+        worker: &FilterWorkerHandle,
+        cancellation: FilterCancellation,
+        priority: FilterRequestPriority,
+    ) {
         if !self.search_text.is_empty() {
             tracing::trace!(
                 "Search {}: requesting background filter for '{}'",
@@ -155,10 +184,19 @@ impl SearchState {
                 exclude_text: self.exclude_text.clone(),
                 case_sensitive: self.case_sensitive,
                 hide_duplicates: self.hide_duplicates,
+                cancellation,
+                priority,
             };
 
             worker.send_request(request);
         }
+    }
+
+    /// Cancel the previously submitted snapshot and return a fresh cancellation handle.
+    fn replace_request_cancellation(&mut self) -> FilterCancellation {
+        self.current_request_cancellation.cancel();
+        self.current_request_cancellation = FilterCancellation::new();
+        self.current_request_cancellation.clone()
     }
 
     /// Check for completed filter results from background thread.
@@ -187,24 +225,32 @@ impl SearchState {
     }
 
     /// Get the search text that the current filtered indices were computed for.
-    pub fn indices_computed_for(&self) -> (&str, &str, bool, StoreVersion) {
+    #[must_use]
+    pub fn indices_computed_for(&self) -> (&str, &str, bool, bool, StoreVersion) {
         (
             &self.indices_computed_for_text,
             &self.indices_computed_for_exclude,
             self.indices_computed_for_case,
+            self.indices_computed_for_dedup,
             self.indices_computed_for_version,
         )
     }
 
-    /// Check if cache is valid for the given store version, request update if not.
-    pub fn ensure_cache_valid(&mut self, store: &Arc<LogStore>, worker: &FilterWorkerHandle) {
+    /// Check if cache is valid for the given store version, request an update if not.
+    pub fn ensure_cache_valid(
+        &mut self,
+        store: &Arc<LogStore>,
+        worker: &FilterWorkerHandle,
+        priority: FilterRequestPriority,
+    ) {
         if self.last_requested_version != store.version()
             || self.last_requested_text != self.search_text
             || self.last_requested_exclude != self.exclude_text
             || self.last_requested_case != self.case_sensitive
             || self.last_requested_dedup != self.hide_duplicates
         {
-            self.request_filter_update(Arc::clone(store), worker);
+            let cancellation = self.replace_request_cancellation();
+            self.request_filter_update(Arc::clone(store), worker, cancellation, priority);
             self.last_requested_version = store.version();
             self.last_requested_text = self.search_text.clone();
             self.last_requested_exclude = self.exclude_text.clone();
@@ -350,6 +396,7 @@ mod tests {
             search_text: "first".to_string(),
             exclude_text: String::new(),
             case_sensitive: false,
+            hide_duplicates: false,
             store_version: StoreVersion::default(),
         })
         .expect("Failed to send FilterResult for 'first'");
@@ -359,6 +406,7 @@ mod tests {
             search_text: "second".to_string(),
             exclude_text: String::new(),
             case_sensitive: false,
+            hide_duplicates: false,
             store_version: StoreVersion::default(),
         })
         .expect("Failed to send FilterResult for 'second'");
@@ -370,5 +418,16 @@ mod tests {
 
         // Second call should return false (channel drained)
         assert!(!state.check_filter_results());
+    }
+
+    #[test]
+    fn replacing_request_cancellation_cancels_the_previous_snapshot() {
+        let mut state = SearchState::new();
+        let previous = state.current_request_cancellation.clone();
+
+        let current = state.replace_request_cancellation();
+
+        assert!(previous.is_cancelled());
+        assert!(!current.is_cancelled());
     }
 }

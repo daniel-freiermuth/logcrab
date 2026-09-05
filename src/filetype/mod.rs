@@ -12,7 +12,7 @@ pub mod pcap;
 pub mod registry_macro;
 pub mod simple_file_state;
 
-pub use calibration_window::CalibrationWindow;
+pub use calibration_window::{CalibrationResult, CalibrationWindow};
 pub use simple_file_state::SimpleFileState;
 
 // ============================================================================
@@ -40,12 +40,12 @@ pub fn render_calibration(
         return None;
     };
     match result {
-        Ok(Some((target_time, _apply_to_all))) => {
+        CalibrationResult::Confirmed { target_time, .. } => {
             *calibration = None;
             Some(target_time.timestamp_millis() - raw_time.timestamp_millis())
         }
-        Ok(None) => None,
-        Err(()) => {
+        CalibrationResult::Pending => None,
+        CalibrationResult::Cancelled => {
             *calibration = None;
             None
         }
@@ -74,11 +74,20 @@ pub trait LogFileState: Send + Sync {
     /// Drive any open UI window stored in this state.
     ///
     /// Called once per source per frame from `SourceData::render_file_state`.
+    /// `source_path` is the path to the source file (for display in window titles).
     /// Returns `true` when the user confirms a new calibration time (the offset has
     /// already been written into `self`); the caller then bumps the source version.
     /// Default: no-op returning `false`.
-    fn egui_render_file_state(&self, _ui: &egui::Ui) -> bool {
+    fn egui_render_file_state(&self, _ui: &egui::Ui, _source_path: &std::path::Path) -> bool {
         false
+    }
+
+    /// Take a pending line-jump request (if any) set by UI interactions in the file state.
+    ///
+    /// Returns `Some(line_index)` if a jump was requested, consuming it.
+    /// Default: always `None`.
+    fn take_pending_jump_line(&self) -> Option<usize> {
+        None
     }
 }
 
@@ -200,8 +209,10 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
 }
 
 /// Provides a unique slug for a file type, used as the JSON key for `file_state`
-/// in `.crab` files. Implemented automatically by the `register_filetypes!` macro
-/// via `stringify!($slug)` — no hand-written impl is required in any filetype file.
+/// in `.crab` files.
+///
+/// Implemented automatically by the `register_filetypes!` macro via
+/// `stringify!($slug)`; filetype modules need no hand-written implementation.
 pub trait HasSlug {
     const SLUG: &'static str;
 }
@@ -231,6 +242,11 @@ pub trait InputFileType: HasSlug {
     /// state during `read()` (e.g. DLT boot-time discovery) store this arc and
     /// write into it from `read()` via interior mutability. All other types may
     /// ignore it via `_file_state`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the source cannot be opened or its initial state
+    /// cannot be established.
     fn open(
         path: &::std::path::Path,
         config: <Self::LineType as LineType>::Config,
@@ -244,6 +260,10 @@ pub trait InputFileType: HasSlug {
     /// Raw parsing only — no progress reporting, no chunk management.
     /// `ChunkedLoader` drives this method with adaptive chunk sizing and progress.
     /// Returns fewer than `lines_to_read` items (including zero) to signal EOF.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the next source records cannot be read or parsed.
     fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>>;
 
     /// Bytes consumed from the source file so far.

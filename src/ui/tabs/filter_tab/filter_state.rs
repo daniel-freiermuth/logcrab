@@ -44,9 +44,14 @@ pub struct FilterState {
 
     /// How the timestamp column displays time (absolute or delta).
     pub timestamp_mode: TimestampMode,
+
+    /// When `true`, this tab does not auto-scroll to follow the global selection.
+    /// Transient UI state — not persisted.
+    pub scroll_locked: bool,
 }
 
 impl FilterState {
+    #[must_use]
     pub fn new(name: String, color: Color32) -> Self {
         let rule = SearchRule::new(name, color);
         let filter_id = rule.id();
@@ -57,10 +62,12 @@ impl FilterState {
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
             timestamp_mode: TimestampMode::default(),
+            scroll_locked: false,
         }
     }
 
     /// Get the unique filter ID
+    #[must_use]
     pub const fn get_id(&self) -> usize {
         self.rule.id()
     }
@@ -99,6 +106,7 @@ impl From<&SavedFilter> for FilterState {
             histogram_cache: HistogramCache::new(filter_id),
             column_widths: ColumnWidths::default(),
             timestamp_mode: TimestampMode::default(),
+            scroll_locked: false,
         }
     }
 }

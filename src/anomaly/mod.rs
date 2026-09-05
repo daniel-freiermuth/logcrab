@@ -12,6 +12,7 @@ use scorer::CompositeScorer;
 use temporal::TemporalScorer;
 
 /// Create the default anomaly scoring pipeline
+#[must_use]
 pub fn create_default_scorer() -> CompositeScorer {
     CompositeScorer::new()
         .add_scorer(Box::new(RarityScorer::new()), 5.0) // Rarity is most important

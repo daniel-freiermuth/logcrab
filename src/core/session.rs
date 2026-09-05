@@ -34,10 +34,10 @@ use crate::core::log_store::Bookmark;
 /// - v2: flat `time_offset_ms` per source
 /// - v3: per-filetype slug keys (e.g. `"bugreport": { ... }`)
 /// - v4: bugreport state gains `state_version` + `dmesg_offset_ms`; per-filetype
-///       state versioning introduced so future filetype changes don't require
-///       bumping this global version. Pre-v4 LogCrab cannot safely write v4+
-///       files (it ignores unknown fields and would silently drop calibration data
-///       on save), so a global bump is required.
+///   state versioning introduced so future filetype changes don't require
+///   bumping this global version. Pre-v4 `LogCrab` cannot safely write v4+
+///   files (it ignores unknown fields and would silently drop calibration data
+///   on save), so a global bump is required.
 pub const CRAB_FILE_VERSION: u32 = 4;
 
 /// Last legacy format version; files with version ≤ this are parsed as [`CrabFileV2`]
@@ -216,6 +216,9 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
     /// Files with version ≤ v2 are deserialized as [`CrabFileV2`] and migrated;
     /// v3+ files have their `FT::SLUG` key remapped to `file_state` before
     /// deserialization.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn load_from_file(file: &mut std::fs::File) -> Result<Self, SessionError> {
         use std::io::{Read, Seek, SeekFrom};
 
@@ -252,7 +255,7 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
                 // so "too new" reaches the caller as a typed error with a good message
                 // rather than being silently swallowed as a missing field.
                 let max_sv = <<FT::LineType as crate::filetype::LineType>::FileState
-                    as crate::filetype::LogFileState>::MAX_STATE_VERSION;
+                as crate::filetype::LogFileState>::MAX_STATE_VERSION;
                 if let Some(max_sv) = max_sv {
                     let state_version = slug_state
                         .get("state_version")
@@ -276,6 +279,9 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
     /// Save the session to an already-open file handle.
     ///
     /// Serializes `file_state` under `FT::SLUG` rather than `"file_state"`.
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn save_to_file(&self, file: &mut std::fs::File) -> Result<(), SessionError> {
         use std::io::{Seek, SeekFrom, Write};
 
@@ -309,22 +315,28 @@ pub struct CrabFilters {
 
 impl CrabFilters {
     /// Load filters from a .crab-filters file
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn load(path: &Path) -> Result<Self, SessionError> {
         let content = fs::read_to_string(path).map_err(SessionError::Io)?;
         let filters: Self = serde_json::from_str(&content).map_err(SessionError::Parse)?;
 
         if filters.version > CRAB_FILTERS_VERSION {
             tracing::warn!(
-                ".crab-filters file version {} is newer than supported version {}. Some features may not work correctly.",
-                filters.version,
-                CRAB_FILTERS_VERSION
-            );
+            ".crab-filters file version {} is newer than supported version {}. Some features may not work correctly.",
+            filters.version,
+            CRAB_FILTERS_VERSION
+        );
         }
 
         Ok(filters)
     }
 
     /// Save filters to a .crab-filters file
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn save(&self, path: &Path) -> Result<(), SessionError> {
         let json = serde_json::to_string_pretty(self).map_err(SessionError::Serialize)?;
         fs::write(path, json).map_err(SessionError::Io)?;
@@ -367,7 +379,11 @@ impl std::fmt::Display for SessionError {
                 f,
                 ".crab file version {found} is newer than supported version {supported}"
             ),
-            Self::StateVersionTooNew { slug, found, supported } => write!(
+            Self::StateVersionTooNew {
+                slug,
+                found,
+                supported,
+            } => write!(
                 f,
                 "{slug} state version {found} is newer than supported version {supported}"
             ),

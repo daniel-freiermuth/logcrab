@@ -41,6 +41,7 @@
 /// Compile-time helpers for magic byte prefix invariant checking.
 pub mod const_checks {
     /// Returns `true` if `needle` is a byte-prefix of `haystack` (including equal length).
+    #[must_use]
     pub const fn is_prefix(needle: &[u8], haystack: &[u8]) -> bool {
         if needle.len() > haystack.len() {
             return false;
@@ -57,6 +58,7 @@ pub mod const_checks {
 
     /// Returns `true` if any pattern in `a` is a prefix of any pattern in `b`,
     /// or vice-versa. Used to enforce unambiguous magic-byte detection.
+    #[must_use]
     pub const fn slices_have_prefix_conflict(a: &[&[u8]], b: &[&[u8]]) -> bool {
         let mut i = 0;
         while i < a.len() {
@@ -74,6 +76,7 @@ pub mod const_checks {
 
     /// Returns `true` if any two patterns *within the same slice* are prefix-related.
     /// Catches degenerate `MAGIC_BYTES` like `&[b"DLT", b"DLT\x01"]`.
+    #[must_use]
     pub const fn self_has_prefix_conflict(patterns: &[&[u8]]) -> bool {
         let mut i = 0;
         while i < patterns.len() {
@@ -311,12 +314,18 @@ macro_rules! register_filetypes {
         /// Timestamps are raw and uncalibrated (config and file-state are both
         /// `Default`), honouring the stability invariant on
         /// [`$crate::filetype::LineType::timestamp`].
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when the input cannot be classified or exported.
         pub fn export_dispatch(
             path: &::std::path::Path,
             out: &mut impl ::std::io::Write,
         ) -> ::anyhow::Result<()> {
             use ::anyhow::Context as _;
             use ::std::io::Read as _;
+            const MAX_SAMPLE_BYTES: u64 = 100 * 1024;
+
 
             // ── Binary: magic-byte detection ─────────────────────────────────
             let mut header = [0u8; 16];
@@ -342,7 +351,6 @@ macro_rules! register_filetypes {
             }
 
             // ── Text: content sampling ────────────────────────────────────────
-            const MAX_SAMPLE_BYTES: u64 = 100 * 1024;
             let mut sample = ::std::vec::Vec::new();
             ::std::fs::File::open(path)
                 .with_context(|| format!("cannot open {}", path.display()))?
@@ -403,8 +411,12 @@ macro_rules! register_filetypes {
                 }
             }
 
+            pub fn is_empty(&self) -> bool {
+                self.len() == 0
+            }
+
             /// Return the compile-time filetype slug for this source variant.
-            pub fn filetype_slug(&self) -> &'static str {
+            pub const fn filetype_slug(&self) -> &'static str {
                 match self {
                     $( Self::$b_arm(_) => <$b_ftype as $crate::filetype::HasSlug>::SLUG, )*
                     $( Self::$t_arm(_) => <$t_ftype as $crate::filetype::HasSlug>::SLUG, )*
@@ -458,7 +470,7 @@ macro_rules! register_filetypes {
             }
 
             /// Drive any open calibration windows for this source (one per frame).
-            pub fn render_file_state(&self, ui: &egui::Ui) -> bool {
+            pub fn render_file_state(&self, ui: &egui::Ui) -> (bool, Option<$crate::core::log_store::StoreID>) {
                 match self {
                     $( Self::$b_arm(s) => s.render_file_state(ui), )*
                     $( Self::$t_arm(s) => s.render_file_state(ui), )*
@@ -540,13 +552,18 @@ macro_rules! register_filetypes {
             ///
             /// Predicate receives `(display_message, raw)` — the display message includes
             /// any active per-source overlays (e.g. SOME/IP SD decoding for PCAP).
-            pub fn filter_sorted_by_search<F>(&self, predicate: &F) -> Vec<usize>
+            pub fn filter_sorted_by_search<F, C>(
+                &self,
+                predicate: &F,
+                should_cancel: &C,
+            ) -> Option<Vec<usize>>
             where
                 F: Fn(&str, &str) -> bool + Sync,
+                C: Fn() -> bool + Sync,
             {
                 match self {
-                    $( Self::$b_arm(s) => s.filter_sorted_by_search(predicate), )*
-                    $( Self::$t_arm(s) => s.filter_sorted_by_search(predicate), )*
+                    $( Self::$b_arm(s) => s.filter_sorted_by_search(predicate, should_cancel), )*
+                    $( Self::$t_arm(s) => s.filter_sorted_by_search(predicate, should_cancel), )*
                 }
             }
         }

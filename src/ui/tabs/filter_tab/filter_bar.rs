@@ -57,7 +57,14 @@ pub struct FilterBar {
     pre_history_text: String,
 }
 
+impl Default for FilterBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FilterBar {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             editing_favorite: false,
@@ -73,9 +80,11 @@ impl FilterBar {
         let search_text = filter.search.search_text.clone();
         let case_sensitive = filter.search.case_sensitive;
         match GlobalConfig::update(|c| {
-            if let Some(fav) = c.favorite_filters.iter_mut().find(|f| {
-                f.search_text == search_text && f.case_sensitive == case_sensitive
-            }) {
+            if let Some(fav) = c
+                .favorite_filters
+                .iter_mut()
+                .find(|f| f.search_text == search_text && f.case_sensitive == case_sensitive)
+            {
                 fav.name.clone_from(&new_name);
             }
         }) {
@@ -103,6 +112,7 @@ impl FilterBar {
             Self::render_edit_button(ui, &mut events);
             Self::render_globally_visible_toggle(ui, filter, log_view_state);
             Self::render_histogram_toggle(ui, filter, log_view_state);
+            Self::render_scroll_lock_toggle(ui, filter);
             Self::render_color_picker(ui, filter);
             Self::render_favorite_toggle(ui, filter, global_config, &mut events);
             self.render_favorites_dropdown(ui, filter, global_config, &mut events);
@@ -423,6 +433,11 @@ impl FilterBar {
         {
             session_state.modified = true;
         }
+    }
+
+    fn render_scroll_lock_toggle(ui: &mut Ui, filter: &mut FilterState) {
+        ui.toggle_value(&mut filter.scroll_locked, "🔒")
+            .on_hover_text("Lock scroll — don't follow selection from other tabs");
     }
 
     fn render_validation_status(ui: &mut Ui, filter: &FilterState) {

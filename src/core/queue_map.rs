@@ -68,6 +68,11 @@ impl<K: std::hash::Hash + Eq + Copy, V> QueueMap<K, V> {
         is_new
     }
 
+    /// Returns whether the queue has no pending values.
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
     /// Remove and return the next item in FIFO order.
     ///
     /// Returns `None` if the queue is empty.
@@ -116,5 +121,15 @@ mod tests {
         // Only the last value should be present
         assert_eq!(qm.pop_front(), Some((0, "v3")));
         assert_eq!(qm.pop_front(), None);
+    }
+
+    #[test]
+    fn test_is_empty() {
+        let mut qm = QueueMap::new();
+        assert!(qm.is_empty());
+        qm.insert(0, "request");
+        assert!(!qm.is_empty());
+        qm.pop_front();
+        assert!(qm.is_empty());
     }
 }

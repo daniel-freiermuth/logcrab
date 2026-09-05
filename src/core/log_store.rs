@@ -47,83 +47,129 @@ use dashmap::DashMap;
 /// Source IDs are stable across the lifetime of a source, even when other sources are removed.
 static SOURCE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Snapshot of all scoring data for a single source.
+///
+/// Stored behind a single `ArcSwap` in [`ScoreStore`] so that writers swap
+/// all four vectors in one atomic pointer store and readers always see a
+/// consistent combination of score + flags.
+#[derive(Clone, Default)]
+struct ScoreSnapshot {
+    /// Anomaly scores indexed by line position (same length as `lines`).
+    /// Default score is 0.0; scores range from 0 to 100.
+    scores: Vec<f64>,
+    /// Whether each line's score was assigned while the target token was UNK.
+    /// Parallel to `scores`; `false` when not available.
+    unk_flags: Vec<bool>,
+    /// Whether each line's target was a rare template (seen < `min_count` times).
+    /// Subset of `unk_flags`; `false` when not available or when target is truly unknown.
+    rare_flags: Vec<bool>,
+    /// Whether each line was actually present in the sidecar's scored set.
+    /// `false` means the line was filtered/excluded by the backend (not in corpus).
+    scored_flags: Vec<bool>,
+}
+
 /// Lock-free storage for anomaly scores.
 ///
 /// Uses `ArcSwap` for atomic pointer swaps — readers never block, and writers
-/// simply build a new `Vec<f64>` and swap it in atomically. This avoids the
-/// need for a write lock on `lines` when updating scores.
+/// simply build a new [`ScoreSnapshot`] and swap it in atomically. This avoids
+/// the need for a write lock on `lines` when updating scores and guarantees
+/// that readers always see a consistent set of score + flag values.
 pub struct ScoreStore {
-    /// Anomaly scores indexed by line position (same length as `lines`).
-    /// Default score is 0.0; scores range from 0 to 100.
-    scores: ArcSwap<Vec<f64>>,
-    /// Whether each line's score was assigned while the target token was UNK.
-    /// Parallel to `scores`; `false` when not available.
-    unk_flags: ArcSwap<Vec<bool>>,
-    /// Whether each line's target was a rare template (seen < min_count times).
-    /// Subset of `unk_flags`; `false` when not available or when target is truly unknown.
-    rare_flags: ArcSwap<Vec<bool>>,
-    /// Whether each line was actually present in the sidecar's scored set.
-    /// `false` means the line was filtered/excluded by the backend (not in corpus).
-    scored_flags: ArcSwap<Vec<bool>>,
+    data: ArcSwap<ScoreSnapshot>,
 }
 
 impl ScoreStore {
     /// Create a new empty score store.
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            scores: ArcSwap::new(Arc::new(Vec::new())),
-            unk_flags: ArcSwap::new(Arc::new(Vec::new())),
-            rare_flags: ArcSwap::new(Arc::new(Vec::new())),
-            scored_flags: ArcSwap::new(Arc::new(Vec::new())),
+            data: ArcSwap::new(Arc::new(ScoreSnapshot::default())),
         }
     }
 
     /// Set all scores atomically. The provided slice is copied into a new `Arc`.
     pub fn set_all(&self, scores: &[f64]) {
-        self.scores.store(Arc::new(scores.to_vec()));
+        self.data.store(Arc::new(ScoreSnapshot {
+            scores: scores.to_vec(),
+            ..ScoreSnapshot::default()
+        }));
     }
 
     /// Set scores, UNK flags, rare flags, and scored flags atomically.
-    pub fn set_all_with_unk(&self, scores: &[f64], unk_flags: &[bool], rare_flags: &[bool], scored_flags: &[bool]) {
-        self.scores.store(Arc::new(scores.to_vec()));
-        self.unk_flags.store(Arc::new(unk_flags.to_vec()));
-        self.rare_flags.store(Arc::new(rare_flags.to_vec()));
-        self.scored_flags.store(Arc::new(scored_flags.to_vec()));
+    pub fn set_all_with_unk(
+        &self,
+        scores: &[f64],
+        unk_flags: &[bool],
+        rare_flags: &[bool],
+        scored_flags: &[bool],
+    ) {
+        self.data.store(Arc::new(ScoreSnapshot {
+            scores: scores.to_vec(),
+            unk_flags: unk_flags.to_vec(),
+            rare_flags: rare_flags.to_vec(),
+            scored_flags: scored_flags.to_vec(),
+        }));
     }
 
     /// Get the score for a specific line index. Returns 0.0 if out of bounds.
     pub fn get(&self, index: usize) -> f64 {
-        let guard = self.scores.load();
-        guard.get(index).copied().unwrap_or(0.0)
+        let guard = self.data.load();
+        guard.scores.get(index).copied().unwrap_or(0.0)
     }
 
     /// Get the UNK flag for a specific line index. Returns `false` if out of bounds.
     pub fn get_unk(&self, index: usize) -> bool {
-        let guard = self.unk_flags.load();
-        guard.get(index).copied().unwrap_or(false)
+        let guard = self.data.load();
+        guard.unk_flags.get(index).copied().unwrap_or(false)
     }
 
     /// Get the rare flag for a specific line index. Returns `false` if out of bounds.
     pub fn get_rare(&self, index: usize) -> bool {
-        let guard = self.rare_flags.load();
-        guard.get(index).copied().unwrap_or(false)
+        let guard = self.data.load();
+        guard.rare_flags.get(index).copied().unwrap_or(false)
     }
 
     /// Get the scored flag for a specific line index. Returns `false` if out of bounds.
     pub fn get_scored(&self, index: usize) -> bool {
-        let guard = self.scored_flags.load();
-        guard.get(index).copied().unwrap_or(false)
+        let guard = self.data.load();
+        guard.scored_flags.get(index).copied().unwrap_or(false)
     }
 
-    /// Resize the internal vec to accommodate new lines (fills with 0.0).
+    /// Get all sidecar fields for a specific line index from a single snapshot load.
+    /// Returns `(score, unk, rare, scored)` with out-of-bounds defaults.
+    pub fn get_all(&self, index: usize) -> (f64, bool, bool, bool) {
+        let guard = self.data.load();
+        (
+            guard.scores.get(index).copied().unwrap_or(0.0),
+            guard.unk_flags.get(index).copied().unwrap_or(false),
+            guard.rare_flags.get(index).copied().unwrap_or(false),
+            guard.scored_flags.get(index).copied().unwrap_or(false),
+        )
+    }
+
+    /// Resize the internal vec to accommodate new lines (fills with defaults).
     /// Called when lines are appended to keep scores in sync.
+    ///
+    /// Uses `rcu` (read-copy-update) to retry if a concurrent setter swaps in a
+    /// newer snapshot between our load and store, avoiding lost updates.
     pub fn resize(&self, new_len: usize) {
-        let current = self.scores.load();
-        if current.len() < new_len {
-            let mut new_scores: Vec<f64> = (**current).clone();
-            new_scores.resize(new_len, 0.0);
-            self.scores.store(Arc::new(new_scores));
+        // Fast path: skip if already large enough.
+        if self.data.load().scores.len() >= new_len {
+            return;
         }
+        self.data.rcu(|current| {
+            if current.scores.len() >= new_len {
+                // Another resize (or setter with enough data) already handled it.
+                Arc::clone(current)
+            } else {
+                let mut snapshot = (**current).clone();
+                snapshot.scores.resize(new_len, 0.0);
+                snapshot.unk_flags.resize(new_len, false);
+                snapshot.rare_flags.resize(new_len, false);
+                snapshot.scored_flags.resize(new_len, false);
+                Arc::new(snapshot)
+            }
+        });
     }
 }
 
@@ -136,22 +182,23 @@ impl Default for ScoreStore {
 impl Clone for ScoreStore {
     fn clone(&self) -> Self {
         Self {
-            scores: ArcSwap::new(Arc::clone(&self.scores.load())),
-            unk_flags: ArcSwap::new(Arc::clone(&self.unk_flags.load())),
-            rare_flags: ArcSwap::new(Arc::clone(&self.rare_flags.load())),
-            scored_flags: ArcSwap::new(Arc::clone(&self.scored_flags.load())),
+            data: ArcSwap::new(Arc::clone(&self.data.load())),
         }
     }
 }
 
 impl std::fmt::Debug for ScoreStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let guard = self.scores.load();
-        write!(f, "ScoreStore({} scores)", guard.len())
+        let guard = self.data.load();
+        write!(f, "ScoreStore({} scores)", guard.scores.len())
     }
 }
 
-/// A single log source with its lines, wrapped in `RwLock` for thread-safe access
+/// A single log source with its lines, wrapped in `RwLock` for thread-safe access.
+///
+/// # Panics
+///
+/// Methods accessing internal locks panic if a prior holder poisoned a lock.
 pub struct SourceData<FT>
 where
     FT: InputFileType,
@@ -198,6 +245,14 @@ impl<FT: InputFileType> std::fmt::Debug for SourceData<FT> {
     }
 }
 
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "the shared lock-poisoning precondition is documented on SourceData"
+)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "read guards intentionally span related reads to preserve a consistent source snapshot"
+)]
 impl<FT: InputFileType> SourceData<FT>
 where
     FT::LineType: Clone,
@@ -315,7 +370,11 @@ where
                 // Drop `file` here to release the OS lock.
                 (None, None)
             }
-            Err(SessionError::StateVersionTooNew { slug, found, supported }) => {
+            Err(SessionError::StateVersionTooNew {
+                slug,
+                found,
+                supported,
+            }) => {
                 let msg = format!(
                     ".crab file {}: {slug} state was written by a newer LogCrab \
                      (state v{found}, app supports up to v{supported}); \
@@ -527,13 +586,17 @@ where
     ///
     /// The `FileState` impl writes the new offset into itself on confirm;
     /// this method bumps the source version so dependent views invalidate.
-    /// Returns `true` when an offset was applied.
-    pub fn render_file_state(&self, ui: &egui::Ui) -> bool {
-        let changed = self.file_state.egui_render_file_state(ui);
+    /// Returns `(time_changed, optional jump target)`.
+    pub fn render_file_state(&self, ui: &egui::Ui) -> (bool, Option<StoreID>) {
+        let changed = self.file_state.egui_render_file_state(ui, &self.file_path);
         if changed {
             self.rebuild_time_index();
         }
-        changed
+        let jump = self
+            .file_state
+            .take_pending_jump_line()
+            .map(|line_idx| StoreID::make(self.source_id, line_idx));
+        (changed, jump)
     }
 
     // ========================================================================
@@ -680,25 +743,53 @@ where
     /// by `display_message(config, file_state)` — which includes any active overlays such
     /// as SOME/IP SD decoded entries — and the raw string.  All config and file-state locks
     /// are acquired once for the whole scan.
-    pub fn filter_sorted_by_search<F>(&self, predicate: &F) -> Vec<usize>
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal source lock is poisoned.
+    pub fn filter_sorted_by_search<F, C>(
+        &self,
+        predicate: &F,
+        should_cancel: &C,
+    ) -> Option<Vec<usize>>
     where
         F: Fn(&str, &str) -> bool + Sync,
+        C: Fn() -> bool + Sync,
     {
         profiling::scope!("SourceData::filter_sorted_by_search");
         let lines = self.lines.read().expect("lines lock poisoned");
         let config = self.config.read().expect("config lock poisoned");
         let file_state = &*self.file_state;
-        self.by_timestamp
+        let chunks: Option<Vec<Vec<usize>>> = self
+            .by_timestamp
             .read()
             .expect("by_timestamp lock poisoned")
-            .par_iter()
-            .filter_map(|&idx| {
-                let line = &lines[idx];
-                let display_msg = line.display_message(&*config, file_state);
-                let raw = line.raw();
-                predicate(&display_msg, &raw).then_some(idx)
+            .par_chunks(256)
+            .map(|line_indices| {
+                let mut matches = Vec::new();
+                for &idx in line_indices {
+                    if should_cancel() {
+                        return None;
+                    }
+                    let line = &lines[idx];
+                    let display_msg = line.display_message(&*config, file_state);
+                    let raw = line.raw();
+                    if predicate(&display_msg, &raw) {
+                        matches.push(idx);
+                    }
+                }
+                Some(matches)
             })
-            .collect()
+            .collect();
+
+        chunks.map(|chunks| {
+            let match_count = chunks.iter().map(Vec::len).sum();
+            let mut matches = Vec::with_capacity(match_count);
+            for mut chunk in chunks {
+                matches.append(&mut chunk);
+            }
+            matches
+        })
     }
 
     /// Render format-specific context menu items for the line at `line_index`.
@@ -751,7 +842,7 @@ pub struct LogLine {
     /// Whether the sidecar score was assigned while the target token was UNK.
     /// Only meaningful when `sidecar_anomaly_score > 0.0`.
     pub sidecar_score_is_unk: bool,
-    /// Whether the sidecar score's target was a rare template (seen < min_count times).
+    /// Whether the sidecar score's target was a rare template (seen < `min_count` times).
     /// Only meaningful when `sidecar_score_is_unk` is true.
     pub sidecar_score_is_rare: bool,
     /// Whether this line appeared in the sidecar's scored set.
@@ -763,15 +854,20 @@ impl LogLine {
     /// Compute the normalised template key for anomaly detection.
     /// This is computed on-demand rather than stored to avoid expensive
     /// regex normalization when not needed (e.g., histogram rendering).
+    #[must_use]
     pub fn template_key(&self) -> String {
         crate::parser::normalize_message(&self.message)
     }
 }
 
-/// Central storage for log lines from one or more sources
+/// Central storage for log lines from one or more sources.
 ///
-/// Thread-safe: can be shared across threads with Arc<LogStore>
+/// Thread-safe: can be shared across threads with `Arc<LogStore>`.
 /// Uses `IndexMap` for O(1) source lookup by ID while maintaining insertion order.
+///
+/// # Panics
+///
+/// Methods accessing internal locks panic if a prior holder poisoned a lock.
 pub struct LogStore {
     /// Sources indexed by their stable `source_id` for O(1) lookup.
     /// `IndexMap` maintains insertion order for consistent UI display.
@@ -783,7 +879,7 @@ pub struct LogStore {
     /// Stored at `LogStore` level (not `SourceData`) because scores are analysis metadata.
     scores: DashMap<u64, ScoreStore>,
     /// ML sidecar anomaly scores keyed by `source_id`.
-    /// Parallel to `scores` but populated by the LogBERT sidecar service.
+    /// Parallel to `scores` but populated by the `LogBERT` sidecar service.
     sidecar_scores: DashMap<u64, ScoreStore>,
     /// Sidecar scoring configuration, set once during session creation.
     /// Read by background loading threads to decide if sidecar scoring should run.
@@ -796,15 +892,18 @@ pub struct LogStore {
 impl std::fmt::Debug for LogStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LogStore")
-            .field(
-                "sources_count",
-                &self.sources.read().map(|s| s.len()).unwrap_or(0),
-            )
+            .field("sources_count", &self.sources.read().map_or(0, |s| s.len()))
             .field("sources_version", &self.sources_version)
             .field("scores_count", &self.scores.len())
             .field("sidecar_scores_count", &self.sidecar_scores.len())
-            .field("sidecar_enabled", &self.sidecar_config.read().map(|c| c.is_some()).unwrap_or(false))
-            .field("explain_sessions", &self.explain_sessions.lock().map(|g| g.len()).unwrap_or(0))
+            .field(
+                "sidecar_enabled",
+                &self.sidecar_config.read().is_ok_and(|c| c.is_some()),
+            )
+            .field(
+                "explain_sessions",
+                &self.explain_sessions.lock().map_or(0, |g| g.len()),
+            )
             .finish()
     }
 }
@@ -852,18 +951,24 @@ pub struct StoreID {
 
 impl StoreID {
     /// Return the stable source identifier for this line.
+    #[must_use]
     pub const fn source_id(&self) -> u64 {
         self.source_id
     }
 
     /// Return the 0-based line index within this source.
+    #[must_use]
     pub const fn line_index_within_source(&self) -> usize {
         self.line_index
     }
 
     /// Construct a `StoreID` directly from a source identifier and line index.
+    #[must_use]
     pub const fn make(source_id: u64, line_index: usize) -> Self {
-        Self { source_id, line_index }
+        Self {
+            source_id,
+            line_index,
+        }
     }
 
     /// Compare two `StoreIDs` by their line timestamps.
@@ -891,8 +996,17 @@ impl StoreID {
     }
 }
 
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "the shared lock-poisoning precondition is documented on LogStore"
+)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "read guards intentionally span related store operations to preserve consistent views"
+)]
 impl LogStore {
     /// Create a new empty `LogStore`
+    #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sources: RwLock::new(IndexMap::new()),
@@ -1035,6 +1149,7 @@ impl LogStore {
         drop(sources);
         // Also remove scores and explain session for this source
         self.scores.remove(&source_id);
+        self.sidecar_scores.remove(&source_id);
         self.explain_sessions
             .lock()
             .expect("explain_sessions lock poisoned")
@@ -1053,10 +1168,7 @@ impl LogStore {
     /// This is lock-free for readers — scores are swapped atomically.
     pub fn set_scores(&self, source_id: u64, scores: &[f64]) {
         profiling::scope!("LogStore::set_scores");
-        self.scores
-            .entry(source_id)
-            .or_default()
-            .set_all(scores);
+        self.scores.entry(source_id).or_default().set_all(scores);
         // Bump version so UI knows to refresh
         self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
     }
@@ -1079,7 +1191,14 @@ impl LogStore {
     }
 
     /// Set ML sidecar scores, UNK flags, rare flags, and scored flags for a source.
-    pub fn set_sidecar_scores_with_unk(&self, source_id: u64, scores: &[f64], unk_flags: &[bool], rare_flags: &[bool], scored_flags: &[bool]) {
+    pub fn set_sidecar_scores_with_unk(
+        &self,
+        source_id: u64,
+        scores: &[f64],
+        unk_flags: &[bool],
+        rare_flags: &[bool],
+        scored_flags: &[bool],
+    ) {
         profiling::scope!("LogStore::set_sidecar_scores_with_unk");
         self.sidecar_scores
             .entry(source_id)
@@ -1090,7 +1209,11 @@ impl LogStore {
 
     /// Store the explain session for the given `source_id`.
     /// Replaces any previous session for that source (dropping it, which closes the connection).
-    pub fn set_explain_session(&self, source_id: u64, session: crate::anomaly::sidecar_client::ExplainSession) {
+    pub fn set_explain_session(
+        &self,
+        source_id: u64,
+        session: crate::anomaly::sidecar_client::ExplainSession,
+    ) {
         self.explain_sessions
             .lock()
             .expect("explain_sessions lock poisoned")
@@ -1109,23 +1232,32 @@ impl LogStore {
 
     /// Poll for a completed explanation on the session for `source_id` without blocking.
     /// Returns `None` if no result is available yet or there is no session for that source.
-    pub fn poll_explanation(&self, source_id: u64) -> Option<crate::anomaly::sidecar_client::ExplainResult> {
+    pub fn poll_explanation(
+        &self,
+        source_id: u64,
+    ) -> Option<crate::anomaly::sidecar_client::ExplainResult> {
         self.explain_sessions
             .lock()
             .expect("explain_sessions lock poisoned")
             .get(&source_id)
-            .and_then(|s| s.try_recv())
+            .and_then(super::super::anomaly::sidecar_client::ExplainSession::try_recv)
     }
 
     /// Poll the explain session with a richer status that distinguishes "still pending"
     /// from "the WebSocket thread has exited".
-    pub fn poll_explain_status(&self, source_id: u64) -> crate::anomaly::sidecar_client::ExplainPollStatus {
+    pub fn poll_explain_status(
+        &self,
+        source_id: u64,
+    ) -> crate::anomaly::sidecar_client::ExplainPollStatus {
         use crate::anomaly::sidecar_client::ExplainPollStatus;
         self.explain_sessions
             .lock()
             .expect("explain_sessions lock poisoned")
             .get(&source_id)
-            .map_or(ExplainPollStatus::Dead, |s| s.poll_status())
+            .map_or(
+                ExplainPollStatus::Dead,
+                super::super::anomaly::sidecar_client::ExplainSession::poll_status,
+            )
     }
 
     /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.
@@ -1156,6 +1288,19 @@ impl LogStore {
             .is_some_and(|store| store.get_scored(line_index))
     }
 
+    /// Get all sidecar fields for a line from a single snapshot load.
+    ///
+    /// Returns `(score, unk, rare, scored)` — a single `DashMap::get` and a
+    /// single `ArcSwap::load`, so all four values are guaranteed to come from
+    /// the same [`ScoreSnapshot`].
+    fn get_sidecar_all(&self, source_id: u64, line_index: usize) -> (f64, bool, bool, bool) {
+        self.sidecar_scores
+            .get(&source_id)
+            .map_or((0.0, false, false, false), |store| {
+                store.get_all(line_index)
+            })
+    }
+
     /// Check whether any sidecar scores are stored for the given source.
     pub fn has_sidecar_scores(&self, source_id: u64) -> bool {
         self.sidecar_scores.contains_key(&source_id)
@@ -1163,7 +1308,10 @@ impl LogStore {
 
     /// Set the sidecar scoring configuration for this store.
     pub fn set_sidecar_config(&self, config: crate::core::log_file::ScoringConfig) {
-        *self.sidecar_config.write().expect("sidecar_config lock poisoned") = Some(config);
+        *self
+            .sidecar_config
+            .write()
+            .expect("sidecar_config lock poisoned") = Some(config);
     }
 
     /// Retrieve a clone of the sidecar scoring configuration (if set).
@@ -1198,13 +1346,20 @@ impl LogStore {
 
     /// Drive all open calibration windows across every source (one per frame).
     ///
-    /// Returns `true` if any source applied a new offset (caller should set `modified = true`).
-    pub fn render_file_states(&self, ui: &egui::Ui) -> bool {
+    /// Returns `(time_changed, optional jump target)`.
+    pub fn render_file_states(&self, ui: &egui::Ui) -> (bool, Option<StoreID>) {
         profiling::scope!("LogStore::render_file_states");
         let sources = self.sources.read().expect("sources lock poisoned");
-        sources
-            .values()
-            .fold(false, |acc, s| s.render_file_state(ui) || acc)
+        let mut changed = false;
+        let mut jump = None;
+        for s in sources.values() {
+            let (c, j) = s.render_file_state(ui);
+            changed |= c;
+            if j.is_some() {
+                jump = j;
+            }
+        }
+        (changed, jump)
     }
 
     /// Render type-specific context menu items for the line at `id`.
@@ -1281,46 +1436,62 @@ impl LogStore {
     // Line Queries
     // ========================================================================
 
-    /// Get line indices matching a predicate, sorted by timestamp
+    /// Get line indices matching a predicate, sorted by timestamp.
     ///
     /// Uses the pre-sorted `by_timestamp` index within each source, then merges.
-    /// Returns `StoreIDs` for matching lines, sorted by timestamp.
-    pub fn get_matching_ids<F>(&self, predicate: F) -> Vec<StoreID>
+    /// Returns `None` when `should_cancel` requests early termination.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the source collection lock is poisoned.
+    pub fn get_matching_ids<F, C>(&self, predicate: F, should_cancel: &C) -> Option<Vec<StoreID>>
     where
         F: Fn(&str, &str) -> bool + Sync,
+        C: Fn() -> bool + Sync,
     {
         profiling::scope!("LogStore::get_matching_ids");
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
 
-        // Parallel filter each source, collect results
-        let per_source: Vec<Vec<StoreID>> = {
-            profiling::scope!("parallel_filter_sources");
-            sources
-                .par_values()
-                .map(|source| {
-                    let source_id = source.source_id();
-                    source
-                        .filter_sorted_by_search(&predicate)
-                        .into_iter()
-                        .map(|line_index| StoreID {
-                            source_id,
-                            line_index,
-                        })
-                        .collect()
-                })
-                .collect()
-        };
+        // Parallel filter each source, collecting only if none were cancelled.
+        let per_source: Option<Vec<Vec<StoreID>>> = sources
+            .par_values()
+            .map(|source| {
+                if should_cancel() {
+                    return None;
+                }
+                let source_id = source.source_id();
+                source
+                    .filter_sorted_by_search(&predicate, should_cancel)
+                    .map(|line_indices| {
+                        line_indices
+                            .into_iter()
+                            .map(|line_index| StoreID {
+                                source_id,
+                                line_index,
+                            })
+                            .collect()
+                    })
+            })
+            .collect();
 
         // Release sources lock before merge
         drop(sources);
 
-        // K-way merge of sorted sources by timestamp
-        self.merge_sorted_sources(per_source)
+        per_source.and_then(|per_source| self.merge_sorted_sources(per_source, should_cancel))
     }
 
-    /// K-way merge of pre-sorted `StoreID` vectors by timestamp
-    fn merge_sorted_sources(&self, sources: Vec<Vec<StoreID>>) -> Vec<StoreID> {
+    /// K-way merge of sorted sources by timestamp.
+    ///
+    /// Returns `None` when `should_cancel` requests early termination.
+    fn merge_sorted_sources<C>(
+        &self,
+        sources: Vec<Vec<StoreID>>,
+        should_cancel: &C,
+    ) -> Option<Vec<StoreID>>
+    where
+        C: Fn() -> bool + Sync,
+    {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
@@ -1336,28 +1507,39 @@ impl LogStore {
         let mut heap: BinaryHeap<Reverse<(chrono::DateTime<Local>, usize, StoreID)>> =
             BinaryHeap::new();
 
-        // Initialize heap with first element from each non-empty source
+        // Initialize heap with the first timestamped element from every source.
         for (src_idx, iter) in iters.iter_mut().enumerate() {
-            if let Some((id, adjusted_time)) =
-                iter.find_map(|id| self.adjusted_timestamp(&id).map(|time| (id, time)))
-            {
-                heap.push(Reverse((adjusted_time, src_idx, id)));
+            for id in iter {
+                if should_cancel() {
+                    return None;
+                }
+                if let Some(adjusted_time) = self.adjusted_timestamp(&id) {
+                    heap.push(Reverse((adjusted_time, src_idx, id)));
+                    break;
+                }
             }
         }
 
         // Merge
         while let Some(Reverse((_, src_idx, id))) = heap.pop() {
+            if should_cancel() {
+                return None;
+            }
             result.push(id);
 
-            // Push the next element from this source onto the heap
-            if let Some((next_id, adjusted_time)) =
-                iters[src_idx].find_map(|id| self.adjusted_timestamp(&id).map(|time| (id, time)))
-            {
-                heap.push(Reverse((adjusted_time, src_idx, next_id)));
+            // Push the next timestamped element from this source onto the heap.
+            for next_id in &mut iters[src_idx] {
+                if should_cancel() {
+                    return None;
+                }
+                if let Some(adjusted_time) = self.adjusted_timestamp(&next_id) {
+                    heap.push(Reverse((adjusted_time, src_idx, next_id)));
+                    break;
+                }
             }
         }
 
-        result
+        Some(result)
     }
 
     /// Get the fully-calibrated timestamp for the line identified by `id`.
@@ -1419,12 +1601,15 @@ impl LogStore {
         profiling::scope!("LogStore::sources::read");
         let sources = self.sources.read().expect("sources lock poisoned");
         let mut line = sources.get(&id.source_id)?.get_log_line(id.line_index)?;
-        // Populate anomaly score from store-level score storage
         line.anomaly_score = self.get_score(id.source_id, id.line_index);
-        line.sidecar_anomaly_score = self.get_sidecar_score(id.source_id, id.line_index);
-        line.sidecar_score_is_unk = self.get_sidecar_unk(id.source_id, id.line_index);
-        line.sidecar_score_is_rare = self.get_sidecar_rare(id.source_id, id.line_index);
-        line.sidecar_scored = self.get_sidecar_scored(id.source_id, id.line_index);
+        // Load all sidecar fields from a single snapshot so a concurrent
+        // set_all_with_unk cannot produce a torn combination.
+        let (sidecar_score, sidecar_unk, sidecar_rare, sidecar_scored) =
+            self.get_sidecar_all(id.source_id, id.line_index);
+        line.sidecar_anomaly_score = sidecar_score;
+        line.sidecar_score_is_unk = sidecar_unk;
+        line.sidecar_score_is_rare = sidecar_rare;
+        line.sidecar_scored = sidecar_scored;
         Some(line)
     }
 

@@ -72,6 +72,7 @@ impl HistogramZoomState {
     }
 
     /// Check if currently zoomed in
+    #[must_use]
     pub const fn is_zoomed(&self) -> bool {
         self.visible_range.is_some()
     }
@@ -118,6 +119,7 @@ pub struct HistogramCache {
 
 impl HistogramCache {
     /// Create a new histogram cache with the given filter ID
+    #[must_use]
     pub fn new(filter_id: usize) -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
@@ -209,7 +211,7 @@ impl Histogram {
 
         // Use the search parameters that the current filtered_indices were computed for,
         // not the current search_text (which may have changed while filter is pending)
-        let (indices_text, indices_exclude, indices_case, indices_version) =
+        let (indices_text, indices_exclude, indices_case, indices_dedup, indices_version) =
             filter_state.search.indices_computed_for();
         let search_str = indices_text.to_string();
         let exclude_str = indices_exclude.to_string();
@@ -227,6 +229,7 @@ impl Histogram {
             case_sensitive: indices_case,
             zoom_range_ms,
             color_by_ml_score,
+            hide_duplicates: indices_dedup,
         };
 
         // Poll for any completed results
@@ -438,7 +441,7 @@ impl Histogram {
             };
             painter.add(egui::Shape::line(
                 points,
-                egui::Stroke::new(2.0, spinner_color),
+                egui::Stroke::new(2.0_f32, spinner_color),
             ));
             ui.ctx().request_repaint();
         }
@@ -567,7 +570,7 @@ impl Histogram {
                     selection_rect,
                     0.0,
                     fill_color,
-                    egui::Stroke::new(1.0, stroke_color),
+                    egui::Stroke::new(1.0_f32, stroke_color),
                     egui::StrokeKind::Inside,
                 );
             }

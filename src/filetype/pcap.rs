@@ -26,6 +26,7 @@ pub struct PcapLogLine {
 }
 
 impl PcapLogLine {
+    #[must_use]
     pub const fn new(packet_info: PacketInfo, line_number: usize) -> Self {
         Self {
             packet_info,
@@ -41,7 +42,11 @@ impl PcapLogLine {
 /// Well-known SOME/IP Service Discovery port
 const SOMEIP_SD_PORT: u16 = 30490;
 
-/// File state for PCAP files, including time offset and SOME/IP SD decoding state
+/// File state for PCAP files, including time offset and SOME/IP SD decoding state.
+///
+/// # Panics
+///
+/// Methods accessing SOME/IP state panic if a prior holder poisoned its mutex.
 #[derive(Debug)]
 pub struct PcapFileState {
     /// Shared time-offset and calibration state
@@ -52,6 +57,10 @@ pub struct PcapFileState {
     someip_known_endpoints: std::sync::Mutex<HashSet<String>>,
 }
 
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "the shared mutex-poisoning precondition is documented on PcapFileState"
+)]
 impl PcapFileState {
     /// Read the current time offset in milliseconds.
     #[inline]
@@ -181,14 +190,16 @@ impl<'de> serde::Deserialize<'de> for PcapFileState {
                 calibration: std::sync::Mutex::new(None),
             },
             someip_sd_decodings: std::sync::Mutex::new(h.someip_sd_decodings.into_iter().collect()),
-            someip_known_endpoints: std::sync::Mutex::new(h.someip_known_endpoints.into_iter().collect()),
+            someip_known_endpoints: std::sync::Mutex::new(
+                h.someip_known_endpoints.into_iter().collect(),
+            ),
         })
     }
 }
 
 impl crate::filetype::LogFileState for PcapFileState {
-    fn egui_render_file_state(&self, ui: &egui::Ui) -> bool {
-        self.inner.egui_render_file_state(ui)
+    fn egui_render_file_state(&self, ui: &egui::Ui, source_path: &std::path::Path) -> bool {
+        self.inner.egui_render_file_state(ui, source_path)
     }
 }
 
@@ -312,7 +323,7 @@ impl LineType for PcapLogLine {
                 .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.dst_addr, p));
             if is_known_src || is_known_dst {
                 if let Some(someip_str) = decode_someip(payload) {
-                    return format!("{} [SOME/IP {}]", base_msg, someip_str);
+                    return format!("{base_msg} [SOME/IP {someip_str}]");
                 }
             }
         }
@@ -328,7 +339,12 @@ impl LineType for PcapLogLine {
         self.line_number
     }
 
-    fn egui_render_context_menu(&self, ui: &mut Ui, _config: &PcapConfig, file_state: &PcapFileState) {
+    fn egui_render_context_menu(
+        &self,
+        ui: &mut Ui,
+        _config: &PcapConfig,
+        file_state: &PcapFileState,
+    ) {
         if ui.button("⏱ Calibrate Time Here").clicked() {
             let raw_time = self.packet_info.timestamp;
             let display_time =
@@ -391,7 +407,7 @@ impl InputFileType for PcapFileType {
         _config: PcapConfig,
         file_state: std::sync::Arc<PcapFileState>,
     ) -> anyhow::Result<Self> {
-        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(path).map_or(0, |m| m.len());
         let lines = parse_pcap_to_lines(path)?;
 
         // Pre-scan for SOME/IP-SD endpoints on the well-known SD port
@@ -468,11 +484,13 @@ pub struct TcpDetails {
 
 impl PacketInfo {
     /// Check if the destination address is multicast
+    #[must_use]
     pub fn is_multicast(&self) -> bool {
         is_multicast_address(&self.dst_addr)
     }
 
     /// Get the multicast key for tracking SOME/IP SD decodings
+    #[must_use]
     pub fn multicast_key(&self) -> Option<String> {
         if self.is_multicast() && self.protocol == "UDP" {
             self.dst_port
@@ -483,6 +501,7 @@ impl PacketInfo {
     }
 
     /// Format as a display message
+    #[must_use]
     pub fn format_message(&self) -> String {
         let src = self.src_port.map_or_else(
             || self.src_addr.clone(),
@@ -542,6 +561,7 @@ impl PacketInfo {
     }
 
     /// Format as raw line (more detailed)
+    #[must_use]
     pub fn format_raw(&self) -> String {
         let src = self.src_port.map_or_else(
             || self.src_addr.clone(),
@@ -723,7 +743,14 @@ pub struct TcpFlowTracker {
     flows: HashMap<FlowKey, TcpFlowState>,
 }
 
+impl Default for TcpFlowTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TcpFlowTracker {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             flows: HashMap::new(),
@@ -812,7 +839,8 @@ pub struct SomeIpEndpoint {
 }
 
 impl SomeIpEndpoint {
-    /// Key format used for HashSet lookups: "TCP:10.0.0.1:30000"
+    /// Key format used for `HashSet` lookups: "TCP:10.0.0.1:30000"
+    #[must_use]
     pub fn key(&self) -> String {
         format!("{}:{}:{}", self.protocol, self.addr, self.port)
     }
@@ -891,7 +919,11 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
                     port: e.port,
                     protocol: proto_str(e.transport_protocol),
                 }),
-                _ => None,
+                SdOption::Configuration(_)
+                | SdOption::LoadBalancing(_)
+                | SdOption::Ipv4SdEndpoint(_)
+                | SdOption::Ipv6SdEndpoint(_)
+                | SdOption::UnknownDiscardable(_) => None,
             })
             .collect()
     }
@@ -1292,6 +1324,10 @@ fn format_ipv6(bytes: &[u8]) -> String {
     }
 }
 
+#[allow(
+    clippy::type_complexity,
+    reason = "the tuple is private and immediately destructured by its sole caller"
+)]
 fn parse_tcp_info(
     data: &[u8],
 ) -> (
@@ -1403,6 +1439,10 @@ fn detect_pcap_format(path: &Path) -> anyhow::Result<PcapFormat> {
 }
 
 /// Parse all packets from a pcap/pcapng file and return them as typed log lines.
+///
+/// # Errors
+///
+/// Returns an error when the capture cannot be opened, decoded, or parsed.
 pub fn parse_pcap_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PcapLogLine>> {
     let path = path.as_ref();
     let format = detect_pcap_format(path)?;

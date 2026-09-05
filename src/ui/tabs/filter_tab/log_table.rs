@@ -73,6 +73,7 @@ pub enum LogTableEvent {
 /// Convert anomaly score to color with continuous gradient
 /// In dark mode: light gray -> white -> yellow -> orange -> red
 /// In light mode: dark gray -> darker variants of same progression
+#[must_use]
 pub fn score_to_color(score: f64, dark_mode: bool) -> Color32 {
     // Normalize score to 0.0-1.0 range
     let normalized = (score / 100.0).clamp(0.0, 1.0);
@@ -139,6 +140,7 @@ pub fn score_to_color(score: f64, dark_mode: bool) -> Color32 {
 }
 
 /// Get the background color for a selected row
+#[must_use]
 pub const fn selected_row_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(60, 60, 80) // Dark blue-gray
@@ -148,6 +150,7 @@ pub const fn selected_row_color(dark_mode: bool) -> Color32 {
 }
 
 /// Get the background color for a bookmarked row
+#[must_use]
 pub const fn bookmarked_row_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(100, 80, 30) // Dark golden/brown
@@ -157,6 +160,7 @@ pub const fn bookmarked_row_color(dark_mode: bool) -> Color32 {
 }
 
 /// Get the background color for a row that is scrolled-to (closest to selected, but not exact match)
+#[must_use]
 pub const fn scrolled_to_row_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(50, 55, 65) // Subtle darker blue-gray
@@ -273,13 +277,11 @@ impl LogTable {
                     });
                     ui.close();
                 }
-                if line.sidecar_scored {
-                    if ui.button("🔍 Show Attention").clicked() {
-                        events.push(LogTableEvent::ExplainAttention {
-                            line_index: line_idx,
-                        });
-                        ui.close();
-                    }
+                if line.sidecar_scored && ui.button("🔍 Show Attention").clicked() {
+                    events.push(LogTableEvent::ExplainAttention {
+                        line_index: line_idx,
+                    });
+                    ui.close();
                 }
             }
         });
@@ -420,6 +422,7 @@ impl LogTable {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_table_with_header(
         table: TableBuilder,
         ctx: &egui::Context,
@@ -503,6 +506,7 @@ impl LogTable {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_table_body(
         body: egui_extras::TableBody,
         ctx: &egui::Context,
@@ -573,6 +577,7 @@ impl LogTable {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::fn_params_excessive_bools)]
     fn render_table_row(
         row: &mut egui_extras::TableRow,
         store: &LogStore,

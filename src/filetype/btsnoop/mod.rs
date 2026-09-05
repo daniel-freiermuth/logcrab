@@ -30,6 +30,7 @@ pub struct BtsnoopLogLine {
 }
 
 impl BtsnoopLogLine {
+    #[must_use]
     pub const fn new(hci_info: HciPacketInfo, line_number: usize) -> Self {
         Self {
             hci_info,
@@ -135,7 +136,7 @@ impl InputFileType for BtsnoopFileType {
         _config: (),
         _file_state: std::sync::Arc<BtsnoopFileState>,
     ) -> anyhow::Result<Self> {
-        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(path).map_or(0, |m| m.len());
         let lines = parse_btsnoop_to_lines(path)?;
         Ok(Self {
             lines,

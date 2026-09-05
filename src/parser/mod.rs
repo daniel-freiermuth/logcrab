@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 use tracing::warn;
 
 /// Format time difference with 3 significant digits and appropriate unit
+#[must_use]
 pub fn format_time_diff(diff: chrono::Duration) -> String {
     let sign = if diff < chrono::Duration::zero() {
         "-"
@@ -97,6 +98,7 @@ fn try_replace(text: &str, pattern: &Regex, replacement: &str) -> String {
 
 /// Normalize a log message to create a template key
 /// This helps identify structurally similar messages
+#[must_use]
 pub fn normalize_message(message: &str) -> String {
     let mut normalized = message.to_lowercase();
 

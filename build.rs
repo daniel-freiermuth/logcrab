@@ -31,8 +31,7 @@ fn main() {
     let is_dirty = Command::new("git")
         .args(["status", "--porcelain"])
         .output()
-        .ok()
-        .is_some_and(|output| !output.stdout.is_empty());
+        .is_ok_and(|output| !output.stdout.is_empty());
 
     let git_hash = if is_dirty {
         format!("{git_hash}-dirty")

@@ -272,6 +272,7 @@ pub enum ShortcutAction {
 
 impl ShortcutAction {
     /// Get all shortcut actions
+    #[must_use]
     pub const fn all() -> &'static [Self] {
         &[
             Self::MoveUp,
@@ -296,6 +297,7 @@ impl ShortcutAction {
         ]
     }
 
+    #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::MoveUp => "Move Selection Up",
@@ -320,6 +322,7 @@ impl ShortcutAction {
         }
     }
 
+    #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
             Self::MoveUp => "Move to the previous log line in the active view",
@@ -344,6 +347,7 @@ impl ShortcutAction {
         }
     }
 
+    #[must_use]
     pub const fn default_binding(self) -> &'static str {
         match self {
             Self::MoveUp => "k",
@@ -435,6 +439,9 @@ impl KeyboardBindings {
     }
 
     /// Set the shortcut for a specific action
+    /// # Errors
+    ///
+    /// Returns an error when the requested operation cannot be completed.
     pub fn set_shortcut(
         &mut self,
         action: ShortcutAction,
