@@ -40,6 +40,8 @@ pub struct ProgressToastState {
     pub dismissed_at: Option<Instant>,
     /// Optional error message (will show error style)
     pub error: Option<String>,
+    /// Whether this operation still renders as an overlay toast.
+    pub visible: bool,
 }
 
 impl Default for ProgressToastState {
@@ -50,6 +52,7 @@ impl Default for ProgressToastState {
             message: String::new(),
             dismissed_at: None,
             error: None,
+            visible: true,
         }
     }
 }
@@ -120,6 +123,7 @@ impl ProgressToastHandle {
             progress: Some(0.0),
             dismissed_at: None,
             error: None,
+            visible: true,
         }));
         if let Ok(mut handles) = progress_handles.lock() {
             handles.push(Arc::clone(&state));
@@ -136,17 +140,31 @@ impl ProgressToastHandle {
     /// Can be called from any thread.
     #[must_use]
     pub fn spawn_sibling(&self, title: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::new(
+        let title = title.into();
+        let message = message.into();
+        let job = self
+            .job
+            .as_ref()
+            .map(|job| job.spawn_sibling(title.clone(), message.clone()));
+        let sibling = Self::new(
             self.ctx.clone(),
             Arc::clone(&self.progress_handles),
-            title.into(),
-            message.into(),
-        )
+            title,
+            message,
+        );
+        if let Some(job) = job {
+            sibling.track_job(job)
+        } else {
+            sibling
+        }
     }
 
     /// Associate this visual progress indicator with a cancellable footer job.
     #[must_use]
     pub fn track_job(mut self, job: JobHandle) -> Self {
+        if let Ok(mut state) = self.state.write() {
+            state.visible = false;
+        }
         self.job = Some(job);
         self
     }
@@ -176,11 +194,14 @@ impl ProgressToastHandle {
 
     pub fn set_title(&self, title: impl Into<String>) {
         let title = title.into();
-        if let Ok(mut state) = self.state.write() {
+        let (progress, message) = if let Ok(mut state) = self.state.write() {
             state.title.clone_from(&title);
-        }
+            (state.progress, state.message.clone())
+        } else {
+            return;
+        };
         if let Some(job) = &self.job {
-            job.update(title, None, String::new());
+            job.update(title, progress, message);
         }
         self.ctx.request_repaint();
     }
@@ -334,13 +355,15 @@ impl ToastManager {
             handles.retain(|state| state.read().is_ok_and(|s| !s.should_remove()));
             handles
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, state)| {
-                    state
-                        .read()
-                        .ok()
-                        .map(|s| (idx, s.clone(), Arc::clone(state)))
+                .filter_map(|state| {
+                    state.read().ok().and_then(|snapshot| {
+                        snapshot
+                            .visible
+                            .then(|| (snapshot.clone(), Arc::clone(state)))
+                    })
                 })
+                .enumerate()
+                .map(|(idx, (snapshot, state))| (idx, snapshot, state))
                 .collect()
         };
 
@@ -454,5 +477,37 @@ impl ToastManager {
             });
 
         inner.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProgressToastHandle;
+    use crate::ui::JobManager;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn tracked_toasts_are_hidden_and_siblings_create_jobs() {
+        let ctx = egui::Context::default();
+        let manager = JobManager::new(ctx.clone());
+        let handles = Arc::new(Mutex::new(Vec::new()));
+        let toast = ProgressToastHandle::new(
+            ctx,
+            handles,
+            "Loading example.log".to_string(),
+            "Starting…".to_string(),
+        )
+        .track_job(manager.start("Loading example.log", "Starting…"));
+        let sibling = toast.spawn_sibling("ML scoring", "Connecting…");
+
+        assert!(!toast.state.read().expect("read parent state").visible);
+        assert!(!sibling.state.read().expect("read sibling state").visible);
+        assert_eq!(
+            manager
+                .try_snapshots()
+                .expect("uncontended registry is readable")
+                .len(),
+            2
+        );
     }
 }

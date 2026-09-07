@@ -137,6 +137,32 @@ impl JobHandle {
         self.cancel_requested.load(Ordering::Relaxed)
     }
 
+    /// Register a sibling job that shares this job's cancellation request.
+    #[must_use]
+    pub fn spawn_sibling(&self, title: impl Into<String>, message: impl Into<String>) -> Self {
+        let id = {
+            let mut registry = self
+                .registry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let id = registry.next_id;
+            registry.next_id = registry.next_id.wrapping_add(1);
+            registry.jobs.push(JobState {
+                id,
+                title: title.into(),
+                message: message.into(),
+                progress: Some(0.0),
+                cancel_requested: Arc::clone(&self.cancel_requested),
+            });
+            id
+        };
+        Self {
+            id,
+            registry: Arc::clone(&self.registry),
+            cancel_requested: Arc::clone(&self.cancel_requested),
+            ctx: self.ctx.clone(),
+        }
+    }
     /// Update the footer representation of this job and schedule a repaint.
     pub fn update(
         &self,
@@ -194,5 +220,30 @@ mod tests {
             .try_snapshots()
             .expect("uncontended registry is readable")
             .is_empty());
+    }
+
+    #[test]
+    fn sibling_jobs_share_cancellation_and_finish_independently() {
+        let manager = JobManager::new(egui::Context::default());
+        let parent = manager.start("Loading example.log", "Starting…");
+        let sibling = parent.spawn_sibling("ML scoring", "Connecting…");
+        let job = manager
+            .try_snapshots()
+            .expect("uncontended registry is readable")
+            .into_iter()
+            .find(|job| job.title == "ML scoring")
+            .expect("sibling job is visible");
+
+        job.request_cancel();
+        sibling.finish();
+
+        assert!(parent.is_cancel_requested());
+        assert_eq!(
+            manager
+                .try_snapshots()
+                .expect("uncontended registry is readable")
+                .len(),
+            1
+        );
     }
 }
