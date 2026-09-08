@@ -419,7 +419,7 @@ impl FilterView {
                     let case_sensitive = self.state.search.case_sensitive;
 
                     // Save global config
-                    match GlobalConfig::update(|c| {
+                    GlobalConfig::update_and_apply(global_config, |c| {
                         let pos = c.favorite_filters.iter().position(|f| {
                             f.search_text == search_text && f.case_sensitive == case_sensitive
                         });
@@ -433,10 +433,7 @@ impl FilterView {
                             ));
                             tracing::info!("Added favorite: '{search_text}'");
                         }
-                    }) {
-                        Ok(updated) => *global_config = updated,
-                        Err(e) => tracing::error!("Failed to save config: {e}"),
-                    }
+                    });
                 }
                 FilterViewEvent::ConvertToHighlight => {
                     // Request conversion to highlight - LogView will handle it and close this tab
