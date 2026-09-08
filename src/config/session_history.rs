@@ -326,3 +326,265 @@ impl SessionHistory {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: build a `RecordedSession` with the given files and a fixed timestamp.
+    fn make_session(files: &[&str], last_used: DateTime<Local>) -> RecordedSession {
+        RecordedSession {
+            files: files.iter().map(PathBuf::from).collect(),
+            last_used,
+        }
+    }
+
+    /// Helper: build a default `SessionHistory` with no sessions.
+    fn empty_history() -> SessionHistory {
+        SessionHistory::default()
+    }
+
+    // ---------------------------------------------------------------
+    // same_files
+    // ---------------------------------------------------------------
+
+    /// `same_files` is order-independent: [a, b] matches [b, a].
+    #[test]
+    fn same_files_order_independent() {
+        let session = make_session(&["/tmp/a.log", "/tmp/b.log"], Local::now());
+        let other = vec![PathBuf::from("/tmp/b.log"), PathBuf::from("/tmp/a.log")];
+        assert!(
+            session.same_files(&other),
+            "same_files should match regardless of order"
+        );
+    }
+
+    /// `same_files` with two empty lists returns true.
+    #[test]
+    fn same_files_empty_lists() {
+        let session = RecordedSession {
+            files: vec![],
+            last_used: Local::now(),
+        };
+        assert!(
+            session.same_files(&[]),
+            "two empty file lists should be considered the same"
+        );
+    }
+
+    /// `same_files` returns false when lengths differ.
+    #[test]
+    fn same_files_different_lengths() {
+        let session = make_session(&["/tmp/a.log"], Local::now());
+        let other = vec![PathBuf::from("/tmp/a.log"), PathBuf::from("/tmp/b.log")];
+        assert!(
+            !session.same_files(&other),
+            "different-length file lists are never the same"
+        );
+    }
+
+    /// `same_files` returns false when files differ even with same length.
+    #[test]
+    fn same_files_different_files() {
+        let session = make_session(&["/tmp/a.log", "/tmp/b.log"], Local::now());
+        let other = vec![PathBuf::from("/tmp/a.log"), PathBuf::from("/tmp/c.log")];
+        assert!(
+            !session.same_files(&other),
+            "lists with different files should not match"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // record
+    // ---------------------------------------------------------------
+
+    /// Recording a new session adds it to the list.
+    #[test]
+    fn record_new_session_adds_entry() {
+        let mut history = empty_history();
+        history.record(vec![PathBuf::from("/tmp/a.log")]);
+
+        assert_eq!(history.sessions.len(), 1);
+        assert_eq!(history.sessions[0].files, vec![PathBuf::from("/tmp/a.log")]);
+    }
+
+    /// Recording an empty file list is a no-op.
+    #[test]
+    fn record_empty_files_is_noop() {
+        let mut history = empty_history();
+        history.record(vec![]);
+
+        assert!(
+            history.sessions.is_empty(),
+            "empty file list should not create a session entry"
+        );
+    }
+
+    /// Recording a duplicate session (same files) bumps timestamp instead of creating a duplicate.
+    #[test]
+    fn record_duplicate_bumps_timestamp() {
+        let mut history = empty_history();
+        let files = vec![PathBuf::from("/tmp/a.log"), PathBuf::from("/tmp/b.log")];
+
+        history.record(files.clone());
+        assert_eq!(history.sessions.len(), 1);
+        let original_time = history.sessions[0].last_used;
+
+        // Small sleep isn't reliable in tests, so we verify structurally:
+        // record again and check that it's still 1 entry, not 2
+        history.record(files);
+        assert_eq!(
+            history.sessions.len(),
+            1,
+            "duplicate session should not create a second entry"
+        );
+        assert!(
+            history.sessions[0].last_used >= original_time,
+            "timestamp should be bumped (or equal if too fast)"
+        );
+    }
+
+    /// Recording a duplicate with files in different order still deduplicates.
+    #[test]
+    fn record_duplicate_different_order_deduplicates() {
+        let mut history = empty_history();
+        history.record(vec![
+            PathBuf::from("/tmp/a.log"),
+            PathBuf::from("/tmp/b.log"),
+        ]);
+        history.record(vec![
+            PathBuf::from("/tmp/b.log"),
+            PathBuf::from("/tmp/a.log"),
+        ]);
+
+        assert_eq!(
+            history.sessions.len(),
+            1,
+            "same files in different order should deduplicate"
+        );
+    }
+
+    /// Sessions are sorted by `last_used` descending after record.
+    #[test]
+    fn record_sorts_by_most_recent_first() {
+        let mut history = empty_history();
+        history.record(vec![PathBuf::from("/tmp/first.log")]);
+        history.record(vec![PathBuf::from("/tmp/second.log")]);
+
+        // The second recorded session should be first (most recent)
+        assert_eq!(
+            history.sessions[0].files,
+            vec![PathBuf::from("/tmp/second.log")]
+        );
+        assert_eq!(
+            history.sessions[1].files,
+            vec![PathBuf::from("/tmp/first.log")]
+        );
+    }
+
+    /// Recording beyond `MAX_SESSIONS` evicts the oldest.
+    #[test]
+    fn record_beyond_max_sessions_evicts_oldest() {
+        let mut history = empty_history();
+
+        // Fill to MAX_SESSIONS
+        for i in 0..MAX_SESSIONS {
+            history.record(vec![PathBuf::from(format!("/tmp/file_{i}.log"))]);
+        }
+        assert_eq!(history.sessions.len(), MAX_SESSIONS);
+
+        // Record one more — should still be capped at MAX_SESSIONS
+        history.record(vec![PathBuf::from("/tmp/overflow.log")]);
+        assert_eq!(
+            history.sessions.len(),
+            MAX_SESSIONS,
+            "should not exceed MAX_SESSIONS"
+        );
+
+        // The newest should be first
+        assert_eq!(
+            history.sessions[0].files,
+            vec![PathBuf::from("/tmp/overflow.log")]
+        );
+
+        // The very first file recorded (oldest) should have been evicted
+        assert!(
+            !history
+                .sessions
+                .iter()
+                .flat_map(|s| &s.files)
+                .any(|f| f == &PathBuf::from("/tmp/file_0.log")),
+            "oldest session should be evicted"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // parse_contents
+    // ---------------------------------------------------------------
+
+    /// A valid v1 history with sessions round-trips through `parse_contents`.
+    #[test]
+    fn parse_contents_valid_v1() {
+        let json = r#"{
+            "schema_version": 1,
+            "sessions": [
+                { "files": ["/tmp/a.log"], "last_used": "2025-01-01T12:00:00+00:00" }
+            ]
+        }"#;
+        let history = SessionHistory::parse_contents(json);
+
+        assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
+        assert_eq!(history.sessions.len(), 1);
+        assert_eq!(history.sessions[0].files, vec![PathBuf::from("/tmp/a.log")]);
+        assert!(!history.read_only);
+    }
+
+    /// A v0 history (no `schema_version`) should migrate to current version.
+    #[test]
+    fn parse_contents_v0_migrates() {
+        let json = r#"{
+            "sessions": [
+                { "files": ["/tmp/b.log"], "last_used": "2025-06-15T08:30:00+00:00" }
+            ]
+        }"#;
+        let history = SessionHistory::parse_contents(json);
+
+        assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
+        assert_eq!(history.sessions.len(), 1);
+        assert!(!history.read_only);
+    }
+
+    /// A future version sets `read_only` and returns defaults.
+    #[test]
+    fn parse_contents_future_version_sets_read_only() {
+        let json = format!(
+            r#"{{ "schema_version": {} }}"#,
+            SESSION_HISTORY_VERSION + 99
+        );
+        let history = SessionHistory::parse_contents(&json);
+
+        assert!(history.read_only);
+        assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
+        assert!(history.sessions.is_empty());
+    }
+
+    /// Malformed JSON falls back to defaults without panicking.
+    #[test]
+    fn parse_contents_malformed_json_falls_back() {
+        let history = SessionHistory::parse_contents("not json {{{");
+
+        assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
+        assert!(!history.read_only);
+        assert!(history.sessions.is_empty());
+    }
+
+    /// Empty string falls back to defaults.
+    #[test]
+    fn parse_contents_empty_string_falls_back() {
+        let history = SessionHistory::parse_contents("");
+
+        assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
+        assert!(!history.read_only);
+        assert!(history.sessions.is_empty());
+    }
+}
