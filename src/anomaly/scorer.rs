@@ -57,3 +57,64 @@ impl Default for CompositeScorer {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Local;
+
+    fn make_line(message: &str) -> LogLine {
+        LogLine {
+            timestamp: Local::now(),
+            message: message.to_string(),
+            raw: message.to_string(),
+            line_number: 1,
+            anomaly_score: 0.0,
+            sidecar_anomaly_score: 0.0,
+            sidecar_score_is_unk: false,
+            sidecar_score_is_rare: false,
+            sidecar_scored: false,
+        }
+    }
+
+    /// A trivial scorer that always returns a fixed value.
+    struct ConstantScorer(f64);
+
+    impl AnomalyScorer for ConstantScorer {
+        fn score(&mut self, _line: &LogLine) -> f64 {
+            self.0
+        }
+        fn update(&mut self, _line: &LogLine) {}
+    }
+
+    #[test]
+    fn composite_no_scorers_returns_zero() {
+        let mut scorer = CompositeScorer::new();
+        let line = make_line("test");
+        assert!((scorer.score(&line) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn composite_zero_total_weight_returns_zero() {
+        let mut scorer = CompositeScorer::new().add_scorer(Box::new(ConstantScorer(0.5)), 0.0);
+        let line = make_line("test");
+        assert!((scorer.score(&line) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn composite_single_scorer_passes_through() {
+        let mut scorer = CompositeScorer::new().add_scorer(Box::new(ConstantScorer(0.8)), 1.0);
+        let line = make_line("test");
+        assert!((scorer.score(&line) - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn composite_weighted_average() {
+        let mut scorer = CompositeScorer::new()
+            .add_scorer(Box::new(ConstantScorer(1.0)), 3.0)
+            .add_scorer(Box::new(ConstantScorer(0.0)), 1.0);
+        let line = make_line("test");
+        // (1.0*3.0 + 0.0*1.0) / 4.0 = 0.75
+        assert!((scorer.score(&line) - 0.75).abs() < f64::EPSILON);
+    }
+}
