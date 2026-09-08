@@ -1586,3 +1586,587 @@ fn parse_pcapng_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     tracing::info!("Parsed {} pcapng packets", lines.len());
     Ok(lines)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Local;
+
+    fn ts() -> DateTime<Local> {
+        Local::now()
+    }
+
+    // ---- helpers to build raw Ethernet frames ----
+
+    /// Build an Ethernet frame: dst(6) + src(6) + ethertype(2) + payload
+    fn eth_frame(src_mac: [u8; 6], dst_mac: [u8; 6], ethertype: u16, payload: &[u8]) -> Vec<u8> {
+        let mut f = Vec::with_capacity(14 + payload.len());
+        f.extend_from_slice(&dst_mac);
+        f.extend_from_slice(&src_mac);
+        f.extend_from_slice(&ethertype.to_be_bytes());
+        f.extend_from_slice(payload);
+        f
+    }
+
+    /// Build an 802.1Q VLAN-tagged Ethernet frame.
+    fn vlan_eth_frame(
+        src_mac: [u8; 6],
+        dst_mac: [u8; 6],
+        vlan_id: u16,
+        inner_ethertype: u16,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut f = Vec::with_capacity(18 + payload.len());
+        f.extend_from_slice(&dst_mac);
+        f.extend_from_slice(&src_mac);
+        f.extend_from_slice(&0x8100u16.to_be_bytes()); // TPID
+        f.extend_from_slice(&(vlan_id & 0x0FFF).to_be_bytes()); // TCI (no PCP/DEI)
+        f.extend_from_slice(&inner_ethertype.to_be_bytes());
+        f.extend_from_slice(payload);
+        f
+    }
+
+    /// Build a minimal IPv4 header (IHL=5, 20 bytes) + transport payload.
+    fn ipv4_packet(
+        protocol: u8,
+        src_ip: [u8; 4],
+        dst_ip: [u8; 4],
+        transport: &[u8],
+    ) -> Vec<u8> {
+        let total_len = (20 + transport.len()) as u16;
+        let mut p = vec![0u8; 20];
+        p[0] = 0x45; // version=4, IHL=5
+        p[2..4].copy_from_slice(&total_len.to_be_bytes());
+        p[9] = protocol;
+        p[12..16].copy_from_slice(&src_ip);
+        p[16..20].copy_from_slice(&dst_ip);
+        p.extend_from_slice(transport);
+        p
+    }
+
+    /// Build a minimal TCP segment (data_offset=5, 20-byte header).
+    fn tcp_segment(src_port: u16, dst_port: u16, seq: u32, ack: u32, flags: u8) -> Vec<u8> {
+        let mut t = vec![0u8; 20];
+        t[0..2].copy_from_slice(&src_port.to_be_bytes());
+        t[2..4].copy_from_slice(&dst_port.to_be_bytes());
+        t[4..8].copy_from_slice(&seq.to_be_bytes());
+        t[8..12].copy_from_slice(&ack.to_be_bytes());
+        t[12] = 0x50; // data offset = 5 (20 bytes)
+        t[13] = flags;
+        t[14..16].copy_from_slice(&8192u16.to_be_bytes()); // window
+        t
+    }
+
+    /// Build a minimal UDP datagram (8-byte header).
+    fn udp_datagram(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
+        let len = (8 + payload.len()) as u16;
+        let mut u = vec![0u8; 8];
+        u[0..2].copy_from_slice(&src_port.to_be_bytes());
+        u[2..4].copy_from_slice(&dst_port.to_be_bytes());
+        u[4..6].copy_from_slice(&len.to_be_bytes());
+        u.extend_from_slice(payload);
+        u
+    }
+
+    // ================================================================
+    // format_mac
+    // ================================================================
+
+    #[test]
+    fn format_mac_valid() {
+        assert_eq!(
+            format_mac(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]),
+            "aa:bb:cc:dd:ee:ff"
+        );
+    }
+
+    #[test]
+    fn format_mac_too_short_returns_placeholder() {
+        assert_eq!(format_mac(&[0x01, 0x02, 0x03]), "??:??:??:??:??:??");
+        assert_eq!(format_mac(&[]), "??:??:??:??:??:??");
+    }
+
+    // ================================================================
+    // format_tcp_flags
+    // ================================================================
+
+    #[test]
+    fn tcp_flags_syn() {
+        assert_eq!(format_tcp_flags(0x02), "[SYN]");
+    }
+
+    #[test]
+    fn tcp_flags_syn_ack() {
+        assert_eq!(format_tcp_flags(0x12), "[SYN,ACK]");
+    }
+
+    #[test]
+    fn tcp_flags_rst() {
+        assert_eq!(format_tcp_flags(0x04), "[RST]");
+    }
+
+    #[test]
+    fn tcp_flags_fin_ack() {
+        assert_eq!(format_tcp_flags(0x11), "[ACK,FIN]");
+    }
+
+    #[test]
+    fn tcp_flags_psh_ack() {
+        assert_eq!(format_tcp_flags(0x18), "[ACK,PSH]");
+    }
+
+    #[test]
+    fn tcp_flags_empty() {
+        assert_eq!(format_tcp_flags(0x00), "[]");
+    }
+
+    // ================================================================
+    // parse_packet_data — Ethernet layer
+    // ================================================================
+
+    #[test]
+    fn parse_packet_data_too_short_returns_none() {
+        // Less than 14 bytes (Ethernet header minimum)
+        assert!(parse_packet_data(&[0u8; 13], ts()).is_none());
+        assert!(parse_packet_data(&[], ts()).is_none());
+    }
+
+    #[test]
+    fn parse_packet_data_arp_uses_mac_as_addresses() {
+        let src = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+        let dst = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let frame = eth_frame(src, dst, 0x0806, &[0u8; 28]); // 28-byte ARP payload
+        let pi = parse_packet_data(&frame, ts()).expect("ARP should parse");
+        assert_eq!(pi.protocol, "ARP");
+        // ARP: src_addr/dst_addr are the MACs, src_mac/dst_mac are None
+        assert_eq!(pi.src_addr, "00:11:22:33:44:55");
+        assert_eq!(pi.dst_addr, "aa:bb:cc:dd:ee:ff");
+        assert!(pi.src_mac.is_none());
+        assert!(pi.dst_mac.is_none());
+    }
+
+    #[test]
+    fn parse_packet_data_unknown_ethertype() {
+        let frame = eth_frame([0; 6], [0; 6], 0x1234, &[]);
+        let pi = parse_packet_data(&frame, ts()).expect("unknown ethertype should still parse");
+        assert_eq!(pi.protocol, "0x1234");
+    }
+
+    // ================================================================
+    // VLAN (802.1Q)
+    // ================================================================
+
+    #[test]
+    fn vlan_tagged_frame_extracts_vlan_id() {
+        let ipv4_tcp = ipv4_packet(6, [10, 0, 0, 1], [10, 0, 0, 2], &tcp_segment(80, 443, 1, 0, 0x02));
+        let frame = vlan_eth_frame([0; 6], [0; 6], 42, 0x0800, &ipv4_tcp);
+        let pi = parse_packet_data(&frame, ts()).expect("VLAN frame should parse");
+        assert_eq!(pi.vlan_id, Some(42));
+        assert_eq!(pi.protocol, "TCP");
+        assert_eq!(pi.src_addr, "10.0.0.1");
+    }
+
+    #[test]
+    fn vlan_tagged_frame_too_short_falls_through() {
+        // ethertype=0x8100 but frame is only 14 bytes (no room for TCI + inner ethertype)
+        let mut frame = vec![0u8; 14];
+        frame[12] = 0x81;
+        frame[13] = 0x00;
+        // data.len() == 14, which is < 18, so VLAN branch is NOT taken.
+        // ethertype stays 0x8100, falls through to the _ arm.
+        let pi = parse_packet_data(&frame, ts()).expect("should parse as unknown ethertype");
+        assert_eq!(pi.protocol, "0x8100");
+        assert!(pi.vlan_id.is_none());
+    }
+
+    // ================================================================
+    // IPv4
+    // ================================================================
+
+    #[test]
+    fn ipv4_ihl5_parses_addresses() {
+        let tcp_seg = tcp_segment(1234, 5678, 100, 0, 0x02);
+        let ip = ipv4_packet(6, [192, 168, 1, 10], [192, 168, 1, 20], &tcp_seg);
+        let frame = eth_frame([0x00; 6], [0xff; 6], 0x0800, &ip);
+        let pi = parse_packet_data(&frame, ts()).expect("IPv4 should parse");
+        assert_eq!(pi.src_addr, "192.168.1.10");
+        assert_eq!(pi.dst_addr, "192.168.1.20");
+        assert_eq!(pi.protocol, "TCP");
+        assert_eq!(pi.src_mac.as_deref(), Some("00:00:00:00:00:00"));
+        assert_eq!(pi.dst_mac.as_deref(), Some("ff:ff:ff:ff:ff:ff"));
+    }
+
+    #[test]
+    fn ipv4_too_short_returns_none() {
+        // IPv4 header needs >= 20 bytes; provide only 10
+        let frame = eth_frame([0; 6], [0; 6], 0x0800, &[0x45; 10]);
+        assert!(parse_packet_data(&frame, ts()).is_none());
+    }
+
+    #[test]
+    fn ipv4_ihl_larger_than_data_returns_none() {
+        // IHL = 15 (60 bytes header) but only provide 20 bytes of IP data
+        let mut ip = vec![0u8; 20];
+        ip[0] = 0x4F; // IHL = 15
+        let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
+        assert!(parse_packet_data(&frame, ts()).is_none());
+    }
+
+    #[test]
+    fn ipv4_icmp_echo_request() {
+        // ICMP type 8 = Echo Request
+        let icmp = vec![8, 0, 0, 0, 0, 0, 0, 0];
+        let ip = ipv4_packet(1, [10, 0, 0, 1], [10, 0, 0, 2], &icmp);
+        let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
+        let pi = parse_packet_data(&frame, ts()).expect("ICMP should parse");
+        assert_eq!(pi.protocol, "ICMP");
+        assert_eq!(pi.info, "Echo Request");
+    }
+
+    #[test]
+    fn ipv4_udp_parses_ports() {
+        let udp = udp_datagram(53, 12345, b"dns-payload");
+        let ip = ipv4_packet(17, [8, 8, 8, 8], [10, 0, 0, 1], &udp);
+        let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
+        let pi = parse_packet_data(&frame, ts()).expect("UDP should parse");
+        assert_eq!(pi.protocol, "UDP");
+        assert_eq!(pi.src_port, Some(53));
+        assert_eq!(pi.dst_port, Some(12345));
+        assert_eq!(pi.transport_payload.as_deref(), Some(b"dns-payload".as_slice()));
+    }
+
+    #[test]
+    fn ipv4_unknown_protocol() {
+        let ip = ipv4_packet(99, [1, 2, 3, 4], [5, 6, 7, 8], &[]);
+        let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
+        let pi = parse_packet_data(&frame, ts()).expect("unknown proto should parse");
+        assert_eq!(pi.protocol, "IP/99");
+    }
+
+    #[test]
+    fn ipv4_tcp_rst_is_abnormal() {
+        let tcp_seg = tcp_segment(80, 443, 1, 0, 0x04); // RST
+        let ip = ipv4_packet(6, [10, 0, 0, 1], [10, 0, 0, 2], &tcp_seg);
+        let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
+        let pi = parse_packet_data(&frame, ts()).expect("RST should parse");
+        assert!(pi.is_abnormal);
+    }
+
+    // ================================================================
+    // IPv6
+    // ================================================================
+
+    #[test]
+    fn ipv6_tcp_parses_addresses() {
+        let tcp_seg = tcp_segment(80, 443, 1, 0, 0x02);
+        let mut ipv6 = vec![0u8; 40];
+        ipv6[0] = 0x60; // version 6
+        let payload_len = tcp_seg.len() as u16;
+        ipv6[4..6].copy_from_slice(&payload_len.to_be_bytes());
+        ipv6[6] = 6; // next header = TCP
+        // src: ::1
+        ipv6[23] = 1;
+        // dst: ::2
+        ipv6[39] = 2;
+        ipv6.extend_from_slice(&tcp_seg);
+        let frame = eth_frame([0; 6], [0; 6], 0x86DD, &ipv6);
+        let pi = parse_packet_data(&frame, ts()).expect("IPv6 should parse");
+        assert_eq!(pi.protocol, "TCP");
+        assert_eq!(pi.src_addr, "0:0:0:0:0:0:0:1");
+        assert_eq!(pi.dst_addr, "0:0:0:0:0:0:0:2");
+    }
+
+    #[test]
+    fn ipv6_too_short_returns_none() {
+        // IPv6 header needs 40 bytes; provide only 20
+        let frame = eth_frame([0; 6], [0; 6], 0x86DD, &[0u8; 20]);
+        assert!(parse_packet_data(&frame, ts()).is_none());
+    }
+
+    // ================================================================
+    // parse_tcp_info
+    // ================================================================
+
+    #[test]
+    fn parse_tcp_info_valid_segment() {
+        let seg = tcp_segment(8080, 443, 100, 200, 0x12); // SYN+ACK
+        let (proto, sp, dp, _info, details, _payload) = parse_tcp_info(&seg);
+        assert_eq!(proto, "TCP");
+        assert_eq!(sp, Some(8080));
+        assert_eq!(dp, Some(443));
+        let td = details.expect("should have tcp details");
+        assert_eq!(td.seq, 100);
+        assert_eq!(td.ack, 200);
+        assert_eq!(td.flags, 0x12);
+        assert_eq!(td.window, 8192);
+    }
+
+    #[test]
+    fn parse_tcp_info_too_short() {
+        let (proto, sp, dp, _, details, _) = parse_tcp_info(&[0u8; 10]);
+        assert_eq!(proto, "TCP");
+        assert!(sp.is_none());
+        assert!(dp.is_none());
+        assert!(details.is_none());
+    }
+
+    #[test]
+    fn parse_tcp_info_with_payload() {
+        let mut seg = tcp_segment(1, 2, 0, 0, 0x10); // ACK
+        seg.extend_from_slice(b"hello");
+        let (_, _, _, _, details, payload) = parse_tcp_info(&seg);
+        let td = details.expect("should have tcp details");
+        assert_eq!(td.payload_len, 5);
+        assert_eq!(payload.as_deref(), Some(b"hello".as_slice()));
+    }
+
+    // ================================================================
+    // parse_udp_info
+    // ================================================================
+
+    #[test]
+    fn parse_udp_info_valid() {
+        let udp = udp_datagram(53, 12345, b"data");
+        let (proto, sp, dp, _, payload) = parse_udp_info(&udp);
+        assert_eq!(proto, "UDP");
+        assert_eq!(sp, Some(53));
+        assert_eq!(dp, Some(12345));
+        assert_eq!(payload.as_deref(), Some(b"data".as_slice()));
+    }
+
+    #[test]
+    fn parse_udp_info_too_short() {
+        let (proto, sp, dp, _, payload) = parse_udp_info(&[0u8; 4]);
+        assert_eq!(proto, "UDP");
+        assert!(sp.is_none());
+        assert!(dp.is_none());
+        assert!(payload.is_none());
+    }
+
+    #[test]
+    fn parse_udp_info_header_only_no_payload() {
+        let udp = udp_datagram(100, 200, &[]);
+        let (_, sp, dp, _, payload) = parse_udp_info(&udp);
+        assert_eq!(sp, Some(100));
+        assert_eq!(dp, Some(200));
+        assert!(payload.is_none());
+    }
+
+    // ================================================================
+    // parse_icmp_info
+    // ================================================================
+
+    #[test]
+    fn icmp_echo_reply() {
+        assert_eq!(parse_icmp_info(&[0, 0]), "Echo Reply");
+    }
+
+    #[test]
+    fn icmp_echo_request() {
+        assert_eq!(parse_icmp_info(&[8, 0]), "Echo Request");
+    }
+
+    #[test]
+    fn icmp_dest_unreachable_port() {
+        assert_eq!(parse_icmp_info(&[3, 3]), "Dest Unreachable (Port)");
+    }
+
+    #[test]
+    fn icmp_time_exceeded() {
+        assert_eq!(parse_icmp_info(&[11, 0]), "Time Exceeded");
+    }
+
+    #[test]
+    fn icmp_too_short() {
+        assert_eq!(parse_icmp_info(&[8]), "");
+        assert_eq!(parse_icmp_info(&[]), "");
+    }
+
+    // ================================================================
+    // format_ipv6
+    // ================================================================
+
+    #[test]
+    fn format_ipv6_loopback() {
+        let mut addr = [0u8; 16];
+        addr[15] = 1;
+        assert_eq!(format_ipv6(&addr), "0:0:0:0:0:0:0:1");
+    }
+
+    #[test]
+    fn format_ipv6_too_short() {
+        assert_eq!(format_ipv6(&[0u8; 8]), "::");
+    }
+
+    // ================================================================
+    // is_multicast_address
+    // ================================================================
+
+    #[test]
+    fn multicast_ipv4() {
+        assert!(is_multicast_address("224.0.0.1"));
+        assert!(is_multicast_address("239.255.255.255"));
+    }
+
+    #[test]
+    fn unicast_ipv4() {
+        assert!(!is_multicast_address("192.168.1.1"));
+        assert!(!is_multicast_address("10.0.0.1"));
+    }
+
+    #[test]
+    fn invalid_addr_not_multicast() {
+        assert!(!is_multicast_address("not-an-ip"));
+    }
+
+    // ================================================================
+    // TcpFlowTracker
+    // ================================================================
+
+    fn make_tcp_packet(
+        src: &str,
+        sp: u16,
+        dst: &str,
+        dp: u16,
+        seq: u32,
+        ack: u32,
+        flags: u8,
+        payload_len: u32,
+    ) -> PacketInfo {
+        PacketInfo {
+            timestamp: ts(),
+            src_addr: src.to_string(),
+            src_port: Some(sp),
+            dst_addr: dst.to_string(),
+            dst_port: Some(dp),
+            src_mac: None,
+            dst_mac: None,
+            protocol: "TCP".to_string(),
+            vlan_id: None,
+            length: 54 + payload_len,
+            info: String::new(),
+            tcp_details: Some(TcpDetails {
+                seq,
+                ack,
+                flags,
+                window: 65535,
+                payload_len,
+            }),
+            is_abnormal: false,
+            transport_payload: None,
+        }
+    }
+
+    #[test]
+    fn flow_tracker_marks_rst_abnormal() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut pkt = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, 1, 0, 0x04, 0);
+        tracker.analyze_packet(&mut pkt);
+        assert!(pkt.is_abnormal);
+        assert!(pkt.info.contains("RST"));
+    }
+
+    #[test]
+    fn flow_tracker_detects_retransmission() {
+        let mut tracker = TcpFlowTracker::new();
+        // First data packet
+        let mut pkt1 = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, 100, 0, 0x10, 50);
+        tracker.analyze_packet(&mut pkt1);
+        assert!(!pkt1.is_abnormal);
+
+        // Retransmit the same seq+len
+        let mut pkt2 = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, 100, 0, 0x10, 50);
+        tracker.analyze_packet(&mut pkt2);
+        assert!(pkt2.is_abnormal);
+        assert!(pkt2.info.contains("Retransmission"));
+    }
+
+    #[test]
+    fn flow_tracker_detects_zero_window() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut pkt = PacketInfo {
+            timestamp: ts(),
+            src_addr: "1.1.1.1".to_string(),
+            src_port: Some(80),
+            dst_addr: "2.2.2.2".to_string(),
+            dst_port: Some(1234),
+            src_mac: None,
+            dst_mac: None,
+            protocol: "TCP".to_string(),
+            vlan_id: None,
+            length: 54,
+            info: String::new(),
+            tcp_details: Some(TcpDetails {
+                seq: 1,
+                ack: 1,
+                flags: 0x10, // ACK
+                window: 0,
+                payload_len: 0,
+            }),
+            is_abnormal: false,
+            transport_payload: None,
+        };
+        tracker.analyze_packet(&mut pkt);
+        assert!(pkt.is_abnormal);
+        assert!(pkt.info.contains("ZeroWindow"));
+    }
+
+    #[test]
+    fn flow_tracker_ignores_non_tcp() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut pkt = PacketInfo {
+            timestamp: ts(),
+            src_addr: "1.1.1.1".to_string(),
+            src_port: Some(53),
+            dst_addr: "2.2.2.2".to_string(),
+            dst_port: Some(12345),
+            src_mac: None,
+            dst_mac: None,
+            protocol: "UDP".to_string(),
+            vlan_id: None,
+            length: 100,
+            info: String::new(),
+            tcp_details: None,
+            is_abnormal: false,
+            transport_payload: None,
+        };
+        tracker.analyze_packet(&mut pkt);
+        assert!(!pkt.is_abnormal);
+        assert!(pkt.info.is_empty());
+    }
+
+    #[test]
+    fn flow_tracker_fin_removes_flow_state() {
+        let mut tracker = TcpFlowTracker::new();
+        // Data packet establishes flow
+        let mut pkt1 = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, 100, 0, 0x10, 50);
+        tracker.analyze_packet(&mut pkt1);
+
+        // FIN packet clears the flow
+        let mut fin = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, 150, 0, 0x11, 0);
+        tracker.analyze_packet(&mut fin);
+
+        // Same seq+len as pkt1 is NOT flagged as retransmission (flow was cleared)
+        let mut pkt3 = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, 100, 0, 0x10, 50);
+        tracker.analyze_packet(&mut pkt3);
+        assert!(!pkt3.is_abnormal);
+    }
+
+    // ================================================================
+    // pcap_ts_to_datetime
+    // ================================================================
+
+    #[test]
+    fn pcap_ts_zero_is_epoch() {
+        let dt = pcap_ts_to_datetime(0, 0).expect("epoch should be valid");
+        assert_eq!(dt.timestamp(), 0);
+    }
+
+    #[test]
+    fn pcap_ts_known_value() {
+        // 2025-01-01 00:00:00 UTC = 1735689600
+        let dt = pcap_ts_to_datetime(1_735_689_600, 0);
+        assert!(dt.is_some());
+        assert_eq!(dt.unwrap().timestamp(), 1_735_689_600);
+    }
+}
