@@ -1627,12 +1627,7 @@ mod tests {
     }
 
     /// Build a minimal IPv4 header (IHL=5, 20 bytes) + transport payload.
-    fn ipv4_packet(
-        protocol: u8,
-        src_ip: [u8; 4],
-        dst_ip: [u8; 4],
-        transport: &[u8],
-    ) -> Vec<u8> {
+    fn ipv4_packet(protocol: u8, src_ip: [u8; 4], dst_ip: [u8; 4], transport: &[u8]) -> Vec<u8> {
         let total_len = (20 + transport.len()) as u16;
         let mut p = vec![0u8; 20];
         p[0] = 0x45; // version=4, IHL=5
@@ -1644,7 +1639,7 @@ mod tests {
         p
     }
 
-    /// Build a minimal TCP segment (data_offset=5, 20-byte header).
+    /// Build a minimal TCP segment (`data_offset=5`, 20-byte header).
     fn tcp_segment(src_port: u16, dst_port: u16, seq: u32, ack: u32, flags: u8) -> Vec<u8> {
         let mut t = vec![0u8; 20];
         t[0..2].copy_from_slice(&src_port.to_be_bytes());
@@ -1758,7 +1753,12 @@ mod tests {
 
     #[test]
     fn vlan_tagged_frame_extracts_vlan_id() {
-        let ipv4_tcp = ipv4_packet(6, [10, 0, 0, 1], [10, 0, 0, 2], &tcp_segment(80, 443, 1, 0, 0x02));
+        let ipv4_tcp = ipv4_packet(
+            6,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            &tcp_segment(80, 443, 1, 0, 0x02),
+        );
         let frame = vlan_eth_frame([0; 6], [0; 6], 42, 0x0800, &ipv4_tcp);
         let pi = parse_packet_data(&frame, ts()).expect("VLAN frame should parse");
         assert_eq!(pi.vlan_id, Some(42));
@@ -1832,7 +1832,10 @@ mod tests {
         assert_eq!(pi.protocol, "UDP");
         assert_eq!(pi.src_port, Some(53));
         assert_eq!(pi.dst_port, Some(12345));
-        assert_eq!(pi.transport_payload.as_deref(), Some(b"dns-payload".as_slice()));
+        assert_eq!(
+            pi.transport_payload.as_deref(),
+            Some(b"dns-payload".as_slice())
+        );
     }
 
     #[test]
@@ -1864,10 +1867,8 @@ mod tests {
         let payload_len = tcp_seg.len() as u16;
         ipv6[4..6].copy_from_slice(&payload_len.to_be_bytes());
         ipv6[6] = 6; // next header = TCP
-        // src: ::1
-        ipv6[23] = 1;
-        // dst: ::2
-        ipv6[39] = 2;
+        ipv6[23] = 1; // src: ::1
+        ipv6[39] = 2; // dst: ::2
         ipv6.extend_from_slice(&tcp_seg);
         let frame = eth_frame([0; 6], [0; 6], 0x86DD, &ipv6);
         let pi = parse_packet_data(&frame, ts()).expect("IPv6 should parse");
@@ -2167,6 +2168,6 @@ mod tests {
         // 2025-01-01 00:00:00 UTC = 1735689600
         let dt = pcap_ts_to_datetime(1_735_689_600, 0);
         assert!(dt.is_some());
-        assert_eq!(dt.unwrap().timestamp(), 1_735_689_600);
+        assert_eq!(dt.expect("should parse").timestamp(), 1_735_689_600);
     }
 }
