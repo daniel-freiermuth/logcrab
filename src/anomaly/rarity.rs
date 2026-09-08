@@ -60,3 +60,73 @@ impl Default for RarityScorer {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Local;
+
+    fn make_line(message: &str) -> LogLine {
+        LogLine {
+            timestamp: Local::now(),
+            message: message.to_string(),
+            raw: message.to_string(),
+            line_number: 1,
+            anomaly_score: 0.0,
+            sidecar_anomaly_score: 0.0,
+            sidecar_score_is_unk: false,
+            sidecar_score_is_rare: false,
+            sidecar_scored: false,
+        }
+    }
+
+    #[test]
+    fn first_line_is_novel() {
+        let mut scorer = RarityScorer::new();
+        let line = make_line("hello world");
+        assert!((scorer.score(&line) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn unseen_template_scores_one() {
+        let mut scorer = RarityScorer::new();
+        let line_a = make_line("message A");
+        // Score and update with line A
+        scorer.score(&line_a);
+        scorer.update(&line_a);
+
+        // A brand new template should score 1.0
+        let line_b = make_line("completely different message B");
+        assert!((scorer.score(&line_b) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn repeated_template_scores_below_one() {
+        let mut scorer = RarityScorer::new();
+        let line = make_line("repeated message");
+        // Feed the same template multiple times
+        for _ in 0..10 {
+            scorer.score(&line);
+            scorer.update(&line);
+        }
+        // After 10 identical lines, frequency = 10/10 = 1.0
+        // score = (1 - 1.0).sqrt() = 0.0
+        let score = scorer.score(&line);
+        assert!(
+            score < 1.0,
+            "repeated template should score below 1.0, got {score}"
+        );
+    }
+
+    #[test]
+    fn scores_are_clamped_to_unit_range() {
+        let mut scorer = RarityScorer::new();
+        let line = make_line("clamp test");
+        // Score across several updates and verify always in [0, 1]
+        for _ in 0..20 {
+            let s = scorer.score(&line);
+            assert!((0.0..=1.0).contains(&s), "score {s} out of [0, 1]");
+            scorer.update(&line);
+        }
+    }
+}
