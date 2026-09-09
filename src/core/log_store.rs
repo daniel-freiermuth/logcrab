@@ -117,24 +117,6 @@ impl ScoreStore {
         guard.scores.get(index).copied().unwrap_or(0.0)
     }
 
-    /// Get the UNK flag for a specific line index. Returns `false` if out of bounds.
-    pub fn get_unk(&self, index: usize) -> bool {
-        let guard = self.data.load();
-        guard.unk_flags.get(index).copied().unwrap_or(false)
-    }
-
-    /// Get the rare flag for a specific line index. Returns `false` if out of bounds.
-    pub fn get_rare(&self, index: usize) -> bool {
-        let guard = self.data.load();
-        guard.rare_flags.get(index).copied().unwrap_or(false)
-    }
-
-    /// Get the scored flag for a specific line index. Returns `false` if out of bounds.
-    pub fn get_scored(&self, index: usize) -> bool {
-        let guard = self.data.load();
-        guard.scored_flags.get(index).copied().unwrap_or(false)
-    }
-
     /// Get all sidecar fields for a specific line index from a single snapshot load.
     /// Returns `(score, unk, rare, scored)` with out-of-bounds defaults.
     pub fn get_all(&self, index: usize) -> (f64, bool, bool, bool) {
@@ -1258,34 +1240,6 @@ impl LogStore {
                 ExplainPollStatus::Dead,
                 super::super::anomaly::sidecar_client::ExplainSession::poll_status,
             )
-    }
-
-    /// Get the ML sidecar anomaly score for a specific line. Returns 0.0 if not found.
-    pub fn get_sidecar_score(&self, source_id: u64, line_index: usize) -> f64 {
-        self.sidecar_scores
-            .get(&source_id)
-            .map_or(0.0, |store| store.get(line_index))
-    }
-
-    /// Get whether the sidecar score for a line was assigned while the target was UNK.
-    pub fn get_sidecar_unk(&self, source_id: u64, line_index: usize) -> bool {
-        self.sidecar_scores
-            .get(&source_id)
-            .is_some_and(|store| store.get_unk(line_index))
-    }
-
-    /// Get whether the sidecar score's target was a rare template.
-    pub fn get_sidecar_rare(&self, source_id: u64, line_index: usize) -> bool {
-        self.sidecar_scores
-            .get(&source_id)
-            .is_some_and(|store| store.get_rare(line_index))
-    }
-
-    /// Get whether a line was present in the sidecar's scored set (vs filtered/excluded).
-    pub fn get_sidecar_scored(&self, source_id: u64, line_index: usize) -> bool {
-        self.sidecar_scores
-            .get(&source_id)
-            .is_some_and(|store| store.get_scored(line_index))
     }
 
     /// Get all sidecar fields for a line from a single snapshot load.
