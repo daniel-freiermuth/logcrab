@@ -81,7 +81,7 @@ anyhow = "1"
 profiling = { version = "1.0", default-features = false }
 tracy-client = { version = "0.18.4", optional = true }
 tokio = { version = "1.49.0", features = ["sync", "rt-multi-thread", "macros", "io-std"] }
-tonic = { version = "0.14", features = ["transport"] }
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }
 prost = "0.14"
 tonic-prost = "0.14"
 tokio-stream = { version = "0.1", features = ["net"] }
