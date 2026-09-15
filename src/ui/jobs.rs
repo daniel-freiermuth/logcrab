@@ -26,15 +26,21 @@ pub struct JobSnapshot {
     pub message: String,
     /// Completion ratio when the job can measure it.
     pub progress: Option<f32>,
+    /// Whether this job supports cooperative cancellation.
+    pub cancellable: bool,
     /// Whether cooperative cancellation has been requested.
     pub cancelling: bool,
     cancel_requested: Arc<AtomicBool>,
+    ctx: egui::Context,
 }
 
 impl JobSnapshot {
-    /// Request cooperative cancellation without waiting for the job registry.
+    /// Request cooperative cancellation when this job supports it.
     pub fn request_cancel(&self) {
-        self.cancel_requested.store(true, Ordering::Relaxed);
+        if self.cancellable {
+            self.cancel_requested.store(true, Ordering::Relaxed);
+            self.ctx.request_repaint();
+        }
     }
 }
 
@@ -44,6 +50,7 @@ struct JobState {
     title: String,
     message: String,
     progress: Option<f32>,
+    cancellable: bool,
     cancel_requested: Arc<AtomicBool>,
 }
 
@@ -53,7 +60,7 @@ struct JobRegistry {
     jobs: Vec<JobState>,
 }
 
-/// Owns the active-job registry rendered by the application footer.
+/// Owns the active-job registry rendered by the notification center.
 #[derive(Clone, Debug, Default)]
 pub struct JobManager {
     registry: Arc<Mutex<JobRegistry>>,
@@ -70,9 +77,28 @@ impl JobManager {
         }
     }
 
-    /// Register a new active job.
+    /// Register a new active job with cooperative cancellation.
     #[must_use]
     pub fn start(&self, title: impl Into<String>, message: impl Into<String>) -> JobHandle {
+        self.start_with_cancellation(title.into(), message.into(), true)
+    }
+
+    /// Register an active job that reports progress but cannot be interrupted.
+    #[must_use]
+    pub fn start_non_cancellable(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) -> JobHandle {
+        self.start_with_cancellation(title.into(), message.into(), false)
+    }
+
+    fn start_with_cancellation(
+        &self,
+        title: String,
+        message: String,
+        cancellable: bool,
+    ) -> JobHandle {
         let (id, cancel_requested) = {
             let mut registry = self
                 .registry
@@ -83,9 +109,10 @@ impl JobManager {
             let cancel_requested = Arc::new(AtomicBool::new(false));
             registry.jobs.push(JobState {
                 id,
-                title: title.into(),
-                message: message.into(),
+                title,
+                message,
                 progress: Some(0.0),
+                cancellable,
                 cancel_requested: Arc::clone(&cancel_requested),
             });
             drop(registry);
@@ -94,6 +121,7 @@ impl JobManager {
         JobHandle {
             id,
             registry: Arc::clone(&self.registry),
+            cancellable,
             cancel_requested,
             ctx: self.ctx.clone(),
         }
@@ -113,8 +141,10 @@ impl JobManager {
                     title: job.title.clone(),
                     message: job.message.clone(),
                     progress: job.progress,
+                    cancellable: job.cancellable,
                     cancelling: job.cancel_requested.load(Ordering::Relaxed),
                     cancel_requested: Arc::clone(&job.cancel_requested),
+                    ctx: self.ctx.clone(),
                 })
                 .collect()
         })
@@ -126,6 +156,7 @@ impl JobManager {
 pub struct JobHandle {
     id: u64,
     registry: Arc<Mutex<JobRegistry>>,
+    cancellable: bool,
     cancel_requested: Arc<AtomicBool>,
     ctx: egui::Context,
 }
@@ -135,6 +166,20 @@ impl JobHandle {
     #[must_use]
     pub fn is_cancel_requested(&self) -> bool {
         self.cancel_requested.load(Ordering::Relaxed)
+    }
+
+    /// Whether this job accepts a cancellation request.
+    #[must_use]
+    pub const fn is_cancellable(&self) -> bool {
+        self.cancellable
+    }
+
+    /// Request cancellation and wake the UI to show the cancelling state.
+    pub fn request_cancel(&self) {
+        if self.cancellable {
+            self.cancel_requested.store(true, Ordering::Relaxed);
+            self.ctx.request_repaint();
+        }
     }
 
     /// Register a sibling job that shares this job's cancellation request.
@@ -152,6 +197,7 @@ impl JobHandle {
                 title: title.into(),
                 message: message.into(),
                 progress: Some(0.0),
+                cancellable: self.cancellable,
                 cancel_requested: Arc::clone(&self.cancel_requested),
             });
             id
@@ -159,11 +205,12 @@ impl JobHandle {
         Self {
             id,
             registry: Arc::clone(&self.registry),
+            cancellable: self.cancellable,
             cancel_requested: Arc::clone(&self.cancel_requested),
             ctx: self.ctx.clone(),
         }
     }
-    /// Update the footer representation of this job and schedule a repaint.
+    /// Update the notification-center representation and schedule a repaint.
     pub fn update(
         &self,
         title: impl Into<String>,
@@ -245,5 +292,22 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn non_cancellable_jobs_ignore_cancellation_requests() {
+        let manager = JobManager::new(egui::Context::default());
+        let handle = manager.start_non_cancellable("Saving session", "Writing file…");
+        let job = manager
+            .try_snapshots()
+            .expect("uncontended registry is readable")
+            .into_iter()
+            .next()
+            .expect("started job is visible");
+
+        job.request_cancel();
+
+        assert!(!job.cancellable);
+        assert!(!handle.is_cancel_requested());
     }
 }

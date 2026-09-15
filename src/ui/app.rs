@@ -70,9 +70,6 @@ pub struct LogCrabApp {
     /// Last lock-free snapshot used when a worker currently updates the job registry.
     job_snapshots: Vec<super::JobSnapshot>,
 
-    /// Whether the footer reserves space for the active-job list.
-    jobs_expanded: bool,
-
     /// Persistent session history
     session_history: SessionHistory,
 
@@ -148,7 +145,6 @@ impl LogCrabApp {
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
             job_manager: JobManager::new(cc.egui_ctx.clone()),
             job_snapshots: Vec::new(),
-            jobs_expanded: false,
             session_history,
             pending_session_offer: None,
         };
@@ -721,75 +717,17 @@ impl LogCrabApp {
     }
 
     /// Render bottom status panel
-    fn render_status_panel(&mut self, ui: &mut egui::Ui) {
-        if let Some(snapshots) = self.job_manager.try_snapshots() {
-            self.job_snapshots = snapshots;
-        }
-        if self.job_snapshots.is_empty() {
-            self.jobs_expanded = false;
-        }
-        let jobs = self.job_snapshots.clone();
-
-        ui.horizontal(|ui| {
-            if self
-                .filter_worker
-                .handle()
-                .is_filtering
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
+    fn render_status_panel(&self, ui: &mut egui::Ui) {
+        if self
+            .filter_worker
+            .handle()
+            .is_filtering
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label("Filtering...");
-            }
-
-            if !jobs.is_empty() {
-                if self
-                    .filter_worker
-                    .handle()
-                    .is_filtering
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    ui.separator();
-                }
-                let label = if self.jobs_expanded {
-                    format!("Hide jobs ({})", jobs.len())
-                } else {
-                    format!("Jobs ({})", jobs.len())
-                };
-                if ui.button(label).clicked() {
-                    self.jobs_expanded = !self.jobs_expanded;
-                }
-            }
-        });
-
-        if self.jobs_expanded {
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .id_salt("footer_jobs")
-                .max_height(180.0)
-                .show(ui, |ui| {
-                    for job in jobs {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.vertical(|ui| {
-                                ui.strong(&job.title);
-                                ui.small(&job.message);
-                                if let Some(progress) = job.progress {
-                                    ui.add(
-                                        egui::ProgressBar::new(progress)
-                                            .desired_width(180.0)
-                                            .show_percentage(),
-                                    );
-                                }
-                            });
-                            if job.cancelling {
-                                ui.add_enabled(false, egui::Button::new("Cancelling…"));
-                            } else if ui.button("Cancel").clicked() {
-                                job.request_cancel();
-                            }
-                        });
-                        ui.separator();
-                    }
-                });
+            });
         }
     }
 
@@ -1133,6 +1071,10 @@ impl eframe::App for LogCrabApp {
             }
         }
 
+        if let Some(snapshots) = self.job_manager.try_snapshots() {
+            self.job_snapshots = snapshots;
+        }
+
         {
             profiling::scope!("top_panel");
             egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -1217,7 +1159,7 @@ impl eframe::App for LogCrabApp {
         }
 
         // Show toast notifications
-        self.toast_manager.show(ctx);
+        self.toast_manager.show(ctx, &self.job_snapshots);
 
         profiling::finish_frame!();
     }
