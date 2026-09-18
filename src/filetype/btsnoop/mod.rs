@@ -91,24 +91,7 @@ impl LineType for BtsnoopLogLine {
     }
 
     fn egui_render_context_menu(&self, ui: &mut Ui, _config: &(), file_state: &BtsnoopFileState) {
-        if ui.button("⏱ Calibrate Time Here").clicked() {
-            let raw_time = self.hci_info.timestamp;
-            let display_time =
-                raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms());
-            *file_state
-                .calibration
-                .lock()
-                .expect("calibration lock poisoned") = Some((
-                raw_time,
-                crate::filetype::CalibrationWindow::new(
-                    display_time,
-                    false,
-                    Some(display_time),
-                    raw_time,
-                ),
-            ));
-            ui.close();
-        }
+        file_state.render_calibration_context_menu(ui, self.hci_info.timestamp);
     }
 }
 
