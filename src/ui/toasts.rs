@@ -7,100 +7,98 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-//
-// LogCrab is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Toast notification system with thread-safe handles for background operations.
-//!
-//! The loader thread can own a `ProgressToastHandle` and update it directly.
-//! The `ToastManager` renders all active handles each frame.
+//! Bottom-right notification overlays and the active-job notification center.
 
-use egui::{Align2, Color32, Margin};
-use egui_toast::{Toast, ToastKind, ToastOptions, ToastStyle, Toasts};
+use crate::ui::{JobHandle, JobSnapshot};
+use egui::{Color32, Margin};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-/// Shared state for a progress toast, updated by the handle, read by the renderer
+const MAX_VISIBLE_TOASTS: usize = 5;
+const JOB_PROGRESS_WIDTH: f32 = 220.0;
+
+/// Shared state for a progress job, updated by its worker and read by the UI.
 #[derive(Debug, Clone)]
 pub struct ProgressToastState {
-    /// Title shown at the top of the toast
+    /// User-facing operation name.
     pub title: String,
-    /// Current progress (0.0 to 1.0), None for indeterminate
+    /// Completion ratio when known.
     pub progress: Option<f32>,
-    /// Status message
+    /// Current operation detail.
     pub message: String,
-    /// When the toast was dismissed (None if still active)
+    /// Completion time, if the work is no longer active.
     pub dismissed_at: Option<Instant>,
-    /// Optional error message (will show error style)
+    /// Error detail, if the job failed.
     pub error: Option<String>,
-}
-
-impl Default for ProgressToastState {
-    fn default() -> Self {
-        Self {
-            title: "Loading".to_string(),
-            progress: Some(0.0),
-            message: String::new(),
-            dismissed_at: None,
-            error: None,
-        }
-    }
+    /// Whether this job currently appears as an overlay toast.
+    pub visible: bool,
+    job: Option<JobHandle>,
 }
 
 impl ProgressToastState {
-    /// Check if this toast should be removed.
     #[must_use]
-    pub const fn should_remove(&self) -> bool {
-        self.dismissed_at.is_some()
+    const fn is_active(&self) -> bool {
+        self.dismissed_at.is_none()
     }
 }
 
-/// A lightweight sender that lets any code (including background threads) enqueue
-/// toast messages for display on the next UI frame.
-///
-/// Obtain one via [`ToastManager::sender`]. Multiple senders share the same queues.
+#[derive(Debug, Clone, Copy)]
+enum NotificationKind {
+    Error,
+    Success,
+}
+
+#[derive(Debug)]
+struct Notification {
+    id: u64,
+    message: String,
+    kind: NotificationKind,
+}
+
+#[derive(Debug)]
+struct PendingNotification {
+    message: String,
+    kind: NotificationKind,
+}
+
+/// Thread-safe producer for one-shot success and error notifications.
 #[derive(Clone)]
 pub struct ToastSender {
-    queue: Arc<Mutex<Vec<String>>>,
-    success_queue: Arc<Mutex<Vec<String>>>,
+    queue: Arc<Mutex<Vec<PendingNotification>>>,
     ctx: egui::Context,
 }
 
 impl ToastSender {
-    /// Enqueue `message` to be shown as a persistent standalone error toast on
-    /// the next UI frame.
+    /// Queue an error notification for the next UI frame.
     pub fn send(&self, message: impl Into<String>) {
-        if let Ok(mut q) = self.queue.lock() {
-            q.push(message.into());
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.push(PendingNotification {
+                message: message.into(),
+                kind: NotificationKind::Error,
+            });
         }
         self.ctx.request_repaint();
     }
 
-    /// Enqueue `message` to be shown as a brief auto-closing success toast on
-    /// the next UI frame.
+    /// Queue a success notification for the next UI frame.
     pub fn send_success(&self, message: impl Into<String>) {
-        if let Ok(mut q) = self.success_queue.lock() {
-            q.push(message.into());
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.push(PendingNotification {
+                message: message.into(),
+                kind: NotificationKind::Success,
+            });
         }
         self.ctx.request_repaint();
     }
 }
 
-/// A thread-safe handle to a progress toast.
-///
-/// Can be sent to background threads and used to update the toast.
-/// When dropped, the toast is automatically dismissed.
+/// Thread-safe worker handle for a job's progress notification.
 #[derive(Clone)]
 pub struct ProgressToastHandle {
     state: Arc<RwLock<ProgressToastState>>,
-    /// Shared list of active progress toasts — kept so we can spawn sibling toasts.
     progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
+    pending_notifications: Arc<Mutex<Vec<PendingNotification>>>,
     ctx: egui::Context,
 }
 
@@ -108,6 +106,7 @@ impl ProgressToastHandle {
     fn new(
         ctx: egui::Context,
         progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
+        pending_notifications: Arc<Mutex<Vec<PendingNotification>>>,
         title: String,
         message: String,
     ) -> Self {
@@ -117,6 +116,8 @@ impl ProgressToastHandle {
             progress: Some(0.0),
             dismissed_at: None,
             error: None,
+            visible: true,
+            job: None,
         }));
         if let Ok(mut handles) = progress_handles.lock() {
             handles.push(Arc::clone(&state));
@@ -124,40 +125,81 @@ impl ProgressToastHandle {
         Self {
             state,
             progress_handles,
+            pending_notifications,
             ctx,
         }
     }
 
-    /// Create a new sibling progress toast that renders alongside this one.
-    /// Can be called from any thread.
+    /// Create a related job that shares cancellation with this job.
     #[must_use]
     pub fn spawn_sibling(&self, title: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::new(
+        let title = title.into();
+        let message = message.into();
+        let sibling = Self::new(
             self.ctx.clone(),
             Arc::clone(&self.progress_handles),
-            title.into(),
-            message.into(),
-        )
+            Arc::clone(&self.pending_notifications),
+            title.clone(),
+            message.clone(),
+        );
+        if let Some(job) = self.state.read().ok().and_then(|state| state.job.clone()) {
+            sibling.track_job(job.spawn_sibling(title, message))
+        } else {
+            sibling
+        }
     }
 
-    /// Update the progress and message
+    /// Associate this progress operation with a cancellable job.
+    #[must_use]
+    pub fn track_job(self, job: JobHandle) -> Self {
+        if let Ok(mut state) = self.state.write() {
+            state.job = Some(job);
+        }
+        self
+    }
+
+    /// Check whether the user requested cooperative cancellation.
+    #[must_use]
+    pub fn is_cancel_requested(&self) -> bool {
+        self.state
+            .read()
+            .ok()
+            .and_then(|state| state.job.clone())
+            .is_some_and(|job| job.is_cancel_requested())
+    }
+
+    /// Update progress and message.
     pub fn update(&self, progress: f32, message: impl Into<String>) {
-        if let Ok(mut state) = self.state.write() {
+        let message = message.into();
+        let (title, job) = if let Ok(mut state) = self.state.write() {
             state.progress = Some(progress);
-            state.message = message.into();
+            state.message.clone_from(&message);
+            (state.title.clone(), state.job.clone())
+        } else {
+            return;
+        };
+        if let Some(job) = job {
+            job.update(title, Some(progress), message);
         }
         self.ctx.request_repaint();
     }
 
-    /// Change the title (e.g., from "Loading" to "Scoring")
+    /// Change the operation title while retaining its current progress detail.
     pub fn set_title(&self, title: impl Into<String>) {
-        if let Ok(mut state) = self.state.write() {
-            state.title = title.into();
+        let title = title.into();
+        let (progress, message, job) = if let Ok(mut state) = self.state.write() {
+            state.title.clone_from(&title);
+            (state.progress, state.message.clone(), state.job.clone())
+        } else {
+            return;
+        };
+        if let Some(job) = job {
+            job.update(title, progress, message);
         }
         self.ctx.request_repaint();
     }
 
-    /// Mark as error (will show error styling)
+    /// Mark the operation as failed.
     pub fn set_error(&self, error: impl Into<String>) {
         if let Ok(mut state) = self.state.write() {
             state.error = Some(error.into());
@@ -165,57 +207,58 @@ impl ProgressToastHandle {
         self.ctx.request_repaint();
     }
 
-    /// Dismiss the toast immediately.
+    /// Mark the operation complete, remove its job row, and preserve any error.
     pub fn dismiss(&self) {
-        if let Ok(mut state) = self.state.write() {
-            state.dismissed_at = Some(Instant::now());
+        let (job, error) = self.state.write().map_or_else(
+            |_| (None, None),
+            |mut state| {
+                state.dismissed_at = Some(Instant::now());
+                (state.job.clone(), state.error.take())
+            },
+        );
+        if let Some(job) = job {
+            job.finish();
+        }
+        if let Some(message) = error {
+            if let Ok(mut notifications) = self.pending_notifications.lock() {
+                notifications.push(PendingNotification {
+                    message,
+                    kind: NotificationKind::Error,
+                });
+            }
         }
         self.ctx.request_repaint();
     }
 }
 
-impl Drop for ProgressToastHandle {
-    fn drop(&mut self) {
-        // Only dismiss if this is the last reference
-        if Arc::strong_count(&self.state) <= 1 {
-            // self.dismiss();
-        }
-    }
-}
-
-/// Manages toast notifications for the app
+/// Bottom-right notification surface and notification/job manager.
 pub struct ToastManager {
-    /// egui-toast manager for simple toasts (errors, success)
-    toasts: Toasts,
-    /// Active progress toast handles
     progress_handles: Arc<Mutex<Vec<Arc<RwLock<ProgressToastState>>>>>,
-    /// Standalone error notifications enqueued via [`ToastSender`].
-    pending_notifications: Arc<Mutex<Vec<String>>>,
-    /// Standalone success notifications enqueued via [`ToastSender::send_success`].
-    pending_successes: Arc<Mutex<Vec<String>>>,
-    /// egui context for repaints
+    pending_notifications: Arc<Mutex<Vec<PendingNotification>>>,
+    notifications: Vec<Notification>,
+    next_notification_id: u64,
+    center_open: bool,
+    close_center_when_jobs_finish: bool,
     ctx: egui::Context,
 }
 
 impl ToastManager {
-    /// Create a new `ToastManager` with the egui context already set
     #[must_use]
     pub fn new(ctx: egui::Context) -> Self {
-        let toasts = Toasts::new()
-            .anchor(Align2::RIGHT_BOTTOM, (-10.0, -40.0))
-            .direction(egui::Direction::BottomUp);
-
         Self {
-            toasts,
             progress_handles: Arc::new(Mutex::new(Vec::new())),
             pending_notifications: Arc::new(Mutex::new(Vec::new())),
-            pending_successes: Arc::new(Mutex::new(Vec::new())),
+            notifications: Vec::new(),
+            next_notification_id: 0,
+            center_open: false,
+            close_center_when_jobs_finish: false,
             ctx,
         }
     }
 
-    /// Create a new progress toast and return a handle.
-    /// The handle can be sent to background threads.
+    /// Start a visible progress notification. Call [`ProgressToastHandle::track_job`]
+    /// before passing it to an active background operation.
+    #[must_use]
     pub fn create_progress_toast(
         &self,
         title: impl Into<String>,
@@ -224,205 +267,440 @@ impl ToastManager {
         ProgressToastHandle::new(
             self.ctx.clone(),
             Arc::clone(&self.progress_handles),
+            Arc::clone(&self.pending_notifications),
             title.into(),
             message.into(),
         )
     }
 
-    /// Return a [`ToastSender`] that can enqueue toasts from any thread.
-    /// Drained each frame inside [`Self::show`].
+    /// Return a thread-safe one-shot notification producer.
     #[must_use]
     pub fn sender(&self) -> ToastSender {
         ToastSender {
             queue: Arc::clone(&self.pending_notifications),
-            success_queue: Arc::clone(&self.pending_successes),
             ctx: self.ctx.clone(),
         }
     }
 
-    /// Show an error toast (requires explicit dismissal).
+    /// Add an error notification on the UI thread.
     pub fn show_error(&mut self, message: impl Into<String>) {
-        self.toasts.add(Toast {
-            text: message.into().into(),
-            kind: ToastKind::Error,
-            options: ToastOptions::default().duration(None),
-            style: ToastStyle {
-                close_button_text: "Got it".into(),
-                ..Default::default()
-            },
-        });
+        self.push_notification(message.into(), NotificationKind::Error);
     }
 
-    /// Show a brief auto-closing success toast.
+    /// Add a success notification on the UI thread.
     pub fn show_success(&mut self, message: impl Into<String>) {
-        self.toasts.add(Toast {
-            text: message.into().into(),
-            kind: ToastKind::Success,
-            options: ToastOptions::default().duration_in_seconds(4.0),
-            style: ToastStyle::default(),
-        });
+        self.push_notification(message.into(), NotificationKind::Success);
     }
 
-    /// Render all toasts - call this in the update loop
-    pub fn show(&mut self, ctx: &egui::Context) {
-        // Promote any pending standalone notifications to persistent error toasts.
-        // Drain into a local vec first to release the lock before calling show_error.
-        let pending: Vec<String> = self
+    /// Render the bottom-right overlays and notification/job manager.
+    pub fn show(&mut self, ctx: &egui::Context, jobs: &[JobSnapshot]) {
+        if self.close_center_when_jobs_finish && jobs.is_empty() {
+            self.center_open = false;
+            self.close_center_when_jobs_finish = false;
+        }
+        self.drain_pending_notifications();
+        self.render_overlays(ctx, jobs);
+        self.render_notification_center(ctx, jobs);
+    }
+
+    fn push_notification(&mut self, message: String, kind: NotificationKind) {
+        let id = self.next_notification_id;
+        self.next_notification_id = self.next_notification_id.wrapping_add(1);
+        self.notifications.push(Notification { id, message, kind });
+    }
+
+    fn drain_pending_notifications(&mut self) {
+        let pending: Vec<PendingNotification> = self
             .pending_notifications
             .lock()
-            .map(|mut q| q.drain(..).collect())
+            .map(|mut queue| queue.drain(..).collect())
             .unwrap_or_default();
-        for msg in pending {
-            self.show_error(msg);
+        for notification in pending {
+            self.push_notification(notification.message, notification.kind);
         }
-
-        // Drain success toasts enqueued from background threads.
-        let successes: Vec<String> = self
-            .pending_successes
-            .lock()
-            .map(|mut q| q.drain(..).collect())
-            .unwrap_or_default();
-        for msg in successes {
-            self.show_success(msg);
-        }
-
-        // Render progress toasts manually (not using egui-toast for these)
-        self.render_progress_toasts(ctx);
-
-        // Render simple toasts (errors, success) via egui-toast
-        self.toasts.show(ctx);
     }
 
-    fn render_progress_toasts(&self, ctx: &egui::Context) {
-        // Clean up dismissed handles and collect active ones
-        let active_states: Vec<(usize, ProgressToastState, Arc<RwLock<ProgressToastState>>)> = {
-            let mut handles = self
-                .progress_handles
-                .lock()
-                .expect("progress_handles lock poisoned");
-            // Remove toasts that have been dismissed long enough
-            handles.retain(|state| state.read().is_ok_and(|s| !s.should_remove()));
-            handles
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, state)| {
-                    state
-                        .read()
-                        .ok()
-                        .map(|s| (idx, s.clone(), Arc::clone(state)))
-                })
-                .collect()
+    fn progress_states(&self) -> Vec<(ProgressToastState, Arc<RwLock<ProgressToastState>>)> {
+        let Ok(mut handles) = self.progress_handles.lock() else {
+            return Vec::new();
         };
+        handles.retain(|state| state.read().is_ok_and(|state| state.is_active()));
+        handles
+            .iter()
+            .filter_map(|handle| {
+                handle
+                    .read()
+                    .ok()
+                    .map(|state| (state.clone(), Arc::clone(handle)))
+            })
+            .collect()
+    }
 
-        if active_states.is_empty() {
-            return;
+    fn render_overlays(&mut self, ctx: &egui::Context, jobs: &[JobSnapshot]) {
+        enum Overlay {
+            Progress(ProgressToastState, Arc<RwLock<ProgressToastState>>),
+            Notification(u64, String, NotificationKind),
         }
 
-        // Calculate position for progress toasts (above the simple toasts area)
-        #[allow(deprecated)]
-        let screen_rect = ctx.input(egui::InputState::screen_rect);
-        let toast_width = 300.0;
-        let toast_margin = 10.0;
-        let bottom_offset = 40.0; // Space for status bar
+        if self.center_open {
+            return;
+        }
+        let progress = self.progress_states();
+        let active_jobs = jobs.len();
+        let mut overlays: Vec<Overlay> = progress
+            .into_iter()
+            .filter(|(state, _)| state.visible)
+            .map(|(state, handle)| Overlay::Progress(state, handle))
+            .collect();
+        overlays.extend(self.notifications.iter().map(|notification| {
+            Overlay::Notification(
+                notification.id,
+                notification.message.clone(),
+                notification.kind,
+            )
+        }));
 
-        for (idx, state, state_arc) in &active_states {
-            let toast_height = if state.progress.is_some() {
-                100.0
-            } else {
-                80.0
-            };
-            let y_offset = (*idx as f32).mul_add(toast_height + toast_margin, bottom_offset);
-
-            let pos = egui::pos2(
-                screen_rect.right() - toast_width - toast_margin,
-                screen_rect.bottom() - y_offset - toast_height,
-            );
-
-            egui::Area::new(egui::Id::new(format!("progress_toast_{idx}")))
-                .fixed_pos(pos)
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    if Self::render_single_progress_toast(ui, state) {
-                        // Close button was clicked - dismiss immediately
-                        if let Ok(mut s) = state_arc.write() {
-                            s.dismissed_at = Some(Instant::now());
+        let overflow = overlays.len().saturating_sub(MAX_VISIBLE_TOASTS);
+        let mut dismiss_notifications = Vec::new();
+        for (index, overlay) in overlays.into_iter().take(MAX_VISIBLE_TOASTS).enumerate() {
+            match overlay {
+                Overlay::Progress(state, handle) => {
+                    if Self::render_progress_overlay(ctx, index, &state) {
+                        if let Ok(mut state) = handle.write() {
+                            state.visible = false;
                         }
                     }
+                }
+                Overlay::Notification(id, message, kind) => {
+                    if Self::render_notification_overlay(ctx, index, &message, kind) {
+                        dismiss_notifications.push(id);
+                    }
+                }
+            }
+        }
+        if !dismiss_notifications.is_empty() {
+            self.notifications
+                .retain(|notification| !dismiss_notifications.contains(&notification.id));
+        }
+
+        if active_jobs > 0 || overflow > 0 {
+            let text = match (active_jobs, overflow) {
+                (0, more) => format!("{more} more notifications"),
+                (jobs, 0) => format!("Jobs ({jobs})"),
+                (jobs, more) => format!("Jobs ({jobs}) · {more} more"),
+            };
+            let screen_rect = ctx.content_rect();
+            egui::Area::new(egui::Id::new("notification_center_button"))
+                .fixed_pos(egui::pos2(
+                    screen_rect.right() - 330.0,
+                    screen_rect.bottom() - 30.0,
+                ))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        if active_jobs > 0
+                            && ui
+                                .button("Hide all jobs")
+                                .on_hover_text("Fold all active job overlays")
+                                .clicked()
+                        {
+                            self.fold_all_jobs();
+                        }
+                        if ui.button(text).clicked() {
+                            self.center_open = true;
+                            self.close_center_when_jobs_finish = active_jobs > 0;
+                        }
+                    });
                 });
         }
     }
 
-    /// Render a single progress toast. Returns true if the close/ack button was clicked.
-    fn render_single_progress_toast(ui: &mut egui::Ui, state: &ProgressToastState) -> bool {
-        let is_error = state.error.is_some();
-
-        let fill = if is_error {
-            Color32::from_rgb(80, 20, 20)
-        } else {
-            ui.visuals().window_fill
-        };
-
-        let inner = egui::Frame::default()
-            .fill(fill)
-            .stroke(ui.visuals().window_stroke)
-            .inner_margin(Margin::same(12))
-            .corner_radius(8.0)
-            .shadow(egui::epaint::Shadow {
-                offset: [0, 2],
-                blur: 8,
-                spread: 0,
-                color: Color32::from_black_alpha(60),
-            })
-            .show(ui, |ui| {
-                ui.set_min_width(280.0);
-
-                let close_clicked = ui
-                    .horizontal(|ui| {
-                        if !is_error {
+    fn render_progress_overlay(
+        ctx: &egui::Context,
+        index: usize,
+        state: &ProgressToastState,
+    ) -> bool {
+        let screen_rect = ctx.content_rect();
+        let height = 106.0;
+        let pos = egui::pos2(
+            screen_rect.right() - 310.0,
+            (index as f32).mul_add(-(height + 8.0), screen_rect.bottom() - 42.0 - height),
+        );
+        let mut fold = false;
+        egui::Area::new(egui::Id::new(("job_toast", index)))
+            .fixed_pos(pos)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::default()
+                    .fill(ui.visuals().window_fill)
+                    .stroke(ui.visuals().window_stroke)
+                    .inner_margin(Margin::same(10))
+                    .corner_radius(6.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(280.0);
+                        ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.add_space(8.0);
+                            ui.strong(&state.title);
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    fold = ui
+                                        .small_button("×")
+                                        .on_hover_text("Fold job toast")
+                                        .clicked();
+                                    if let Some(job) = &state.job {
+                                        if !job.is_cancellable() {
+                                            ui.small("Cannot cancel");
+                                        } else if job.is_cancel_requested() {
+                                            ui.add_enabled(false, egui::Button::new("Cancelling…"));
+                                        } else if ui.small_button("Cancel").clicked() {
+                                            job.request_cancel();
+                                        }
+                                    }
+                                },
+                            );
+                        });
+                        if let Some(error) = &state.error {
+                            ui.colored_label(Color32::from_rgb(255, 100, 100), error);
+                        } else {
+                            ui.label(&state.message);
                         }
-                        ui.strong(&state.title);
-
-                        // Add close button on the right
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.small_button("x").clicked()
-                        })
-                        .inner
-                    })
-                    .inner;
-
-                ui.add_space(6.0);
-
-                // Show error or message
-                if let Some(ref error) = state.error {
-                    ui.colored_label(Color32::from_rgb(255, 100, 100), error);
-                } else {
-                    // Truncate long messages for display
-                    let display_message = if state.message.chars().count() > 50 {
-                        // Take the last 47 characters
-                        let char_count = state.message.chars().count();
-                        let skip_chars = char_count.saturating_sub(47);
-                        let truncated: String = state.message.chars().skip(skip_chars).collect();
-                        format!("...{truncated}")
-                    } else {
-                        state.message.clone()
-                    };
-                    ui.label(&display_message);
-                }
-
-                // Progress bar (only if we have determinate progress)
-                if let Some(progress) = state.progress {
-                    ui.add_space(6.0);
-                    let progress_bar = egui::ProgressBar::new(progress)
-                        .show_percentage()
-                        .fill(Color32::from_rgb(100, 180, 100));
-                    ui.add(progress_bar);
-                }
-
-                close_clicked
+                        if let Some(progress) = state.progress {
+                            ui.add(egui::ProgressBar::new(progress).show_percentage());
+                        }
+                    });
             });
+        fold
+    }
 
-        inner.inner
+    fn render_notification_overlay(
+        ctx: &egui::Context,
+        index: usize,
+        message: &str,
+        kind: NotificationKind,
+    ) -> bool {
+        let screen_rect = ctx.content_rect();
+        let height = 76.0;
+        let pos = egui::pos2(
+            screen_rect.right() - 310.0,
+            (index as f32).mul_add(-(height + 8.0), screen_rect.bottom() - 42.0 - height),
+        );
+        let mut dismiss = false;
+        egui::Area::new(egui::Id::new(("notification_toast", index)))
+            .fixed_pos(pos)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::default()
+                    .fill(ui.visuals().window_fill)
+                    .stroke(ui.visuals().window_stroke)
+                    .inner_margin(Margin::same(10))
+                    .corner_radius(6.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(280.0);
+                        ui.horizontal(|ui| {
+                            let color = match kind {
+                                NotificationKind::Error => Color32::from_rgb(255, 100, 100),
+                                NotificationKind::Success => Color32::from_rgb(100, 200, 120),
+                            };
+                            ui.colored_label(
+                                color,
+                                match kind {
+                                    NotificationKind::Error => "Error",
+                                    NotificationKind::Success => "Success",
+                                },
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    dismiss =
+                                        ui.small_button("×").on_hover_text("Dismiss").clicked();
+                                },
+                            );
+                        });
+                        ui.label(message);
+                    });
+            });
+        dismiss
+    }
+
+    fn render_notification_center(&mut self, ctx: &egui::Context, jobs: &[JobSnapshot]) {
+        if !self.center_open {
+            return;
+        }
+
+        let screen_rect = ctx.content_rect();
+        let mut open = true;
+        egui::Window::new("Notifications")
+            .id(egui::Id::new("notification_center"))
+            .default_pos(egui::pos2(
+                screen_rect.right() - 450.0,
+                screen_rect.bottom() - 400.0,
+            ))
+            .default_size(egui::vec2(430.0, 360.0))
+            .min_size(egui::vec2(360.0, 240.0))
+            .resizable(true)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                if !jobs.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.heading(format!("Jobs ({})", jobs.len()));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let cancellable =
+                                jobs.iter().any(|job| job.cancellable && !job.cancelling);
+                            if ui
+                                .add_enabled(cancellable, egui::Button::new("Cancel all"))
+                                .clicked()
+                            {
+                                for job in jobs.iter().filter(|job| job.cancellable) {
+                                    job.request_cancel();
+                                }
+                            }
+                            if ui.button("Fold all").clicked() {
+                                self.fold_all_jobs();
+                            }
+                        });
+                    });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(260.0)
+                        .show(ui, |ui| {
+                            for job in jobs {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.vertical(|ui| {
+                                        ui.strong(&job.title);
+                                        ui.small(&job.message);
+                                        if let Some(progress) = job.progress {
+                                            ui.add(
+                                                egui::ProgressBar::new(progress)
+                                                    .desired_width(JOB_PROGRESS_WIDTH)
+                                                    .show_percentage(),
+                                            );
+                                        }
+                                    });
+                                    if !job.cancellable {
+                                        ui.small("Cannot cancel");
+                                    } else if job.cancelling {
+                                        ui.add_enabled(false, egui::Button::new("Cancelling…"));
+                                    } else if ui.button("Cancel").clicked() {
+                                        job.request_cancel();
+                                    }
+                                });
+                                ui.separator();
+                            }
+                        });
+                }
+
+                if !self.notifications.is_empty() {
+                    ui.heading("Notifications");
+                    let mut dismiss = Vec::new();
+                    egui::ScrollArea::vertical()
+                        .max_height(160.0)
+                        .show(ui, |ui| {
+                            for notification in &self.notifications {
+                                ui.horizontal(|ui| {
+                                    ui.label(&notification.message);
+                                    if ui.small_button("×").on_hover_text("Dismiss").clicked() {
+                                        dismiss.push(notification.id);
+                                    }
+                                });
+                            }
+                        });
+                    self.notifications
+                        .retain(|notification| !dismiss.contains(&notification.id));
+                }
+            });
+        self.center_open = open;
+        if !open {
+            self.close_center_when_jobs_finish = false;
+        }
+    }
+
+    fn fold_all_jobs(&self) {
+        if let Ok(handles) = self.progress_handles.lock() {
+            for handle in handles.iter() {
+                if let Ok(mut state) = handle.write() {
+                    if state.job.is_some() {
+                        state.visible = false;
+                    }
+                }
+            }
+        }
+        self.ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToastManager;
+    use crate::ui::JobManager;
+
+    #[test]
+    fn sibling_progress_jobs_share_cancellation() {
+        let ctx = egui::Context::default();
+        let job_manager = JobManager::new(ctx.clone());
+        let toast_manager = ToastManager::new(ctx);
+        let parent = toast_manager
+            .create_progress_toast("Loading example.log", "Starting…")
+            .track_job(job_manager.start("Loading example.log", "Starting…"));
+        let sibling = parent.spawn_sibling("ML scoring", "Connecting…");
+        let job = job_manager
+            .try_snapshots()
+            .expect("uncontended registry is readable")
+            .into_iter()
+            .find(|job| job.title == "ML scoring")
+            .expect("sibling job is visible");
+
+        job.request_cancel();
+
+        assert!(parent.is_cancel_requested());
+        assert!(sibling.is_cancel_requested());
+    }
+
+    #[test]
+    fn folding_all_jobs_keeps_work_running_but_hides_its_overlay() {
+        let ctx = egui::Context::default();
+        let job_manager = JobManager::new(ctx.clone());
+        let toast_manager = ToastManager::new(ctx);
+        let job = toast_manager
+            .create_progress_toast("Loading example.log", "Starting…")
+            .track_job(job_manager.start("Loading example.log", "Starting…"));
+
+        toast_manager.fold_all_jobs();
+
+        assert!(
+            !job.state
+                .read()
+                .expect("toast state remains readable")
+                .visible
+        );
+        assert!(!job.is_cancel_requested());
+    }
+
+    #[test]
+    fn job_manager_closes_when_its_last_job_finishes() {
+        let ctx = egui::Context::default();
+        let mut manager = ToastManager::new(ctx.clone());
+        manager.center_open = true;
+        manager.close_center_when_jobs_finish = true;
+
+        manager.show(&ctx, &[]);
+
+        assert!(!manager.center_open);
+        assert!(!manager.close_center_when_jobs_finish);
+    }
+
+    #[test]
+    fn completed_job_errors_become_dismissable_notifications() {
+        let ctx = egui::Context::default();
+        let mut manager = ToastManager::new(ctx);
+        let job = manager.create_progress_toast("Loading example.log", "Starting…");
+
+        job.set_error("File is unreadable");
+        job.dismiss();
+        manager.drain_pending_notifications();
+
+        assert_eq!(manager.notifications.len(), 1);
+        assert_eq!(manager.notifications[0].message, "File is unreadable");
     }
 }

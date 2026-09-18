@@ -1,5 +1,5 @@
 use super::windows;
-use super::ToastManager;
+use super::{JobManager, ToastManager};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,6 +63,12 @@ pub struct LogCrabApp {
 
     /// Toast notification manager
     toast_manager: ToastManager,
+
+    /// Active user-visible background work.
+    job_manager: JobManager,
+
+    /// Last lock-free snapshot used when a worker currently updates the job registry.
+    job_snapshots: Vec<super::JobSnapshot>,
 
     /// Persistent session history
     session_history: SessionHistory,
@@ -137,6 +143,8 @@ impl LogCrabApp {
             pending_drop_files: Vec::new(),
             pending_source_removal: None,
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
+            job_manager: JobManager::new(cc.egui_ctx.clone()),
+            job_snapshots: Vec::new(),
             session_history,
             pending_session_offer: None,
         };
@@ -269,9 +277,13 @@ impl LogCrabApp {
             let file_name = path
                 .file_name()
                 .map_or_else(|| "file".to_string(), |n| n.to_string_lossy().to_string());
+            let job = self
+                .job_manager
+                .start(format!("Processing {file_name}"), "Starting…");
             let toast_handle = self
                 .toast_manager
-                .create_progress_toast(file_name, "Starting...");
+                .create_progress_toast(file_name, "Starting...")
+                .track_job(job);
             let warnings = self.toast_manager.sender();
 
             session.add_file(
@@ -706,19 +718,17 @@ impl LogCrabApp {
 
     /// Render bottom status panel
     fn render_status_panel(&self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            // Show filtering indicator if any filter is currently processing
-            if self
-                .filter_worker
-                .handle()
-                .is_filtering
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                ui.separator();
+        if self
+            .filter_worker
+            .handle()
+            .is_filtering
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label("Filtering...");
-            }
-        });
+            });
+        }
     }
 
     /// Render central content area with dock layout
@@ -1061,6 +1071,10 @@ impl eframe::App for LogCrabApp {
             }
         }
 
+        if let Some(snapshots) = self.job_manager.try_snapshots() {
+            self.job_snapshots = snapshots;
+        }
+
         {
             profiling::scope!("top_panel");
             egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -1145,7 +1159,7 @@ impl eframe::App for LogCrabApp {
         }
 
         // Show toast notifications
-        self.toast_manager.show(ctx);
+        self.toast_manager.show(ctx, &self.job_snapshots);
 
         profiling::finish_frame!();
     }
