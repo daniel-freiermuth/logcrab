@@ -216,16 +216,24 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
     /// Files with version ≤ v2 are deserialized as [`CrabFileV2`] and migrated;
     /// v3+ files have their `FT::SLUG` key remapped to `file_state` before
     /// deserialization.
+    ///
+    /// Returns `Ok(None)` when the file is empty or whitespace-only (freshly
+    /// created, no session saved yet), so callers can tell a new session apart
+    /// from a corrupt one.
     /// # Errors
     ///
     /// Returns an error when the requested operation cannot be completed.
-    pub fn load_from_file(file: &mut std::fs::File) -> Result<Self, SessionError> {
+    pub fn load_from_file(file: &mut std::fs::File) -> Result<Option<Self>, SessionError> {
         use std::io::{Read, Seek, SeekFrom};
 
         file.seek(SeekFrom::Start(0)).map_err(SessionError::Io)?;
         let mut content = String::new();
         file.read_to_string(&mut content)
             .map_err(SessionError::Io)?;
+
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
 
         let mut value: serde_json::Value =
             serde_json::from_str(&content).map_err(SessionError::Parse)?;
@@ -238,7 +246,7 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
         // v2 and older: use the legacy parser and migrate up.
         if version <= CRAB_FILE_V2 {
             let v2: CrabFileV2 = serde_json::from_value(value).map_err(SessionError::Parse)?;
-            return Ok(Self::migrate_from_v2(v2));
+            return Ok(Some(Self::migrate_from_v2(v2)));
         }
 
         if version > CRAB_FILE_VERSION {
@@ -273,7 +281,9 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
             }
         }
 
-        serde_json::from_value(value).map_err(SessionError::Parse)
+        serde_json::from_value(value)
+            .map(Some)
+            .map_err(SessionError::Parse)
     }
 
     /// Save the session to an already-open file handle.
