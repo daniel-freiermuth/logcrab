@@ -842,12 +842,10 @@ impl LogTable {
             let label_response = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
 
             // Show tooltip with bookmark name if bookmarked
-            if is_bookmarked {
-                if let Some(name) = bookmark_name {
-                    label_response
-                        .clone()
-                        .on_hover_text(format!("📑 Bookmark: {name}"));
-                }
+            if is_bookmarked && let Some(name) = bookmark_name {
+                label_response
+                    .clone()
+                    .on_hover_text(format!("📑 Bookmark: {name}"));
             }
             response = Some(label_response);
         });

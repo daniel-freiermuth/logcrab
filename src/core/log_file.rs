@@ -196,10 +196,10 @@ impl LogFileLoader {
             toast.dismiss();
 
             // Wait for sidecar if it was spawned.
-            if let Some(handle) = sidecar_handle {
-                if let Err(e) = handle.join() {
-                    tracing::error!("Sidecar scoring thread panicked: {e:?}");
-                }
+            if let Some(handle) = sidecar_handle
+                && let Err(e) = handle.join()
+            {
+                tracing::error!("Sidecar scoring thread panicked: {e:?}");
             }
         });
 
