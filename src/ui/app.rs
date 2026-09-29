@@ -294,13 +294,13 @@ impl LogCrabApp {
         }
 
         if let Some(paths) = dialog.pick_files() {
-            if let Some(first) = paths.first() {
-                if let Some(parent) = first.parent() {
-                    let dir = parent.to_path_buf();
-                    match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
-                        Ok(updated) => self.global_config = updated,
-                        Err(e) => tracing::error!("Failed to update config: {e}"),
-                    }
+            if let Some(first) = paths.first()
+                && let Some(parent) = first.parent()
+            {
+                let dir = parent.to_path_buf();
+                match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
+                    Ok(updated) => self.global_config = updated,
+                    Err(e) => tracing::error!("Failed to update config: {e}"),
                 }
             }
 
@@ -323,13 +323,13 @@ impl LogCrabApp {
 
         if let Some(paths) = dialog.pick_files() {
             // Remember the directory from the first file
-            if let Some(first) = paths.first() {
-                if let Some(parent) = first.parent() {
-                    let dir = parent.to_path_buf();
-                    match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
-                        Ok(updated) => self.global_config = updated,
-                        Err(e) => tracing::error!("Failed to update config: {e}"),
-                    }
+            if let Some(first) = paths.first()
+                && let Some(parent) = first.parent()
+            {
+                let dir = parent.to_path_buf();
+                match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
+                    Ok(updated) => self.global_config = updated,
+                    Err(e) => tracing::error!("Failed to update config: {e}"),
                 }
             }
 
@@ -504,14 +504,13 @@ impl LogCrabApp {
 
                     if let Some(paths) = dialog.pick_files() {
                         // Remember the directory from the first file
-                        if let Some(first) = paths.first() {
-                            if let Some(parent) = first.parent() {
-                                let dir = parent.to_path_buf();
-                                match GlobalConfig::update(|c| c.last_filters_directory = Some(dir))
-                                {
-                                    Ok(updated) => self.global_config = updated,
-                                    Err(e) => tracing::error!("Failed to update config: {e}"),
-                                }
+                        if let Some(first) = paths.first()
+                            && let Some(parent) = first.parent()
+                        {
+                            let dir = parent.to_path_buf();
+                            match GlobalConfig::update(|c| c.last_filters_directory = Some(dir)) {
+                                Ok(updated) => self.global_config = updated,
+                                Err(e) => tracing::error!("Failed to update config: {e}"),
                             }
                         }
                         for path in paths {
@@ -1053,12 +1052,12 @@ impl eframe::App for LogCrabApp {
         }
 
         // Process pending source removal
-        if let Some(source_id) = self.pending_source_removal.take() {
-            if let Some(ref mut session) = self.session {
-                // Save .crab file before removal to persist any unsaved data
-                session.save_crab_file();
-                session.state.store.remove_source(source_id);
-            }
+        if let Some(source_id) = self.pending_source_removal.take()
+            && let Some(ref mut session) = self.session
+        {
+            // Save .crab file before removal to persist any unsaved data
+            session.save_crab_file();
+            session.state.store.remove_source(source_id);
         }
 
         {
