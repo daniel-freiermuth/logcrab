@@ -80,10 +80,10 @@ jobs:
 
       - if: steps.version.outputs.release == 'true'
         name: Install protobuf compiler
-        uses: arduino/setup-protoc@v3
+        uses: taiki-e/install-action@v2
         with:
-          version: "25.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # install-action names protoc releases 3.<major>.<minor>; this is protoc v25.3.
+          tool: protoc@3.25.3
 
       - if: steps.version.outputs.release == 'true' && runner.os == 'Linux'
         name: Install Linux packaging dependencies
