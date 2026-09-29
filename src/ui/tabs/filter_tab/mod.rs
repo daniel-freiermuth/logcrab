@@ -340,23 +340,23 @@ impl FilterView {
         }
 
         // ── Poll for explain results ──────────────────────────────────────────
-        if self.attention_pending {
-            if let Some(source_id) = self.attention_target.map(|t| t.source_id()) {
-                use crate::anomaly::sidecar_client::ExplainPollStatus;
-                match store.poll_explain_status(source_id) {
-                    ExplainPollStatus::Ready(result)
-                        if Some(result.target_line_number)
-                            == self.attention_target.map(|t| t.line_index_within_source()) =>
-                    {
-                        self.attention_result = Some(result);
-                        self.attention_pending = false;
-                    }
-                    ExplainPollStatus::Dead => {
-                        self.attention_pending = false;
-                        self.attention_error = Some("Sidecar connection lost".to_string());
-                    }
-                    ExplainPollStatus::Pending | ExplainPollStatus::Ready(_) => {}
+        if self.attention_pending
+            && let Some(source_id) = self.attention_target.map(|t| t.source_id())
+        {
+            use crate::anomaly::sidecar_client::ExplainPollStatus;
+            match store.poll_explain_status(source_id) {
+                ExplainPollStatus::Ready(result)
+                    if Some(result.target_line_number)
+                        == self.attention_target.map(|t| t.line_index_within_source()) =>
+                {
+                    self.attention_result = Some(result);
+                    self.attention_pending = false;
                 }
+                ExplainPollStatus::Dead => {
+                    self.attention_pending = false;
+                    self.attention_error = Some("Sidecar connection lost".to_string());
+                }
+                ExplainPollStatus::Pending | ExplainPollStatus::Ready(_) => {}
             }
         }
 
@@ -588,13 +588,13 @@ impl LogCrabTab for FilterView {
         let mut highlights_with_current = Vec::with_capacity(all_filter_highlights.len() + 1);
 
         // Add this tab's own filter first (if it has a valid regex)
-        if let Ok(regex) = &self.state.search.get_regex() {
-            if !self.state.search.search_text.is_empty() {
-                highlights_with_current.push(FilterHighlight {
-                    regex: regex.clone(),
-                    color: self.state.color,
-                });
-            }
+        if let Ok(regex) = &self.state.search.get_regex()
+            && !self.state.search.search_text.is_empty()
+        {
+            highlights_with_current.push(FilterHighlight {
+                regex: regex.clone(),
+                color: self.state.color,
+            });
         }
 
         // Add all other global filters (excluding this one to avoid duplicates)

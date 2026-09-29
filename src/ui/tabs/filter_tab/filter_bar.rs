@@ -265,12 +265,12 @@ impl FilterBar {
                 }
             });
 
-        if let Some(fav) = current_favorite {
-            if combo_response.response.double_clicked() {
-                self.editing_favorite = true;
-                self.favorite_focus_requested = false; // Reset so we request focus in the next frame
-                self.temp_favorite_name.clone_from(&fav.name);
-            }
+        if let Some(fav) = current_favorite
+            && combo_response.response.double_clicked()
+        {
+            self.editing_favorite = true;
+            self.favorite_focus_requested = false; // Reset so we request focus in the next frame
+            self.temp_favorite_name.clone_from(&fav.name);
         }
     }
 
