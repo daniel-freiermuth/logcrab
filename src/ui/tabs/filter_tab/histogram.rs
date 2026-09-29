@@ -31,22 +31,20 @@ use std::time::Duration;
 
 /// Convert a floating-point seconds value to `TimeDelta`, handling negative values.
 /// `TimeDelta` doesn't have `from_f64()`, and Duration panics on negatives, so we need this helper.
-fn timedelta_from_secs_f64(secs: f64) -> TimeDelta {
-    if secs >= 0.0 {
-        TimeDelta::from_std(Duration::from_secs_f64(secs)).expect("duration in range")
-    } else {
-        -TimeDelta::from_std(Duration::from_secs_f64(-secs)).expect("duration in range")
-    }
+/// Returns `None` for NaN, infinite, or out-of-range values.
+fn timedelta_from_secs_f64(secs: f64) -> Option<TimeDelta> {
+    let magnitude = Duration::try_from_secs_f64(secs.abs()).ok()?;
+    let delta = TimeDelta::from_std(magnitude).ok()?;
+    Some(if secs < 0.0 { -delta } else { delta })
 }
 
 /// Convert a floating-point seconds value to `TimeDelta`, handling negative values.
 /// `TimeDelta` doesn't have `from_f32()`, and Duration panics on negatives, so we need this helper.
-fn timedelta_from_secs_f32(secs: f32) -> TimeDelta {
-    if secs >= 0.0 {
-        TimeDelta::from_std(Duration::from_secs_f32(secs)).expect("duration in range")
-    } else {
-        -TimeDelta::from_std(Duration::from_secs_f32(-secs)).expect("duration in range")
-    }
+/// Returns `None` for NaN, infinite, or out-of-range values.
+fn timedelta_from_secs_f32(secs: f32) -> Option<TimeDelta> {
+    let magnitude = Duration::try_from_secs_f32(secs.abs()).ok()?;
+    let delta = TimeDelta::from_std(magnitude).ok()?;
+    Some(if secs < 0.0 { -delta } else { delta })
 }
 
 /// Vertical mouse-wheel movement this frame in points, summed from the raw
@@ -98,6 +96,9 @@ fn raw_vertical_wheel_delta(ui: &Ui) -> f32 {
             .sum()
     })
 }
+
+/// Minimum visible time span reachable by scroll-zooming in
+const MIN_SCROLL_ZOOM_DURATION: TimeDelta = TimeDelta::milliseconds(10);
 
 /// Minimum fraction of view width required for drag-to-zoom selection
 const MIN_DRAG_ZOOM_FRACTION: f32 = 0.005;
@@ -656,18 +657,24 @@ impl Histogram {
         let cursor_fraction = ((hover_pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
 
         let view_duration = view_end - view_start;
-        // Don't zoom in past 10 milliseconds or zoom out past full range. When the data
-        // itself spans less than 10 ms the floor drops to `full_duration`, which keeps
+        let Some(new_duration) =
+            timedelta_from_secs_f64(view_duration.as_seconds_f64() * zoom_factor)
+        else {
+            return;
+        };
+        // Don't zoom in past the minimum span or zoom out past full range. When the data
+        // itself spans less than the minimum the floor drops to `full_duration`, which keeps
         // `clamp`'s `min <= max` precondition and pins the view to the full range.
-        let min_duration = TimeDelta::milliseconds(10).min(full_duration);
-        let new_duration = timedelta_from_secs_f64(view_duration.as_seconds_f64() * zoom_factor)
-            .clamp(min_duration, full_duration);
+        let min_duration = MIN_SCROLL_ZOOM_DURATION.min(full_duration);
+        let new_duration = new_duration.clamp(min_duration, full_duration);
 
         // New start and end, keeping cursor at same relative position
-        let new_start = view_start
-            + timedelta_from_secs_f32(
-                cursor_fraction * (view_duration - new_duration).as_seconds_f32(),
-            );
+        let Some(start_offset) = timedelta_from_secs_f32(
+            cursor_fraction * (view_duration - new_duration).as_seconds_f32(),
+        ) else {
+            return;
+        };
+        let new_start = view_start + start_offset;
         let new_end = new_start + new_duration;
 
         // Clamp to full data range
@@ -952,11 +959,8 @@ impl Histogram {
         // to match how the selected indicator position is calculated
         let total_time = view_bucket_size * (num_visible_buckets as u32);
         let click_fraction = f64::from(relative_x / rect.width());
-        let click_time = view_start
-            + chrono::Duration::from_std(Duration::from_secs_f64(
-                total_time.as_secs_f64() * click_fraction,
-            ))
-            .expect("histogram click time within representable range");
+        let click_offset = timedelta_from_secs_f64(total_time.as_secs_f64() * click_fraction)?;
+        let click_time = view_start + click_offset;
 
         // Binary search to find the closest line by timestamp
         // Since filtered_indices are sorted by timestamp, we can use binary search
@@ -1150,7 +1154,9 @@ mod tests {
             end - start < TimeDelta::milliseconds(10_000),
             "did not zoom in"
         );
-        let cursor_time = start + timedelta_from_secs_f64((end - start).as_seconds_f64() * 0.25);
+        let cursor_offset =
+            timedelta_from_secs_f64((end - start).as_seconds_f64() * 0.25).expect("finite offset");
+        let cursor_time = start + cursor_offset;
         assert_close(cursor_time, ts(2_500));
     }
 
@@ -1197,9 +1203,28 @@ mod tests {
                 view_end,
             );
             let (start, end) = zoom.visible_range.expect("range set");
-            assert_eq!(end - start, TimeDelta::milliseconds(10));
+            assert_eq!(end - start, MIN_SCROLL_ZOOM_DURATION);
             (view_start, view_end) = (start, end);
         }
+    }
+
+    #[test]
+    fn scroll_zoom_ignores_zero_width_rect() {
+        let data = data(0, 10_000);
+        let mut zoom = HistogramZoomState::default();
+        let zero_width = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 20.0));
+
+        Histogram::handle_scroll_zoom(
+            &mut zoom,
+            ZOOM_IN,
+            at_x(0.0),
+            zero_width,
+            &data,
+            ts(0),
+            ts(10_000),
+        );
+
+        assert_eq!(zoom.visible_range, None);
     }
 
     #[test]
@@ -1279,12 +1304,29 @@ mod tests {
 
     #[test]
     fn timedelta_from_secs_handles_negative_values() {
-        assert_eq!(timedelta_from_secs_f64(1.5), TimeDelta::milliseconds(1_500));
+        assert_eq!(
+            timedelta_from_secs_f64(1.5),
+            Some(TimeDelta::milliseconds(1_500))
+        );
         assert_eq!(
             timedelta_from_secs_f64(-1.5),
-            TimeDelta::milliseconds(-1_500)
+            Some(TimeDelta::milliseconds(-1_500))
         );
-        assert_eq!(timedelta_from_secs_f32(0.5), TimeDelta::milliseconds(500));
-        assert_eq!(timedelta_from_secs_f32(-0.5), TimeDelta::milliseconds(-500));
+        assert_eq!(
+            timedelta_from_secs_f32(0.5),
+            Some(TimeDelta::milliseconds(500))
+        );
+        assert_eq!(
+            timedelta_from_secs_f32(-0.5),
+            Some(TimeDelta::milliseconds(-500))
+        );
+    }
+
+    #[test]
+    fn timedelta_from_secs_rejects_non_finite_values() {
+        assert_eq!(timedelta_from_secs_f64(f64::NAN), None);
+        assert_eq!(timedelta_from_secs_f64(f64::INFINITY), None);
+        assert_eq!(timedelta_from_secs_f32(f32::NAN), None);
+        assert_eq!(timedelta_from_secs_f32(f32::NEG_INFINITY), None);
     }
 }
