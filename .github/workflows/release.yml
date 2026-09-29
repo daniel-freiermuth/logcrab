@@ -44,7 +44,7 @@ jobs:
             deb: false
           - id: macos-aarch64
             name: macOS aarch64
-            os: macos-14
+            os: macos-15
             arch: aarch64
             platform: macos
             deb: false
