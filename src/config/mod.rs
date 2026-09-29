@@ -20,7 +20,6 @@ pub mod session_history;
 
 use crate::core::SearchRule;
 use crate::input::ShortcutAction;
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -332,7 +331,7 @@ impl GlobalConfig {
             .open(&path)
             .map_err(|e| format!("Failed to open config file: {e}"))?;
 
-        file.lock_exclusive()
+        file.lock()
             .map_err(|e| format!("Failed to lock config file: {e}"))?;
 
         let mut contents = String::new();

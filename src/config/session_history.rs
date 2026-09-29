@@ -17,7 +17,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use chrono::{DateTime, Local};
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -247,7 +246,7 @@ impl SessionHistory {
             .open(&path)
             .map_err(|e| format!("Failed to open session history file: {e}"))?;
 
-        file.lock_exclusive()
+        file.lock()
             .map_err(|e| format!("Failed to lock session history file: {e}"))?;
 
         let mut contents = String::new();
