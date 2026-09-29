@@ -31,23 +31,24 @@ use std::time::Duration;
 
 /// Convert a floating-point seconds value to `TimeDelta`, handling negative values.
 /// `TimeDelta` doesn't have `from_f64()`, and Duration panics on negatives, so we need this helper.
-fn timedelta_from_secs_f64(secs: f64) -> TimeDelta {
-    if secs >= 0.0 {
-        TimeDelta::from_std(Duration::from_secs_f64(secs)).expect("duration in range")
-    } else {
-        -TimeDelta::from_std(Duration::from_secs_f64(-secs)).expect("duration in range")
-    }
+/// Returns `None` for NaN, infinite, or out-of-range values.
+fn timedelta_from_secs_f64(secs: f64) -> Option<TimeDelta> {
+    let magnitude = Duration::try_from_secs_f64(secs.abs()).ok()?;
+    let delta = TimeDelta::from_std(magnitude).ok()?;
+    Some(if secs < 0.0 { -delta } else { delta })
 }
 
 /// Convert a floating-point seconds value to `TimeDelta`, handling negative values.
 /// `TimeDelta` doesn't have `from_f32()`, and Duration panics on negatives, so we need this helper.
-fn timedelta_from_secs_f32(secs: f32) -> TimeDelta {
-    if secs >= 0.0 {
-        TimeDelta::from_std(Duration::from_secs_f32(secs)).expect("duration in range")
-    } else {
-        -TimeDelta::from_std(Duration::from_secs_f32(-secs)).expect("duration in range")
-    }
+/// Returns `None` for NaN, infinite, or out-of-range values.
+fn timedelta_from_secs_f32(secs: f32) -> Option<TimeDelta> {
+    let magnitude = Duration::try_from_secs_f32(secs.abs()).ok()?;
+    let delta = TimeDelta::from_std(magnitude).ok()?;
+    Some(if secs < 0.0 { -delta } else { delta })
 }
+
+/// Minimum visible time span reachable by scroll-zooming in
+const MIN_SCROLL_ZOOM_DURATION: TimeDelta = TimeDelta::milliseconds(10);
 
 /// Minimum fraction of view width required for drag-to-zoom selection
 const MIN_DRAG_ZOOM_FRACTION: f32 = 0.005;
@@ -602,19 +603,31 @@ impl Histogram {
         let zoom_factor: f64 = if scroll_delta > 0.0 { 0.8 } else { 1.25 };
         let full_duration = data.full_end - data.full_start;
 
+        // Nothing to zoom when the whole data range is at or below the minimum span.
+        // Also guards `clamp` below, which panics if min > max.
+        if full_duration <= MIN_SCROLL_ZOOM_DURATION {
+            return;
+        }
+
         // Calculate cursor position as fraction of view
         let cursor_fraction = ((hover_pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
 
         let view_duration = view_end - view_start;
-        let new_duration = timedelta_from_secs_f64(view_duration.as_seconds_f64() * zoom_factor)
-            // Don't zoom in past 10 milliseconds or zoom out past full range
-            .clamp(TimeDelta::milliseconds(10), full_duration);
+        let Some(new_duration) =
+            timedelta_from_secs_f64(view_duration.as_seconds_f64() * zoom_factor)
+        else {
+            return;
+        };
+        // Don't zoom in past the minimum span or zoom out past full range
+        let new_duration = new_duration.clamp(MIN_SCROLL_ZOOM_DURATION, full_duration);
 
         // New start and end, keeping cursor at same relative position
-        let new_start = view_start
-            + timedelta_from_secs_f32(
-                cursor_fraction * (view_duration - new_duration).as_seconds_f32(),
-            );
+        let Some(start_offset) = timedelta_from_secs_f32(
+            cursor_fraction * (view_duration - new_duration).as_seconds_f32(),
+        ) else {
+            return;
+        };
+        let new_start = view_start + start_offset;
         let new_end = new_start + new_duration;
 
         // Clamp to full data range
@@ -899,11 +912,8 @@ impl Histogram {
         // to match how the selected indicator position is calculated
         let total_time = view_bucket_size * (num_visible_buckets as u32);
         let click_fraction = f64::from(relative_x / rect.width());
-        let click_time = view_start
-            + chrono::Duration::from_std(Duration::from_secs_f64(
-                total_time.as_secs_f64() * click_fraction,
-            ))
-            .expect("histogram click time within representable range");
+        let click_offset = timedelta_from_secs_f64(total_time.as_secs_f64() * click_fraction)?;
+        let click_time = view_start + click_offset;
 
         // Binary search to find the closest line by timestamp
         // Since filtered_indices are sorted by timestamp, we can use binary search
@@ -981,5 +991,108 @@ impl Histogram {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn data_spanning(span: TimeDelta) -> (HistogramData, DateTime<Local>, DateTime<Local>) {
+        let start = Local.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let end = start + span;
+        let data = HistogramData {
+            start_time: start,
+            end_time: end,
+            full_start: start,
+            full_end: end,
+            buckets: Vec::new(),
+            anomaly_buckets: Vec::new(),
+        };
+        (data, start, end)
+    }
+
+    fn rect() -> egui::Rect {
+        egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(100.0, 20.0))
+    }
+
+    #[test]
+    fn scroll_zoom_ignores_data_spanning_less_than_min_duration() {
+        for span in [TimeDelta::zero(), TimeDelta::milliseconds(5)] {
+            let (data, start, end) = data_spanning(span);
+            let mut zoom = HistogramZoomState::default();
+
+            for scroll_delta in [1.0, -1.0] {
+                Histogram::handle_scroll_zoom(
+                    &mut zoom,
+                    scroll_delta,
+                    Pos2::new(50.0, 10.0),
+                    rect(),
+                    &data,
+                    start,
+                    end,
+                );
+            }
+
+            assert!(zoom.visible_range.is_none());
+        }
+    }
+
+    #[test]
+    fn scroll_zoom_ignores_zero_width_rect() {
+        let (data, start, end) = data_spanning(TimeDelta::seconds(10));
+        let mut zoom = HistogramZoomState::default();
+        let zero_width = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(0.0, 20.0));
+
+        Histogram::handle_scroll_zoom(
+            &mut zoom,
+            1.0,
+            Pos2::new(0.0, 10.0),
+            zero_width,
+            &data,
+            start,
+            end,
+        );
+
+        assert!(zoom.visible_range.is_none());
+    }
+
+    #[test]
+    fn scroll_zoom_in_never_goes_below_min_duration() {
+        let (data, start, end) = data_spanning(TimeDelta::milliseconds(20));
+        let mut zoom = HistogramZoomState::default();
+        let (mut view_start, mut view_end) = (start, end);
+
+        // 20ms * 0.8^n drops below 10ms after 4 steps; extra steps must stay clamped.
+        for _ in 0..6 {
+            Histogram::handle_scroll_zoom(
+                &mut zoom,
+                1.0,
+                Pos2::new(0.0, 10.0),
+                rect(),
+                &data,
+                view_start,
+                view_end,
+            );
+            (view_start, view_end) = zoom.visible_range.expect("zoomed in");
+        }
+
+        assert_eq!(view_end - view_start, MIN_SCROLL_ZOOM_DURATION);
+    }
+
+    #[test]
+    fn timedelta_conversion_rejects_non_finite_and_keeps_sign() {
+        assert_eq!(timedelta_from_secs_f64(f64::NAN), None);
+        assert_eq!(timedelta_from_secs_f64(f64::INFINITY), None);
+        assert_eq!(timedelta_from_secs_f32(f32::NEG_INFINITY), None);
+        assert_eq!(
+            timedelta_from_secs_f64(-1.5),
+            Some(-TimeDelta::milliseconds(1500))
+        );
+        assert_eq!(
+            timedelta_from_secs_f32(0.25),
+            Some(TimeDelta::milliseconds(250))
+        );
     }
 }
