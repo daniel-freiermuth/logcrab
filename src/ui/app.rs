@@ -294,13 +294,13 @@ impl LogCrabApp {
         }
 
         if let Some(paths) = dialog.pick_files() {
-            if let Some(first) = paths.first() {
-                if let Some(parent) = first.parent() {
-                    let dir = parent.to_path_buf();
-                    GlobalConfig::update_and_apply(&mut self.global_config, |c| {
-                        c.last_log_directory = Some(dir);
-                    });
-                }
+            if let Some(first) = paths.first()
+                && let Some(parent) = first.parent()
+            {
+                let dir = parent.to_path_buf();
+                GlobalConfig::update_and_apply(&mut self.global_config, |c| {
+                    c.last_log_directory = Some(dir);
+                });
             }
 
             // Check if any of the selected files belong to a previous session
@@ -322,13 +322,13 @@ impl LogCrabApp {
 
         if let Some(paths) = dialog.pick_files() {
             // Remember the directory from the first file
-            if let Some(first) = paths.first() {
-                if let Some(parent) = first.parent() {
-                    let dir = parent.to_path_buf();
-                    GlobalConfig::update_and_apply(&mut self.global_config, |c| {
-                        c.last_log_directory = Some(dir);
-                    });
-                }
+            if let Some(first) = paths.first()
+                && let Some(parent) = first.parent()
+            {
+                let dir = parent.to_path_buf();
+                GlobalConfig::update_and_apply(&mut self.global_config, |c| {
+                    c.last_log_directory = Some(dir);
+                });
             }
 
             // Check if any of the added files belong to a previous session
@@ -501,13 +501,13 @@ impl LogCrabApp {
 
                     if let Some(paths) = dialog.pick_files() {
                         // Remember the directory from the first file
-                        if let Some(first) = paths.first() {
-                            if let Some(parent) = first.parent() {
-                                let dir = parent.to_path_buf();
-                                GlobalConfig::update_and_apply(&mut self.global_config, |c| {
-                                    c.last_filters_directory = Some(dir);
-                                });
-                            }
+                        if let Some(first) = paths.first()
+                            && let Some(parent) = first.parent()
+                        {
+                            let dir = parent.to_path_buf();
+                            GlobalConfig::update_and_apply(&mut self.global_config, |c| {
+                                c.last_filters_directory = Some(dir);
+                            });
                         }
                         for path in paths {
                             match log_view.import_filters(&path) {
@@ -1032,12 +1032,12 @@ impl eframe::App for LogCrabApp {
         }
 
         // Process pending source removal
-        if let Some(source_id) = self.pending_source_removal.take() {
-            if let Some(session) = &mut self.session {
-                // Save .crab file before removal to persist any unsaved data
-                session.save_crab_file();
-                session.state.store.remove_source(source_id);
-            }
+        if let Some(source_id) = self.pending_source_removal.take()
+            && let Some(session) = &mut self.session
+        {
+            // Save .crab file before removal to persist any unsaved data
+            session.save_crab_file();
+            session.state.store.remove_source(source_id);
         }
     }
 
