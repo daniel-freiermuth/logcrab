@@ -1,7 +1,8 @@
 [package]
 name = "logcrab"
 version = "1.3.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.89"
 license = "GPL-3.0-or-later"
 authors = ["Daniel Freiermuth"]
 description = "A polyscopic anomaly explorer built with Rust and egui. LogCrab helps developers and system administrators debug by automatically highlighting unusual, novel, or interesting log lines in large log files."

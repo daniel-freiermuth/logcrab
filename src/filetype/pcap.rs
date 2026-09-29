@@ -274,42 +274,38 @@ impl LineType for PcapLogLine {
         // 1. Auto-decode SOME/IP-SD on well-known SD port (30490)
         if pi.protocol == "UDP"
             && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
+            && let Some(ref payload) = pi.transport_payload
+            && let Some(sd_info) = decode_someip_sd(payload)
         {
-            if let Some(ref payload) = pi.transport_payload {
-                if let Some(sd_info) = decode_someip_sd(payload) {
-                    // Lazily register discovered endpoints
-                    file_state.add_someip_endpoints(&sd_info.endpoints);
-                    let entries_str = if sd_info.entries.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {}", sd_info.entries.join(", "))
-                    };
-                    return format!(
-                        "{} [SOME/IP-SD {}{}]",
-                        base_msg, sd_info.message_type, entries_str
-                    );
-                }
-            }
+            // Lazily register discovered endpoints
+            file_state.add_someip_endpoints(&sd_info.endpoints);
+            let entries_str = if sd_info.entries.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", sd_info.entries.join(", "))
+            };
+            return format!(
+                "{} [SOME/IP-SD {}{}]",
+                base_msg, sd_info.message_type, entries_str
+            );
         }
 
         // 2. Legacy per-multicast toggle (backward compat)
-        if let Some(key) = pi.multicast_key() {
-            if file_state.is_someip_sd_active(&key) {
-                if let Some(ref payload) = pi.transport_payload {
-                    if let Some(sd_info) = decode_someip_sd(payload) {
-                        file_state.add_someip_endpoints(&sd_info.endpoints);
-                        let entries_str = if sd_info.entries.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" {}", sd_info.entries.join(", "))
-                        };
-                        return format!(
-                            "{} [SOME/IP-SD {}{}]",
-                            base_msg, sd_info.message_type, entries_str
-                        );
-                    }
-                }
-            }
+        if let Some(key) = pi.multicast_key()
+            && file_state.is_someip_sd_active(&key)
+            && let Some(ref payload) = pi.transport_payload
+            && let Some(sd_info) = decode_someip_sd(payload)
+        {
+            file_state.add_someip_endpoints(&sd_info.endpoints);
+            let entries_str = if sd_info.entries.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", sd_info.entries.join(", "))
+            };
+            return format!(
+                "{} [SOME/IP-SD {}{}]",
+                base_msg, sd_info.message_type, entries_str
+            );
         }
 
         // 3. Auto-decode SOME/IP on known endpoints discovered from SD
@@ -321,10 +317,10 @@ impl LineType for PcapLogLine {
             let is_known_dst = pi
                 .dst_port
                 .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.dst_addr, p));
-            if is_known_src || is_known_dst {
-                if let Some(someip_str) = decode_someip(payload) {
-                    return format!("{base_msg} [SOME/IP {someip_str}]");
-                }
+            if (is_known_src || is_known_dst)
+                && let Some(someip_str) = decode_someip(payload)
+            {
+                return format!("{base_msg} [SOME/IP {someip_str}]");
             }
         }
 
@@ -1103,12 +1099,10 @@ fn pre_discover_someip_endpoints(lines: &[PcapLogLine], file_state: &PcapFileSta
         let pi = &line.packet_info;
         if pi.protocol == "UDP"
             && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
+            && let Some(ref payload) = pi.transport_payload
+            && let Some(sd_info) = decode_someip_sd(payload)
         {
-            if let Some(ref payload) = pi.transport_payload {
-                if let Some(sd_info) = decode_someip_sd(payload) {
-                    endpoints.extend(sd_info.endpoints);
-                }
-            }
+            endpoints.extend(sd_info.endpoints);
         }
     }
     if !endpoints.is_empty() {
