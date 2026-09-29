@@ -472,7 +472,7 @@ impl LogCrabApp {
 
             ui.separator();
 
-            if let Some(ref mut log_view) = &mut self.session {
+            if let Some(log_view) = &mut self.session {
                 if ui.button("Export Filters...").clicked() {
                     let mut dialog = rfd::FileDialog::new()
                         .add_filter("Crab Filters", &["crab-filters"])
@@ -554,7 +554,7 @@ impl LogCrabApp {
     /// Render the View menu (tabs, bookmarks, bright mode, file config, ML scoring, dedup).
     fn render_view_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("View", |ui| {
-            if let Some(ref mut log_view) = &mut self.session {
+            if let Some(log_view) = &mut self.session {
                 if ui.button("Add Filter Tab").clicked() {
                     log_view.add_filter_view(false, None);
                     ui.close();
