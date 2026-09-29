@@ -1,0 +1,5 @@
+# Keep the 2021 formatting style after the crate moved to edition 2024.
+# Adopting the 2024 style edition is a pure-reformat change (mostly import
+# ordering) and should land as its own commit: drop this line and run
+# `cargo fmt`.
+style_edition = "2021"
