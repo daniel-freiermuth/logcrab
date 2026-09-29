@@ -5,11 +5,14 @@ use std::process::Command;
 
 fn main() {
     // ── Compile proto definitions ─────────────────────────────────────────────
+    // protox parses the .proto in pure Rust, so no system `protoc` is needed.
+    let file_descriptors = protox::compile(["proto/sidecar_v2.proto"], ["proto"])
+        .expect("failed to parse sidecar_v2.proto");
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(false) // server lives in the Python sidecar
-        .compile_protos(&["proto/sidecar_v2.proto"], &["proto"])
-        .expect("failed to compile sidecar_v2.proto");
+        .compile_fds(file_descriptors)
+        .expect("failed to generate code for sidecar_v2.proto");
 
     println!("cargo:rerun-if-changed=proto/sidecar_v2.proto");
 
