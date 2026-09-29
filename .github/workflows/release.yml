@@ -78,12 +78,6 @@ jobs:
           cache-targets: false
           cache-bin: false
 
-      - if: steps.version.outputs.release == 'true'
-        name: Install protobuf compiler
-        uses: taiki-e/install-action@v2
-        with:
-          # install-action names protoc releases 3.<major>.<minor>; this is protoc v25.3.
-          tool: protoc@3.25.3
 
       - if: steps.version.outputs.release == 'true' && runner.os == 'Linux'
         name: Install Linux packaging dependencies
