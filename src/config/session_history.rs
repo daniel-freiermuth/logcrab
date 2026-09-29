@@ -18,7 +18,6 @@
 
 use anyhow::Context as _;
 use chrono::{DateTime, Local};
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -248,7 +247,7 @@ impl SessionHistory {
             .open(&path)
             .with_context(|| format!("opening {}", path.display()))?;
 
-        file.lock_exclusive()
+        file.lock()
             .with_context(|| format!("locking {}", path.display()))?;
 
         let mut contents = String::new();
