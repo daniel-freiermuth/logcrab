@@ -90,6 +90,15 @@ impl ToastSender {
         }
         self.ctx.request_repaint();
     }
+
+    /// Drain and return the queued error messages (test-only observation hook).
+    #[cfg(test)]
+    pub(crate) fn take_pending_errors(&self) -> Vec<String> {
+        self.queue
+            .lock()
+            .map(|mut q| q.drain(..).collect())
+            .unwrap_or_default()
+    }
 }
 
 /// A thread-safe handle to a progress toast.
