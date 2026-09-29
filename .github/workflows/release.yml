@@ -50,7 +50,7 @@ jobs:
             deb: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
           ref: ${{ inputs.ref || github.sha }}
@@ -80,10 +80,10 @@ jobs:
 
       - if: steps.version.outputs.release == 'true'
         name: Install protobuf compiler
-        uses: arduino/setup-protoc@v3
+        uses: taiki-e/install-action@v2
         with:
-          version: "25.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # install-action names protoc releases 3.<major>.<minor>; this is protoc v25.3.
+          tool: protoc@3.25.3
 
       - if: steps.version.outputs.release == 'true' && runner.os == 'Linux'
         name: Install Linux packaging dependencies
@@ -118,7 +118,7 @@ jobs:
           fi
 
       - if: steps.version.outputs.release == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.id }}
           path: dist/*
@@ -130,7 +130,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
           ref: ${{ inputs.ref || github.sha }}
@@ -166,7 +166,7 @@ jobs:
           echo "release=true" >> "$GITHUB_OUTPUT"
 
       - if: steps.version.outputs.release == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           merge-multiple: true
@@ -177,7 +177,7 @@ jobs:
         run: cp PKGBUILD dist/
 
       - if: steps.version.outputs.release == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           target_commitish: ${{ steps.version.outputs.commit }}
