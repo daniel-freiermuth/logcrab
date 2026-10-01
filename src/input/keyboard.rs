@@ -37,7 +37,7 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
                 pressed: true,
                 modifiers,
                 ..
-            } => Ok(Self {
+            } if !is_modifier_key(*key) => Ok(Self {
                 key,
                 mods: modifiers,
             }),
@@ -46,6 +46,7 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
             | egui::Event::Paste(_)
             | egui::Event::Text(_)
             | egui::Event::Key { .. }
+            | egui::Event::ModifiersChanged(_)
             | egui::Event::PointerMoved(_)
             | egui::Event::MouseMoved(_)
             | egui::Event::PointerButton { .. }
@@ -60,6 +61,27 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
             | egui::Event::Screenshot { .. } => Err(()),
         }
     }
+}
+
+/// Whether `key` is a bare modifier key (Shift, Ctrl, Alt, Super; either side).
+///
+/// Since egui 0.35, pressing a modifier on its own emits an [`egui::Event::Key`].
+/// A lone modifier is never a shortcut, so these presses must not reach the
+/// dispatcher: they would reset pending key sequences (e.g. `g g`) and get
+/// captured as the new binding while rebinding a shortcut.
+#[must_use]
+pub const fn is_modifier_key(key: egui::Key) -> bool {
+    matches!(
+        key,
+        egui::Key::ShiftLeft
+            | egui::Key::ShiftRight
+            | egui::Key::ControlLeft
+            | egui::Key::ControlRight
+            | egui::Key::AltLeft
+            | egui::Key::AltRight
+            | egui::Key::SuperLeft
+            | egui::Key::SuperRight
+    )
 }
 
 impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
@@ -221,7 +243,16 @@ const fn map_egui_key_to_kb_key(key: egui::Key, shift: bool) -> keybinds::Key {
         | egui::Key::F33
         | egui::Key::F34
         | egui::Key::F35
-        | egui::Key::BrowserBack => Key::Char('\0'),
+        | egui::Key::BrowserBack
+        | egui::Key::IntlBackslash
+        | egui::Key::ShiftLeft
+        | egui::Key::ShiftRight
+        | egui::Key::ControlLeft
+        | egui::Key::ControlRight
+        | egui::Key::AltLeft
+        | egui::Key::AltRight
+        | egui::Key::SuperLeft
+        | egui::Key::SuperRight => Key::Char('\0'),
     }
 }
 
@@ -587,5 +618,68 @@ mod tests {
             bindings.get_shortcut(ShortcutAction::ToggleBookmark),
             ShortcutAction::ToggleBookmark.default_binding()
         );
+    }
+
+    /// Modifier state as reported by egui-winit on Linux/Windows while Ctrl is held.
+    const CTRL_HELD: egui::Modifiers = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..egui::Modifiers::NONE
+    };
+
+    fn key_press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn raw_input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bare_modifier_press_does_not_break_key_sequence() {
+        let mut bindings = KeyboardBindings::default();
+        // "g g" (JumpToTop) with a lone Shift tap in between.
+        let input = raw_input(vec![
+            key_press(egui::Key::G, egui::Modifiers::NONE),
+            key_press(egui::Key::ShiftLeft, egui::Modifiers::SHIFT),
+            key_press(egui::Key::G, egui::Modifiers::NONE),
+        ]);
+
+        let (actions, consumed, changed) = bindings.process_input(&input, &mut None);
+
+        assert_eq!(actions, vec![ShortcutAction::JumpToTop]);
+        assert_eq!(consumed, vec![2], "the modifier press must stay with egui");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn rebinding_captures_the_key_not_the_modifier_press() {
+        let mut bindings = KeyboardBindings::default();
+        let mut pending_rebind = Some(ShortcutAction::OpenFile);
+        // Pressing Ctrl+P emits a ControlLeft press before the P press.
+        let input = raw_input(vec![
+            key_press(egui::Key::ControlLeft, CTRL_HELD),
+            key_press(egui::Key::P, CTRL_HELD),
+        ]);
+
+        let (actions, consumed, changed) = bindings.process_input(&input, &mut pending_rebind);
+
+        assert!(actions.is_empty());
+        assert_eq!(consumed, vec![1]);
+        assert!(changed);
+        assert!(pending_rebind.is_none());
+
+        let replay = raw_input(vec![key_press(egui::Key::P, CTRL_HELD)]);
+        let (actions, _, _) = bindings.process_input(&replay, &mut None);
+        assert_eq!(actions, vec![ShortcutAction::OpenFile]);
     }
 }

@@ -168,7 +168,7 @@ impl BookmarkPanel {
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .vscroll(true)
             .min_scrolled_height(body_height)
-            .drag_to_scroll(false)
+            .drag_to_scroll(egui::scroll_area::DragScroll::Never)
             .max_scroll_height(body_height)
             .column(Column::initial(150.0).resizable(true).clip(true)) // Annotation
             .column(Column::initial(140.0).resizable(true).clip(true)) // Source
