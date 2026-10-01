@@ -37,7 +37,7 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
                 pressed: true,
                 modifiers,
                 ..
-            } => Ok(Self {
+            } if !is_modifier_key(*key) => Ok(Self {
                 key,
                 mods: modifiers,
             }),
@@ -46,6 +46,7 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
             | egui::Event::Paste(_)
             | egui::Event::Text(_)
             | egui::Event::Key { .. }
+            | egui::Event::ModifiersChanged(_)
             | egui::Event::PointerMoved(_)
             | egui::Event::MouseMoved(_)
             | egui::Event::PointerButton { .. }
@@ -60,6 +61,27 @@ impl<'a> TryFrom<&'a egui::Event> for EguiKeyEvent<'a> {
             | egui::Event::Screenshot { .. } => Err(()),
         }
     }
+}
+
+/// Whether `key` is a bare modifier key (Shift, Ctrl, Alt, Super; either side).
+///
+/// Since egui 0.35, pressing a modifier on its own emits an [`egui::Event::Key`].
+/// A lone modifier is never a shortcut, so these presses must not reach the
+/// dispatcher: they would reset pending key sequences (e.g. `g g`) and get
+/// captured as the new binding while rebinding a shortcut.
+#[must_use]
+pub const fn is_modifier_key(key: egui::Key) -> bool {
+    matches!(
+        key,
+        egui::Key::ShiftLeft
+            | egui::Key::ShiftRight
+            | egui::Key::ControlLeft
+            | egui::Key::ControlRight
+            | egui::Key::AltLeft
+            | egui::Key::AltRight
+            | egui::Key::SuperLeft
+            | egui::Key::SuperRight
+    )
 }
 
 impl From<EguiKeyEvent<'_>> for keybinds::KeyInput {
@@ -221,7 +243,16 @@ const fn map_egui_key_to_kb_key(key: egui::Key, shift: bool) -> keybinds::Key {
         | egui::Key::F33
         | egui::Key::F34
         | egui::Key::F35
-        | egui::Key::BrowserBack => Key::Char('\0'),
+        | egui::Key::BrowserBack
+        | egui::Key::IntlBackslash
+        | egui::Key::ShiftLeft
+        | egui::Key::ShiftRight
+        | egui::Key::ControlLeft
+        | egui::Key::ControlRight
+        | egui::Key::AltLeft
+        | egui::Key::AltRight
+        | egui::Key::SuperLeft
+        | egui::Key::SuperRight => Key::Char('\0'),
     }
 }
 
