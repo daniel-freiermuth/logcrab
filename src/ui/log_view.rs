@@ -32,6 +32,7 @@ use crate::ui::tabs::{
 };
 use crate::ui::{PaneDirection, ProgressToastHandle, DEFAULT_PALETTE};
 
+use anyhow::Context as _;
 use chrono::Local;
 use egui_dock::{DockArea, DockState, TabPath};
 use std::path::Path;
@@ -194,7 +195,7 @@ impl CrabSession {
     /// # Errors
     ///
     /// Returns an error when the requested operation cannot be completed.
-    pub fn export_filters(&self, path: &Path) -> Result<(), String> {
+    pub fn export_filters(&self, path: &Path) -> anyhow::Result<()> {
         tracing::debug!("Exporting filters to: {}", path.display());
         let filters = self
             .dock_state
@@ -209,7 +210,7 @@ impl CrabSession {
 
         filters_data
             .save(path)
-            .map_err(|e| format!("Failed to save filters: {e}"))?;
+            .with_context(|| format!("saving filters to {}", path.display()))?;
 
         tracing::info!(
             "Successfully exported {} filters to {}",
@@ -222,11 +223,11 @@ impl CrabSession {
     /// # Errors
     ///
     /// Returns an error when the requested operation cannot be completed.
-    pub fn import_filters(&mut self, path: &Path) -> Result<usize, String> {
+    pub fn import_filters(&mut self, path: &Path) -> anyhow::Result<usize> {
         tracing::debug!("Importing filters from: {}", path.display());
 
-        let filters_data =
-            CrabFilters::load(path).map_err(|e| format!("Failed to load filters: {e}"))?;
+        let filters_data = CrabFilters::load(path)
+            .with_context(|| format!("loading filters from {}", path.display()))?;
 
         tracing::info!(
             "Importing .crab-filters v{} with {} filters",
