@@ -140,6 +140,9 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([1400.0, 800.0])
             .with_min_inner_size([800.0, 600.0])
             .with_icon(icon_data),
+        // eframe 0.34 made wgpu the default renderer. Stay on OpenGL (glow), which
+        // LogCrab has always used: wgpu adapter setup adds ~2 s to startup on Mesa.
+        renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
 
