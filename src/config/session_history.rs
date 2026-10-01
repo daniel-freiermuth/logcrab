@@ -131,10 +131,22 @@ impl SessionHistory {
     }
 
     /// Parse JSON contents into a `SessionHistory`, handling version probing.
-    fn parse_contents(contents: &str) -> Self {
+    ///
+    /// Whitespace-only contents yield `Self::default()` (nothing to preserve).
+    /// A newer schema version yields a read-only default.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserialization error when non-empty contents cannot be
+    /// parsed. Callers must not overwrite the file in that case.
+    fn parse_contents(contents: &str) -> Result<Self, serde_json::Error> {
         #[derive(Deserialize)]
         struct VersionProbe {
             schema_version: Option<u32>,
+        }
+
+        if contents.trim().is_empty() {
+            return Ok(Self::default());
         }
 
         let file_version = serde_json::from_str::<VersionProbe>(contents)
@@ -147,49 +159,48 @@ impl SessionHistory {
                 file_version,
                 SESSION_HISTORY_VERSION
             );
-            return Self {
+            return Ok(Self {
                 read_only: true,
                 ..Self::default()
-            };
+            });
         }
 
         // v0 = old file that never wrote schema_version: inject it so serde
         // can deserialize without losing existing data.
-        let parse_result: Option<Self> = if file_version == 0 {
+        let mut history = if file_version == 0 {
             tracing::info!("Session history has no schema_version, treating as v0 and migrating");
-            serde_json::from_str::<serde_json::Value>(contents)
-                .ok()
-                .and_then(|mut v| {
-                    v.as_object_mut()?.insert(
-                        "schema_version".to_string(),
-                        serde_json::json!(SESSION_HISTORY_VERSION),
-                    );
-                    serde_json::from_value::<Self>(v).ok()
-                })
+            let mut value = serde_json::from_str::<serde_json::Value>(contents)?;
+            value
+                .as_object_mut()
+                .ok_or_else(|| {
+                    <serde_json::Error as serde::de::Error>::custom(
+                        "session history is not a JSON object",
+                    )
+                })?
+                .insert(
+                    "schema_version".to_string(),
+                    serde_json::json!(SESSION_HISTORY_VERSION),
+                );
+            serde_json::from_value::<Self>(value)?
         } else {
-            serde_json::from_str::<Self>(contents).ok()
+            serde_json::from_str::<Self>(contents)?
         };
 
-        match parse_result {
-            None => {
-                tracing::warn!("Failed to parse session history, using defaults");
-                Self::default()
-            }
-            Some(mut history) => {
-                if history.schema_version < SESSION_HISTORY_VERSION {
-                    tracing::info!(
-                        "Migrated session history from schema v{} to v{}",
-                        history.schema_version,
-                        SESSION_HISTORY_VERSION
-                    );
-                    history.schema_version = SESSION_HISTORY_VERSION;
-                }
-                history
-            }
+        if history.schema_version < SESSION_HISTORY_VERSION {
+            tracing::info!(
+                "Migrated session history from schema v{} to v{}",
+                history.schema_version,
+                SESSION_HISTORY_VERSION
+            );
+            history.schema_version = SESSION_HISTORY_VERSION;
         }
+        Ok(history)
     }
 
-    /// Load session history from disk (shared lock for concurrent safety)
+    /// Load session history from disk (shared lock for concurrent safety).
+    ///
+    /// An unreadable or unparseable file is logged and yields a read-only
+    /// default so that `update()` never overwrites it.
     pub fn load() -> Self {
         let Some(path) = Self::history_path() else {
             return Self::default();
@@ -197,22 +208,43 @@ impl SessionHistory {
         if !path.exists() {
             return Self::default();
         }
-        match std::fs::OpenOptions::new().read(true).open(&path) {
-            Ok(mut file) => {
-                if file.lock_shared().is_err() {
-                    tracing::warn!("Failed to lock session history for reading");
-                    return Self::default();
-                }
-                let mut contents = String::new();
-                if file.read_to_string(&mut contents).is_err() {
-                    return Self::default();
-                }
-                // Lock releases when file is dropped
-                Self::parse_contents(&contents)
-            }
+        let read_only_default = Self {
+            read_only: true,
+            ..Self::default()
+        };
+        let mut file = match std::fs::OpenOptions::new().read(true).open(&path) {
+            Ok(file) => file,
             Err(e) => {
-                tracing::warn!("Failed to open session history: {e}");
-                Self::default()
+                tracing::warn!("Failed to open session history {}: {e}", path.display());
+                return Self::default();
+            }
+        };
+        if let Err(e) = file.lock_shared() {
+            tracing::warn!(
+                "Failed to lock session history {} for reading: {e}",
+                path.display()
+            );
+            return Self::default();
+        }
+        let mut contents = String::new();
+        if let Err(e) = file.read_to_string(&mut contents) {
+            tracing::error!(
+                "Failed to read session history {}: {e} — using defaults \
+                 (read-only: will not overwrite)",
+                path.display()
+            );
+            return read_only_default;
+        }
+        // Lock releases when file is dropped
+        match Self::parse_contents(&contents) {
+            Ok(history) => history,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to parse session history {}: {e} — using defaults \
+                     (read-only: will not overwrite)",
+                    path.display()
+                );
+                read_only_default
             }
         }
     }
@@ -230,10 +262,16 @@ impl SessionHistory {
     /// Returns the updated history so the caller can replace its cached copy.
     /// # Errors
     ///
-    /// Returns an error when the requested operation cannot be completed.
+    /// Returns an error when the requested operation cannot be completed,
+    /// including when the on-disk file exists but cannot be parsed (the file
+    /// is left untouched).
     pub fn update(f: impl FnOnce(&mut Self)) -> Result<Self, String> {
         let path = Self::history_path().ok_or("Could not determine config directory")?;
+        Self::update_at(&path, f)
+    }
 
+    /// [`Self::update`] against an explicit file path.
+    fn update_at(path: &Path, f: impl FnOnce(&mut Self)) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {e}"))?;
@@ -244,7 +282,7 @@ impl SessionHistory {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(&path)
+            .open(path)
             .map_err(|e| format!("Failed to open session history file: {e}"))?;
 
         file.lock_exclusive()
@@ -254,11 +292,12 @@ impl SessionHistory {
         file.read_to_string(&mut contents)
             .map_err(|e| format!("Failed to read session history: {e}"))?;
 
-        let mut history = if contents.is_empty() {
-            Self::default()
-        } else {
-            Self::parse_contents(&contents)
-        };
+        let mut history = Self::parse_contents(&contents).map_err(|e| {
+            format!(
+                "Refusing to overwrite unparseable session history {}: {e}",
+                path.display()
+            )
+        })?;
 
         f(&mut history);
 
@@ -531,7 +570,7 @@ mod tests {
                 { "files": ["/tmp/a.log"], "last_used": "2025-01-01T12:00:00+00:00" }
             ]
         }"#;
-        let history = SessionHistory::parse_contents(json);
+        let history = SessionHistory::parse_contents(json).expect("should parse");
 
         assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
         assert_eq!(history.sessions.len(), 1);
@@ -547,7 +586,7 @@ mod tests {
                 { "files": ["/tmp/b.log"], "last_used": "2025-06-15T08:30:00+00:00" }
             ]
         }"#;
-        let history = SessionHistory::parse_contents(json);
+        let history = SessionHistory::parse_contents(json).expect("should parse");
 
         assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
         assert_eq!(history.sessions.len(), 1);
@@ -561,30 +600,42 @@ mod tests {
             r#"{{ "schema_version": {} }}"#,
             SESSION_HISTORY_VERSION + 99
         );
-        let history = SessionHistory::parse_contents(&json);
+        let history = SessionHistory::parse_contents(&json).expect("should parse");
 
         assert!(history.read_only);
         assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
         assert!(history.sessions.is_empty());
     }
 
-    /// Malformed JSON falls back to defaults without panicking.
+    /// Malformed JSON is reported as an error rather than replaced by defaults.
     #[test]
-    fn parse_contents_malformed_json_falls_back() {
-        let history = SessionHistory::parse_contents("not json {{{");
+    fn parse_contents_malformed_json_is_error() {
+        assert!(SessionHistory::parse_contents("not json {{{").is_err());
+    }
+
+    /// Empty (or whitespace-only) input falls back to writable defaults.
+    #[test]
+    fn parse_contents_empty_string_falls_back() {
+        let history = SessionHistory::parse_contents(" \n").expect("should parse");
 
         assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
         assert!(!history.read_only);
         assert!(history.sessions.is_empty());
     }
 
-    /// Empty string falls back to defaults.
+    /// `update` must refuse to overwrite a file it cannot parse.
     #[test]
-    fn parse_contents_empty_string_falls_back() {
-        let history = SessionHistory::parse_contents("");
+    fn update_refuses_to_overwrite_unparseable_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session_history.json");
+        let original =
+            format!(r#"{{ "schema_version": {SESSION_HISTORY_VERSION}, "sessions": 5 }}"#);
+        std::fs::write(&path, &original).expect("write fixture");
 
-        assert_eq!(history.schema_version, SESSION_HISTORY_VERSION);
-        assert!(!history.read_only);
-        assert!(history.sessions.is_empty());
+        let result =
+            SessionHistory::update_at(&path, |h| h.record(vec![PathBuf::from("/tmp/x.log")]));
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).expect("read back"), original);
     }
 }
