@@ -41,7 +41,7 @@ pub fn render_shortcuts_window(
                             c.shortcuts = default_shortcuts;
                         }) {
                             Ok(updated) => *global_config = updated,
-                            Err(e) => tracing::error!("Failed to save config: {e}"),
+                            Err(e) => tracing::error!("Failed to save config: {e:#}"),
                         }
                     }
                 });

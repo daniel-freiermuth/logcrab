@@ -30,6 +30,7 @@ use crate::{
         tabs::{filter_tab::HistogramMarker, LogCrabTab},
     },
 };
+use anyhow::Context as _;
 use egui::Ui;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -185,11 +186,11 @@ impl BookmarksView {
     }
 
     /// Export all bookmarks (sorted by timestamp) to a text file
-    fn export_bookmarks(data_state: &SessionState, path: &Path) -> Result<(), String> {
+    fn export_bookmarks(data_state: &SessionState, path: &Path) -> anyhow::Result<()> {
         let mut bookmarks = data_state.get_all_bookmarks();
         bookmarks.sort_by(|b1, b2| b1.store_id.cmp(&b2.store_id, &data_state.store));
 
-        let file = File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
+        let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
         let mut writer = BufWriter::new(file);
 
         for bookmark in &bookmarks {
@@ -202,10 +203,12 @@ impl BookmarksView {
                 } else {
                     writeln!(writer, "{ts}\t{msg}\t[{name}]")
                 }
-                .map_err(|e| format!("Write error: {e}"))?;
+                .with_context(|| format!("writing {}", path.display()))?;
             }
         }
-        Ok(())
+        writer
+            .flush()
+            .with_context(|| format!("writing {}", path.display()))
     }
 
     /// Move selection in bookmarks view
@@ -303,7 +306,7 @@ impl LogCrabTab for BookmarksView {
                 let new_val = global_config.show_bookmarks_in_timeline;
                 match GlobalConfig::update(|c| c.show_bookmarks_in_timeline = new_val) {
                     Ok(updated) => *global_config = updated,
-                    Err(e) => tracing::error!("Failed to save config: {e}"),
+                    Err(e) => tracing::error!("Failed to save config: {e:#}"),
                 }
             }
             ui.label("Show in Timeline");
@@ -321,7 +324,7 @@ impl LogCrabTab for BookmarksView {
                         .save_file()
                     {
                         if let Err(e) = Self::export_bookmarks(data_state, &path) {
-                            tracing::error!("Failed to export bookmarks: {e}");
+                            tracing::error!("Failed to export bookmarks: {e:#}");
                         } else {
                             tracing::info!("Bookmarks exported to {}", path.display());
                         }

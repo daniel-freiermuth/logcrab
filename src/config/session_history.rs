@@ -16,6 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use anyhow::Context as _;
 use chrono::{DateTime, Local};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -231,12 +232,12 @@ impl SessionHistory {
     /// # Errors
     ///
     /// Returns an error when the requested operation cannot be completed.
-    pub fn update(f: impl FnOnce(&mut Self)) -> Result<Self, String> {
-        let path = Self::history_path().ok_or("Could not determine config directory")?;
+    pub fn update(f: impl FnOnce(&mut Self)) -> anyhow::Result<Self> {
+        let path = Self::history_path().context("Could not determine config directory")?;
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {e}"))?;
+                .with_context(|| format!("creating config directory {}", parent.display()))?;
         }
 
         let mut file = std::fs::OpenOptions::new()
@@ -245,14 +246,14 @@ impl SessionHistory {
             .create(true)
             .truncate(false)
             .open(&path)
-            .map_err(|e| format!("Failed to open session history file: {e}"))?;
+            .with_context(|| format!("opening {}", path.display()))?;
 
         file.lock_exclusive()
-            .map_err(|e| format!("Failed to lock session history file: {e}"))?;
+            .with_context(|| format!("locking {}", path.display()))?;
 
         let mut contents = String::new();
         file.read_to_string(&mut contents)
-            .map_err(|e| format!("Failed to read session history: {e}"))?;
+            .with_context(|| format!("reading {}", path.display()))?;
 
         let mut history = if contents.is_empty() {
             Self::default()
@@ -269,15 +270,14 @@ impl SessionHistory {
             return Ok(history);
         }
 
-        let json = serde_json::to_string_pretty(&history)
-            .map_err(|e| format!("Failed to serialize session history: {e}"))?;
+        let json = serde_json::to_string_pretty(&history).context("serializing session history")?;
 
         file.seek(SeekFrom::Start(0))
-            .map_err(|e| format!("Seek failed: {e}"))?;
+            .with_context(|| format!("seeking {}", path.display()))?;
         file.set_len(0)
-            .map_err(|e| format!("Truncate failed: {e}"))?;
+            .with_context(|| format!("truncating {}", path.display()))?;
         file.write_all(json.as_bytes())
-            .map_err(|e| format!("Write failed: {e}"))?;
+            .with_context(|| format!("writing {}", path.display()))?;
 
         // Lock releases when file is dropped
         Ok(history)
