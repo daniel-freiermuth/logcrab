@@ -216,7 +216,8 @@ impl ToastManager {
     pub fn new(ctx: egui::Context) -> Self {
         let toasts = Toasts::new()
             .anchor(Align2::RIGHT_BOTTOM, (-10.0, -40.0))
-            .direction(egui::Direction::BottomUp);
+            .direction(egui::Direction::BottomUp)
+            .custom_contents(ToastKind::Error, error_toast_contents);
 
         Self {
             toasts,
@@ -276,8 +277,8 @@ impl ToastManager {
         });
     }
 
-    /// Render all toasts - call this in the update loop
-    pub fn show(&mut self, ctx: &egui::Context) {
+    /// Render all toasts - call this once per frame from `App::ui`
+    pub fn show(&mut self, ui: &mut egui::Ui) {
         // Promote any pending standalone notifications to persistent error toasts.
         // Drain into a local vec first to release the lock before calling show_error.
         let pending: Vec<String> = self
@@ -300,10 +301,10 @@ impl ToastManager {
         }
 
         // Render progress toasts manually (not using egui-toast for these)
-        self.render_progress_toasts(ctx);
+        self.render_progress_toasts(ui.ctx());
 
         // Render simple toasts (errors, success) via egui-toast
-        self.toasts.show(ctx);
+        self.toasts.show(ui);
     }
 
     fn render_progress_toasts(&self, ctx: &egui::Context) {
@@ -332,8 +333,7 @@ impl ToastManager {
         }
 
         // Calculate position for progress toasts (above the simple toasts area)
-        #[allow(deprecated)]
-        let screen_rect = ctx.input(egui::InputState::screen_rect);
+        let screen_rect = ctx.input(egui::InputState::content_rect);
         let toast_width = 300.0;
         let toast_margin = 10.0;
         let bottom_offset = 40.0; // Space for status bar
@@ -440,6 +440,29 @@ impl ToastManager {
     }
 }
 
+/// Error toast with an explicit dismiss button labelled by
+/// [`ToastStyle::close_button_text`].
+///
+/// egui-toast 0.20 dropped the close button from its default toast contents
+/// (toasts now close when clicked anywhere). Error toasts never expire, so they
+/// keep a visible dismiss affordance.
+fn error_toast_contents(ui: &mut egui::Ui, toast: &mut Toast) -> egui::Response {
+    egui::Frame::window(ui.style())
+        .inner_margin(10.0)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if toast.options.show_icon {
+                    ui.label(toast.style.error_icon.clone());
+                }
+                ui.label(toast.text.clone());
+                if ui.button(toast.style.close_button_text.clone()).clicked() {
+                    toast.close();
+                }
+            });
+        })
+        .response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,7 +470,8 @@ mod tests {
     /// Run one headless UI frame, which prunes removable progress toasts.
     fn run_frame(manager: &mut ToastManager) {
         let ctx = manager.ctx.clone();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| manager.show(ctx));
+        ctx.run_ui(egui::RawInput::default(), |ui| manager.show(ui))
+            .drop_without_applying_deltas();
     }
 
     fn tracked_titles(manager: &ToastManager) -> Vec<String> {

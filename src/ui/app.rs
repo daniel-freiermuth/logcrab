@@ -10,7 +10,7 @@ use crate::core::histogram_worker::HistogramWorker;
 use crate::core::log_store::all_file_extensions;
 use crate::core::ScoringConfig;
 use crate::core::{FilterWorker, LogStore};
-use crate::input::{KeyboardBindings, ShortcutAction};
+use crate::input::{is_modifier_key, KeyboardBindings, ShortcutAction};
 use crate::ui::tabs::{BookmarksView, HighlightsView};
 use crate::ui::CrabSession;
 use egui::text::LayoutJob;
@@ -408,7 +408,7 @@ impl LogCrabApp {
     }
 
     /// Render top menu bar
-    fn render_menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn render_menu_bar(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("File", |ui| {
             if ui.button("Open Log File...").clicked() {
                 self.open_file_dialog();
@@ -544,7 +544,7 @@ impl LogCrabApp {
             ui.separator();
 
             if ui.button("Quit").clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
 
@@ -594,9 +594,9 @@ impl LogCrabApp {
             {
                 // Apply theme change
                 if self.global_config.bright_mode {
-                    ctx.set_visuals(egui::Visuals::light());
+                    ui.ctx().set_visuals(egui::Visuals::light());
                 } else {
-                    ctx.set_visuals(egui::Visuals::dark());
+                    ui.ctx().set_visuals(egui::Visuals::dark());
                 }
                 let new_val = self.global_config.bright_mode;
                 match GlobalConfig::update(|c| c.bright_mode = new_val) {
@@ -722,18 +722,16 @@ impl LogCrabApp {
     }
 
     /// Render central content area with dock layout
-    fn render_central_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn render_central_panel(&mut self, ui: &mut egui::Ui) {
         profiling::scope!("central_panel");
 
         // Preview hovering files
-        Self::preview_files_being_dropped(ctx);
+        Self::preview_files_being_dropped(ui.ctx());
 
         // Collect dropped files (store for later processing)
-        ctx.input(|i| {
+        ui.input(|i| {
             for file in &i.raw.dropped_files {
-                if let Some(path) = &file.path {
-                    self.pending_drop_files.push(path.clone());
-                }
+                self.pending_drop_files.push(file.path().to_path_buf());
             }
         });
 
@@ -954,7 +952,7 @@ impl LogCrabApp {
                 ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
             painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
 
-            let font = TextStyle::Heading.resolve(&ctx.style());
+            let font = TextStyle::Heading.resolve(&ctx.global_style());
             let mut layout_job =
                 LayoutJob::simple(text, font, Color32::WHITE, screen_rect.width() - 40.0);
             layout_job.wrap.max_width = screen_rect.width() - 40.0;
@@ -969,15 +967,18 @@ impl LogCrabApp {
     fn process_keyboard_input(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         profiling::scope!("process_keyboard_input");
         // Skip keyboard shortcuts if text input is focused AND no modifiers are pressed
-        // This allows shortcuts like Ctrl+w to work even in text fields
+        // This allows shortcuts like Ctrl+w to work even in text fields.
+        // A bare modifier press (e.g. just Ctrl) is not a modified shortcut key.
         let has_modifiers = raw_input.events.iter().any(|event| {
             matches!(
                 event,
-                egui::Event::Key { modifiers, .. } if modifiers.ctrl || modifiers.alt || modifiers.command
+                egui::Event::Key { key, modifiers, .. }
+                    if !is_modifier_key(*key)
+                        && (modifiers.ctrl || modifiers.alt || modifiers.command)
             )
         });
 
-        if ctx.wants_keyboard_input() && !has_modifiers {
+        if ctx.egui_wants_keyboard_input() && !has_modifiers {
             return;
         }
 
@@ -1039,7 +1040,9 @@ impl eframe::App for LogCrabApp {
         self.process_keyboard_input(ctx, raw_input);
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    /// Non-UI per-frame work. eframe calls this before every [`Self::ui`], and
+    /// also while the window is hidden if a repaint was requested.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         profiling::function_scope!();
 
         // Update window title based on open files
@@ -1054,35 +1057,42 @@ impl eframe::App for LogCrabApp {
 
         // Process pending source removal
         if let Some(source_id) = self.pending_source_removal.take() {
-            if let Some(ref mut session) = self.session {
+            if let Some(session) = &mut self.session {
                 // Save .crab file before removal to persist any unsaved data
                 session.save_crab_file();
                 session.state.store.remove_source(source_id);
             }
         }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        profiling::function_scope!();
 
         {
             profiling::scope!("top_panel");
-            egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            egui::Panel::top("top_panel").show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    self.render_menu_bar(ui, ctx);
+                    self.render_menu_bar(ui);
                 });
             });
         }
 
         {
             profiling::scope!("bottom_panel");
-            egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            egui::Panel::bottom("bottom_panel").show(ui, |ui| {
                 self.render_status_panel(ui);
             });
         }
 
         {
             profiling::scope!("central_panel_show");
-            egui::CentralPanel::default().show(ctx, |ui| {
-                self.render_central_panel(ui, ctx);
+            egui::CentralPanel::default().show(ui, |ui| {
+                self.render_central_panel(ui);
             });
         }
+
+        // Windows float above the panels on their own layers, so they only need the context.
+        let ctx = ui.ctx();
 
         // Show windows
         if self.show_anomaly_explanation {
@@ -1132,7 +1142,7 @@ impl eframe::App for LogCrabApp {
                                 Err(e) => tracing::error!("Failed to update config: {e}"),
                             }
                             // Update store with new sidecar config
-                            if let Some(ref session) = self.session {
+                            if let Some(session) = &self.session {
                                 self.apply_sidecar_config_to_store(&session.state.store);
                             }
                         }
@@ -1145,7 +1155,7 @@ impl eframe::App for LogCrabApp {
         }
 
         // Show toast notifications
-        self.toast_manager.show(ctx);
+        self.toast_manager.show(ui);
 
         profiling::finish_frame!();
     }

@@ -34,7 +34,7 @@ use crate::ui::tabs::{
 use crate::ui::{PaneDirection, ProgressToastHandle, DEFAULT_PALETTE};
 
 use chrono::Local;
-use egui_dock::{DockArea, DockState, Node};
+use egui_dock::{DockArea, DockState, TabPath};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -176,7 +176,7 @@ impl CrabSession {
         let filters = self
             .dock_state
             .iter_all_tabs()
-            .filter_map(|((_surface, _node), tab)| tab.try_into_stored_filter())
+            .filter_map(|(_path, tab)| tab.try_into_stored_filter())
             .collect::<Vec<SavedFilter>>();
         let highlights: Vec<SavedHighlight> =
             self.state.highlights.iter().map(Into::into).collect();
@@ -200,7 +200,7 @@ impl CrabSession {
         let filters = self
             .dock_state
             .iter_all_tabs()
-            .filter_map(|((_surface, _node), tab)| tab.try_into_stored_filter())
+            .filter_map(|(_path, tab)| tab.try_into_stored_filter())
             .collect::<Vec<SavedFilter>>();
 
         let filters_data = CrabFilters {
@@ -256,7 +256,7 @@ impl CrabSession {
             profiling::scope!("collect_filter_highlights");
             self.dock_state
                 .iter_all_tabs()
-                .filter_map(|((_surface, _node), tab)| tab.get_filter_highlight())
+                .filter_map(|(_path, tab)| tab.get_filter_highlight())
                 .collect()
         };
 
@@ -277,7 +277,7 @@ impl CrabSession {
             profiling::scope!("collect_histogram_markers");
             self.dock_state
                 .iter_all_tabs_mut()
-                .filter_map(|((_surface, _node), tab)| tab.get_histogram_marker())
+                .filter_map(|(_path, tab)| tab.get_histogram_marker())
                 .collect()
         };
 
@@ -427,24 +427,19 @@ impl CrabSession {
                 ShortcutAction::CloseTab => {
                     // Close the currently focused/active tab (the one the user is viewing)
                     // focused_leaf() returns which pane has keyboard focus
-                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
-                        let tree = &self.dock_state[surface_idx];
-
+                    if let Some(path) = self.dock_state.focused_leaf() {
                         // Each pane (leaf node) can have multiple tabs, but only one is "active" (visible).
                         // Get the active tab index from the leaf node
-                        if let Node::Leaf(leaf) = &tree[node_idx] {
-                            let active = leaf.active;
-                            self.dock_state.remove_tab((surface_idx, node_idx, active));
+                        if let Ok(active) = self.dock_state.leaf(path).map(|leaf| leaf.active) {
+                            self.dock_state.remove_tab(TabPath::from((path, active)));
                         }
                     }
                 }
                 ShortcutAction::CycleTab => {
                     // Cycle to the next tab in the active pane
-                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
-                        let surface = &mut self.dock_state[surface_idx];
-
+                    if let Some(path) = self.dock_state.focused_leaf() {
                         // Get the number of tabs and current active tab
-                        if let Node::Leaf(leaf) = &mut surface[node_idx] {
+                        if let Ok(leaf) = self.dock_state.leaf_mut(path) {
                             let tab_count = leaf.tabs.len();
                             if tab_count > 1 {
                                 let active = leaf.active;
@@ -457,11 +452,9 @@ impl CrabSession {
                 }
                 ShortcutAction::ReverseCycleTab => {
                     // Cycle to the previous tab in the active pane
-                    if let Some((surface_idx, node_idx)) = self.dock_state.focused_leaf() {
-                        let surface = &mut self.dock_state[surface_idx];
-
+                    if let Some(path) = self.dock_state.focused_leaf() {
                         // Get the number of tabs and current active tab
-                        if let Node::Leaf(leaf) = &mut surface[node_idx] {
+                        if let Ok(leaf) = self.dock_state.leaf_mut(path) {
                             let tab_count = leaf.tabs.len();
                             if tab_count > 1 {
                                 let active = leaf.active;
