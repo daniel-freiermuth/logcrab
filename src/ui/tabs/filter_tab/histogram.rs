@@ -49,6 +49,56 @@ fn timedelta_from_secs_f32(secs: f32) -> TimeDelta {
     }
 }
 
+/// Vertical mouse-wheel movement this frame in points, summed from the raw
+/// [`egui::Event::MouseWheel`] events (the former `InputState::raw_scroll_delta`,
+/// removed in egui 0.34).
+///
+/// [`egui::InputState::smooth_scroll_delta`] is not a substitute: it spreads one
+/// wheel notch over several frames, so the histogram would zoom several steps per
+/// notch. The horizontal/vertical scroll modifiers are applied like egui does.
+fn raw_vertical_wheel_delta(ui: &Ui) -> f32 {
+    let (horizontal_modifier, vertical_modifier, line_scroll_speed) = ui.options(|o| {
+        let input = &o.input_options;
+        (
+            input.horizontal_scroll_modifier,
+            input.vertical_scroll_modifier,
+            input.line_scroll_speed,
+        )
+    });
+    ui.input(|i| {
+        let page_height = i.viewport_rect().height();
+        i.events
+            .iter()
+            .filter_map(|event| {
+                let egui::Event::MouseWheel {
+                    unit,
+                    delta,
+                    modifiers,
+                    ..
+                } = event
+                else {
+                    return None;
+                };
+                let scale = match unit {
+                    egui::MouseWheelUnit::Point => 1.0,
+                    egui::MouseWheelUnit::Line => line_scroll_speed,
+                    egui::MouseWheelUnit::Page => page_height,
+                };
+                let delta = scale * *delta;
+                let is_horizontal = modifiers.matches_any(horizontal_modifier);
+                let is_vertical = modifiers.matches_any(vertical_modifier);
+                Some(match (is_horizontal, is_vertical) {
+                    // All scrolling is treated as horizontal.
+                    (true, false) => 0.0,
+                    // All scrolling is treated as vertical.
+                    (false, true) => delta.x + delta.y,
+                    (true, true) | (false, false) => delta.y,
+                })
+            })
+            .sum()
+    })
+}
+
 /// Minimum fraction of view width required for drag-to-zoom selection
 const MIN_DRAG_ZOOM_FRACTION: f32 = 0.005;
 
@@ -491,7 +541,7 @@ impl Histogram {
 
         // Scroll wheel zoom (centered on cursor)
         if response.hovered() {
-            let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
+            let scroll_delta = raw_vertical_wheel_delta(ui);
             if scroll_delta.abs() > 0.0 {
                 if let Some(hover_pos) = response.hover_pos() {
                     Self::handle_scroll_zoom(

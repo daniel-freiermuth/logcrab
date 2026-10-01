@@ -101,13 +101,7 @@ impl TabViewer for LogCrabTabViewer<'_> {
         );
     }
 
-    fn context_menu(
-        &mut self,
-        ui: &mut egui::Ui,
-        tab: &mut Self::Tab,
-        _surface: egui_dock::SurfaceIndex,
-        _node: egui_dock::NodeIndex,
-    ) {
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab, _path: egui_dock::NodePath) {
         tab.context_menu(ui);
     }
 
@@ -115,12 +109,7 @@ impl TabViewer for LogCrabTabViewer<'_> {
         [false, false]
     }
 
-    fn add_popup(
-        &mut self,
-        ui: &mut egui::Ui,
-        _surface: egui_dock::SurfaceIndex,
-        _node: egui_dock::NodeIndex,
-    ) {
+    fn add_popup(&mut self, ui: &mut egui::Ui, _path: egui_dock::NodePath) {
         ui.set_min_width(150.0);
 
         if ui.button("➕ Filter Tab").clicked() {
