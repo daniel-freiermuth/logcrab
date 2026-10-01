@@ -619,4 +619,67 @@ mod tests {
             ShortcutAction::ToggleBookmark.default_binding()
         );
     }
+
+    /// Modifier state as reported by egui-winit on Linux/Windows while Ctrl is held.
+    const CTRL_HELD: egui::Modifiers = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..egui::Modifiers::NONE
+    };
+
+    fn key_press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn raw_input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bare_modifier_press_does_not_break_key_sequence() {
+        let mut bindings = KeyboardBindings::default();
+        // "g g" (JumpToTop) with a lone Shift tap in between.
+        let input = raw_input(vec![
+            key_press(egui::Key::G, egui::Modifiers::NONE),
+            key_press(egui::Key::ShiftLeft, egui::Modifiers::SHIFT),
+            key_press(egui::Key::G, egui::Modifiers::NONE),
+        ]);
+
+        let (actions, consumed, changed) = bindings.process_input(&input, &mut None);
+
+        assert_eq!(actions, vec![ShortcutAction::JumpToTop]);
+        assert_eq!(consumed, vec![2], "the modifier press must stay with egui");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn rebinding_captures_the_key_not_the_modifier_press() {
+        let mut bindings = KeyboardBindings::default();
+        let mut pending_rebind = Some(ShortcutAction::OpenFile);
+        // Pressing Ctrl+P emits a ControlLeft press before the P press.
+        let input = raw_input(vec![
+            key_press(egui::Key::ControlLeft, CTRL_HELD),
+            key_press(egui::Key::P, CTRL_HELD),
+        ]);
+
+        let (actions, consumed, changed) = bindings.process_input(&input, &mut pending_rebind);
+
+        assert!(actions.is_empty());
+        assert_eq!(consumed, vec![1]);
+        assert!(changed);
+        assert!(pending_rebind.is_none());
+
+        let replay = raw_input(vec![key_press(egui::Key::P, CTRL_HELD)]);
+        let (actions, _, _) = bindings.process_input(&replay, &mut None);
+        assert_eq!(actions, vec![ShortcutAction::OpenFile]);
+    }
 }
