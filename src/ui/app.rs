@@ -1040,7 +1040,7 @@ impl eframe::App for LogCrabApp {
         self.process_keyboard_input(ctx, raw_input);
     }
 
-    /// Non-UI per-frame work. eframe calls this before every [`Self::ui`], and
+    /// Non-UI per-frame work. eframe calls this before every [`eframe::App::ui`], and
     /// also while the window is hidden if a repaint was requested.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         profiling::function_scope!();
