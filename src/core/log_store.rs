@@ -1222,19 +1222,6 @@ impl LogStore {
             .is_some_and(|s| s.request(target_line_number))
     }
 
-    /// Poll for a completed explanation on the session for `source_id` without blocking.
-    /// Returns `None` if no result is available yet or there is no session for that source.
-    pub fn poll_explanation(
-        &self,
-        source_id: u64,
-    ) -> Option<crate::anomaly::sidecar_client::ExplainResult> {
-        self.explain_sessions
-            .lock()
-            .expect("explain_sessions lock poisoned")
-            .get(&source_id)
-            .and_then(super::super::anomaly::sidecar_client::ExplainSession::try_recv)
-    }
-
     /// Poll the explain session with a richer status that distinguishes "still pending"
     /// from "the WebSocket thread has exited".
     pub fn poll_explain_status(
@@ -1263,11 +1250,6 @@ impl LogStore {
             .map_or((0.0, false, false, false), |store| {
                 store.get_all(line_index)
             })
-    }
-
-    /// Check whether any sidecar scores are stored for the given source.
-    pub fn has_sidecar_scores(&self, source_id: u64) -> bool {
-        self.sidecar_scores.contains_key(&source_id)
     }
 
     /// Set the sidecar scoring configuration for this store.
