@@ -268,7 +268,7 @@ pub fn is_dmesg_line(line: &str) -> bool {
 /// relative ordering is preserved. Returns `None` for lines that do not
 /// match the expected format.
 pub fn parse_dmesg_line(raw: String, line_number: usize) -> Option<DmesgLogLine> {
-    let caps = DMESG_TIMESTAMP.captures(&raw).ok()??;
+    let caps = DMESG_TIMESTAMP.captures(raw.as_str()).ok()??;
     let secs: i64 = caps[1].parse().ok()?;
     let micros: i64 = caps[2].parse().ok()?;
     let message = caps[3].to_string();

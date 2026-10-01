@@ -314,7 +314,7 @@ pub fn extract_tag_message(text: &str) -> Option<String> {
 
 /// Parse a single logcat line and return the concrete `LogcatLogLine`.
 pub fn parse_logcat_line(raw: String, line_number: usize, year: i32) -> Option<LogcatLogLine> {
-    if let Ok(Some(caps)) = LOGCAT_TIMESTAMP.captures(&raw) {
+    if let Ok(Some(caps)) = LOGCAT_TIMESTAMP.captures(raw.as_str()) {
         let message = caps[2].to_string();
         return parse_logcat_timestamp(&caps[1], year)
             .map(|ts| LogcatLogLine::new(raw, ts, message, line_number));
