@@ -20,6 +20,7 @@ pub mod session_history;
 
 use crate::core::SearchRule;
 use crate::input::ShortcutAction;
+use anyhow::Context as _;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -314,12 +315,12 @@ impl GlobalConfig {
     /// # Errors
     ///
     /// Returns an error when the requested operation cannot be completed.
-    pub fn update(f: impl FnOnce(&mut Self)) -> Result<Self, String> {
-        let path = Self::config_path().ok_or("Could not determine config directory")?;
+    pub fn update(f: impl FnOnce(&mut Self)) -> anyhow::Result<Self> {
+        let path = Self::config_path().context("Could not determine config directory")?;
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {e}"))?;
+                .with_context(|| format!("creating config directory {}", parent.display()))?;
         }
 
         // Open or create the file and hold an exclusive lock for the entire
@@ -330,14 +331,14 @@ impl GlobalConfig {
             .create(true)
             .truncate(false)
             .open(&path)
-            .map_err(|e| format!("Failed to open config file: {e}"))?;
+            .with_context(|| format!("opening {}", path.display()))?;
 
         file.lock_exclusive()
-            .map_err(|e| format!("Failed to lock config file: {e}"))?;
+            .with_context(|| format!("locking {}", path.display()))?;
 
         let mut contents = String::new();
         file.read_to_string(&mut contents)
-            .map_err(|e| format!("Failed to read config file: {e}"))?;
+            .with_context(|| format!("reading {}", path.display()))?;
 
         let mut config = if contents.is_empty() {
             Self::default()
@@ -357,15 +358,14 @@ impl GlobalConfig {
             return Ok(config);
         }
 
-        let json = serde_json::to_string_pretty(&config)
-            .map_err(|e| format!("Failed to serialize config: {e}"))?;
+        let json = serde_json::to_string_pretty(&config).context("serializing config")?;
 
         file.seek(SeekFrom::Start(0))
-            .map_err(|e| format!("Failed to seek config file: {e}"))?;
+            .with_context(|| format!("seeking {}", path.display()))?;
         file.set_len(0)
-            .map_err(|e| format!("Failed to truncate config file: {e}"))?;
+            .with_context(|| format!("truncating {}", path.display()))?;
         file.write_all(json.as_bytes())
-            .map_err(|e| format!("Failed to write config file: {e}"))?;
+            .with_context(|| format!("writing {}", path.display()))?;
 
         // Lock releases when `file` is dropped here.
         tracing::info!("Updated global config");
