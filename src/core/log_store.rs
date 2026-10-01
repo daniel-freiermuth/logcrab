@@ -128,31 +128,6 @@ impl ScoreStore {
             guard.scored_flags.get(index).copied().unwrap_or(false),
         )
     }
-
-    /// Resize the internal vec to accommodate new lines (fills with defaults).
-    /// Called when lines are appended to keep scores in sync.
-    ///
-    /// Uses `rcu` (read-copy-update) to retry if a concurrent setter swaps in a
-    /// newer snapshot between our load and store, avoiding lost updates.
-    pub fn resize(&self, new_len: usize) {
-        // Fast path: skip if already large enough.
-        if self.data.load().scores.len() >= new_len {
-            return;
-        }
-        self.data.rcu(|current| {
-            if current.scores.len() >= new_len {
-                // Another resize (or setter with enough data) already handled it.
-                Arc::clone(current)
-            } else {
-                let mut snapshot = (**current).clone();
-                snapshot.scores.resize(new_len, 0.0);
-                snapshot.unk_flags.resize(new_len, false);
-                snapshot.rare_flags.resize(new_len, false);
-                snapshot.scored_flags.resize(new_len, false);
-                Arc::new(snapshot)
-            }
-        });
-    }
 }
 
 impl Default for ScoreStore {
