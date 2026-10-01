@@ -206,6 +206,26 @@ fn compute_row_background_color(
     }
 }
 
+/// Paint the row background (selection/scroll/bookmark highlight) behind a table cell
+#[allow(clippy::fn_params_excessive_bools)]
+fn paint_row_background(
+    ui: &egui::Ui,
+    is_selected: bool,
+    is_scrolled_to_closest: bool,
+    is_bookmarked: bool,
+    dark_mode: bool,
+) {
+    if let Some(bg_color) = compute_row_background_color(
+        is_selected,
+        is_scrolled_to_closest,
+        is_bookmarked,
+        dark_mode,
+    ) {
+        ui.painter()
+            .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
+    }
+}
+
 /// Reusable log table component
 pub struct LogTable;
 
@@ -772,15 +792,13 @@ impl LogTable {
         let mut response: Option<egui::Response> = None;
         row.col(|ui| {
             // Background highlight for selected/bookmarked rows
-            if let Some(bg_color) = compute_row_background_color(
+            paint_row_background(
+                ui,
                 is_selected,
                 is_scrolled_to_closest,
                 is_bookmarked,
                 dark_mode,
-            ) {
-                ui.painter()
-                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
-            }
+            );
 
             // Display source name (truncated if needed)
             let display_name = source_name.unwrap_or("stdin");
@@ -817,15 +835,13 @@ impl LogTable {
     ) -> egui::Response {
         let mut response: Option<egui::Response> = None;
         row.col(|ui| {
-            if let Some(bg_color) = compute_row_background_color(
+            paint_row_background(
+                ui,
                 is_selected,
                 is_scrolled_to_closest,
                 is_bookmarked,
                 dark_mode,
-            ) {
-                ui.painter()
-                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
-            }
+            );
 
             let bookmark_icon = if is_bookmarked { "★ " } else { "" };
             let line_text = if is_selected {
@@ -871,15 +887,13 @@ impl LogTable {
     ) -> egui::Response {
         let mut response: Option<egui::Response> = None;
         let (_, col_response) = row.col(|ui| {
-            if let Some(bg_color) = compute_row_background_color(
+            paint_row_background(
+                ui,
                 is_selected,
                 is_scrolled_to_closest,
                 is_bookmarked,
                 dark_mode,
-            ) {
-                ui.painter()
-                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
-            }
+            );
 
             // Get the fully-calibrated timestamp (config + file_state applied)
             let Some(display_time) = store.adjusted_timestamp(&line_idx) else {
@@ -920,15 +934,13 @@ impl LogTable {
     ) -> egui::Response {
         let mut response: Option<egui::Response> = None;
         row.col(|ui| {
-            if let Some(bg_color) = compute_row_background_color(
+            paint_row_background(
+                ui,
                 is_selected,
                 is_scrolled_to_closest,
                 is_bookmarked,
                 dark_mode,
-            ) {
-                ui.painter()
-                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
-            }
+            );
 
             let job = FilterHighlight::highlight_text_with_filters(
                 &line.message.replace('\n', " ↵ "),
@@ -966,15 +978,13 @@ impl LogTable {
     ) -> egui::Response {
         let mut response: Option<egui::Response> = None;
         row.col(|ui| {
-            if let Some(bg_color) = compute_row_background_color(
+            paint_row_background(
+                ui,
                 is_selected,
                 is_scrolled_to_closest,
                 is_bookmarked,
                 dark_mode,
-            ) {
-                ui.painter()
-                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
-            }
+            );
 
             let anomaly_str = format!("{:.1}", line.anomaly_score);
             let text = RichText::new(anomaly_str).strong().color(color);
@@ -994,15 +1004,13 @@ impl LogTable {
     ) -> egui::Response {
         let mut response: Option<egui::Response> = None;
         row.col(|ui| {
-            if let Some(bg_color) = compute_row_background_color(
+            paint_row_background(
+                ui,
                 is_selected,
                 is_scrolled_to_closest,
                 is_bookmarked,
                 dark_mode,
-            ) {
-                ui.painter()
-                    .rect_filled(ui.available_rect_before_wrap(), 0.0, bg_color);
-            }
+            );
 
             let (ml_str, ml_color) = if line.sidecar_scored {
                 let col = score_to_color(line.sidecar_anomaly_score, dark_mode);
