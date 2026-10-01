@@ -53,7 +53,7 @@ ram-profiling = ["dhat"]
 cpu-profiling = ["profiling/profile-with-tracy", "dep:tracy-client"]
 
 [dependencies]
-eframe = "0.36.2"
+eframe = { version = "0.36.2", features = ["glow"] }
 egui = "0.36.2"
 egui_extras = "0.36.2"
 egui_dock = "0.21.1"
