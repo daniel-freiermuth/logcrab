@@ -1,25 +1,34 @@
 use crate::core::log_store::LogStore;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
+use anyhow::Context as _;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 /// Export filtered results to a file (timestamp and message columns)
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be created or any write, including
+/// the final flush, fails.
 pub fn export_filtered_results(
     filter: &FilterState,
     store: &LogStore,
     path: &Path,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let filtered_indices = filter.search.get_filtered_indices_cached();
-    let file = File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
+    let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
     let mut writer = BufWriter::new(file);
 
     for id in filtered_indices.iter() {
         if let Some(line) = store.get_by_id(id) {
             let ts = line.timestamp.to_rfc3339();
             let msg = &line.message;
-            writeln!(writer, "{ts}\t{msg}").map_err(|e| format!("Write error: {e}"))?;
+            writeln!(writer, "{ts}\t{msg}")
+                .with_context(|| format!("writing {}", path.display()))?;
         }
     }
-    Ok(())
+    writer
+        .flush()
+        .with_context(|| format!("writing {}", path.display()))
 }

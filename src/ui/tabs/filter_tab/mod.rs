@@ -162,7 +162,7 @@ impl FilterView {
                         if let Err(e) =
                             export_filtered_results(&self.state, &log_view_state.store, &path)
                         {
-                            tracing::error!("Failed to export filtered results: {e}");
+                            tracing::error!("Failed to export filtered results: {e:#}");
                         } else {
                             tracing::info!("Filtered results exported to {}", path.display());
                         }
@@ -435,7 +435,7 @@ impl FilterView {
                         }
                     }) {
                         Ok(updated) => *global_config = updated,
-                        Err(e) => tracing::error!("Failed to save config: {e}"),
+                        Err(e) => tracing::error!("Failed to save config: {e:#}"),
                     }
                 }
                 FilterViewEvent::ConvertToHighlight => {
