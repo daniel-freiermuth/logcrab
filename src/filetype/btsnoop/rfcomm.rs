@@ -113,3 +113,136 @@ pub(super) fn try_parse_rfcomm(l2cap_payload: &[u8]) -> Option<String> {
 
     Some(format!("RFCOMM {frame_type} {info}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RFCOMM address byte: EA=1, C/R=`cr`, DLCI=`dlci`.
+    const fn addr(dlci: u8, cr: u8) -> u8 {
+        (dlci << 2) | (cr << 1) | 0x01
+    }
+
+    /// FCS byte that is not valid UTF-8 on its own, so it would break HFP
+    /// detection if it leaked into the payload slice.
+    const FCS: u8 = 0x9A;
+
+    #[test]
+    fn rejects_short_or_non_rfcomm_payloads() {
+        assert_eq!(try_parse_rfcomm(&[]), None);
+        assert_eq!(try_parse_rfcomm(&[addr(2, 0), RFCOMM_UIH]), None);
+        // EA bit clear on the address byte.
+        assert_eq!(try_parse_rfcomm(&[0x08, RFCOMM_UIH, 0x01, FCS]), None);
+        // Length EA=0 announces a second length byte that is missing.
+        assert_eq!(try_parse_rfcomm(&[addr(2, 0), RFCOMM_UIH, 0x0C]), None);
+    }
+
+    #[test]
+    fn control_frames_on_data_channel() {
+        let cases = [
+            (RFCOMM_SABM | 0x10, "RFCOMM SABM DLCI=3 Connect"),
+            (RFCOMM_UA | 0x10, "RFCOMM UA DLCI=3 Ack"),
+            (RFCOMM_DISC | 0x10, "RFCOMM DISC DLCI=3 Disconnect"),
+            (RFCOMM_DM, "RFCOMM DM DLCI=3 Rejected"),
+            (0x00, "RFCOMM Unknown DLCI=3"),
+        ];
+        for (control, expected) in cases {
+            assert_eq!(
+                try_parse_rfcomm(&[addr(3, 1), control, 0x01, FCS]).as_deref(),
+                Some(expected),
+                "control 0x{control:02x}"
+            );
+        }
+    }
+
+    #[test]
+    fn dlci_zero_control_channel() {
+        assert_eq!(
+            try_parse_rfcomm(&[addr(0, 1), RFCOMM_SABM | 0x10, 0x01, FCS]).as_deref(),
+            Some("RFCOMM SABM DLCI=0")
+        );
+        // UIH on DLCI 0 carries a multiplexer command; C/R bit 0x02 selects Cmd/Rsp.
+        let cmd = try_parse_rfcomm(&[addr(0, 1), RFCOMM_UIH, 0x05, 0x83, 0x01, FCS])
+            .expect("mux command decodes");
+        assert!(
+            cmd.starts_with("RFCOMM UIH MuxCtrl ") && cmd.ends_with(" Cmd"),
+            "{cmd}"
+        );
+        let rsp = try_parse_rfcomm(&[addr(0, 1), RFCOMM_UIH, 0x05, 0x81, 0x01, FCS])
+            .expect("mux response decodes");
+        assert!(rsp.ends_with(" Rsp"), "{rsp}");
+        // UIH on DLCI 0 without any mux byte.
+        assert_eq!(
+            try_parse_rfcomm(&[addr(0, 1), RFCOMM_UIH, 0x01]).as_deref(),
+            Some("RFCOMM UIH DLCI=0")
+        );
+    }
+
+    #[test]
+    fn uih_with_one_byte_length_decodes_hfp() {
+        let mut frame = vec![addr(2, 0), RFCOMM_UIH, (6 << 1) | 0x01];
+        frame.extend_from_slice(b"\r\nOK\r\n");
+        frame.push(FCS);
+        assert_eq!(
+            try_parse_rfcomm(&frame).as_deref(),
+            Some("RFCOMM UIH DLCI=2 Responder HFP OK")
+        );
+    }
+
+    #[test]
+    fn uih_with_pf_bit_skips_credit_byte() {
+        // P/F=1 on UIH means a credit byte precedes the information field.
+        let mut frame = vec![addr(2, 1), RFCOMM_UIH | 0x10, (6 << 1) | 0x01, 0x05];
+        frame.extend_from_slice(b"\r\nOK\r\n");
+        frame.push(FCS);
+        assert_eq!(
+            try_parse_rfcomm(&frame).as_deref(),
+            Some("RFCOMM UIH DLCI=2 Initiator HFP OK")
+        );
+    }
+
+    #[test]
+    fn uih_with_two_byte_length_beyond_captured_data_is_clamped() {
+        // Length 200 = 0x48 | (1 << 7): first byte carries 7 bits with EA=0.
+        let frame = [addr(2, 0), RFCOMM_UIH, 0x48 << 1, 0x01, b'O', b'K', FCS];
+        assert_eq!(
+            try_parse_rfcomm(&frame).as_deref(),
+            Some("RFCOMM UIH DLCI=2 Responder HFP OK")
+        );
+    }
+
+    #[test]
+    fn uih_payload_end_excludes_fcs_when_length_overstates() {
+        // Declared length 127 while only 6 info bytes were captured: the slice
+        // must stop before the trailing FCS byte.
+        let mut frame = vec![addr(2, 0), RFCOMM_UIH, 0xFF];
+        frame.extend_from_slice(b"\r\nOK\r\n");
+        frame.push(FCS);
+        assert_eq!(
+            try_parse_rfcomm(&frame).as_deref(),
+            Some("RFCOMM UIH DLCI=2 Responder HFP OK")
+        );
+    }
+
+    #[test]
+    fn uih_non_hfp_payload_reports_length() {
+        let frame = [
+            addr(5, 1),
+            RFCOMM_UIH,
+            (3 << 1) | 0x01,
+            0x00,
+            0xFF,
+            0x10,
+            FCS,
+        ];
+        assert_eq!(
+            try_parse_rfcomm(&frame).as_deref(),
+            Some("RFCOMM UIH DLCI=5 Initiator Len=3")
+        );
+        // Zero-length UIH (empty credit-only frame) falls to the control-frame arm.
+        assert_eq!(
+            try_parse_rfcomm(&[addr(5, 1), RFCOMM_UIH | 0x10, 0x01, 0x03, FCS]).as_deref(),
+            Some("RFCOMM UIH DLCI=5")
+        );
+    }
+}
