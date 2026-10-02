@@ -422,25 +422,24 @@ impl LineType for DltLogLine {
     ) -> DateTime<Local> {
         use crate::config::DltTimestampSource;
         let sync_offset = file_state.sync_point_offset_ms(self.line_number);
-        match config {
+        let boot_relative = match config {
             DltTimestampSource::InferredMonotonic => {
-                if let Some(header_us) = self.header_timestamp_us {
+                self.header_timestamp_us.and_then(|header_us| {
                     let key = (self.ecu_id.clone(), self.app_id.clone());
-                    if let Some(boot_time) = file_state.boot_times.get(&key) {
-                        return *boot_time
+                    file_state.boot_times.get(&key).map(|boot_time| {
+                        *boot_time
                             + chrono::TimeDelta::microseconds(header_us)
-                            + chrono::Duration::milliseconds(sync_offset);
-                    }
-                }
-                // Fallback: no boot_time for this app yet
-                self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
+                            + chrono::Duration::milliseconds(sync_offset)
+                    })
+                })
             }
-            DltTimestampSource::StorageTime => {
-                self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
-            }
-        }
+            DltTimestampSource::StorageTime => None,
+        };
+        // Storage time: configured explicitly, or no boot_time for this app yet
+        boot_relative.unwrap_or_else(|| {
+            self.storage_time
+                + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
+        })
     }
 
     fn message(&self) -> String {
