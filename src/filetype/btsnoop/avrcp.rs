@@ -853,3 +853,226 @@ const fn get_avrcp_pdu_name(pdu_id: u8) -> &'static str {
         _ => "Unknown_PDU",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CTYPE_CONTROL: u8 = 0x00;
+    const CTYPE_STATUS: u8 = 0x01;
+    const CTYPE_STABLE: u8 = 0x0C;
+    /// AV/C subunit byte: Panel (0x09), id 0.
+    const PANEL: u8 = 0x09 << 3;
+
+    /// AVCTP Single packet, TL=3, AVRCP PID; `response` sets the C/R bit.
+    fn avctp_single(response: bool, avc: &[u8]) -> Vec<u8> {
+        let mut pkt = vec![0x30 | (u8::from(response) << 1), 0x11, 0x0E];
+        pkt.extend_from_slice(avc);
+        pkt
+    }
+
+    /// AVRCP Vendor Dependent frame (BT SIG company ID) for `pdu_id`.
+    fn vendor_dependent(ctype: u8, pdu_id: u8, packet_type: u8, params: &[u8]) -> Vec<u8> {
+        let param_len = u16::try_from(params.len()).expect("test params fit u16");
+        let mut avc = vec![ctype, PANEL, 0x00, 0x00, 0x19, 0x58, pdu_id, packet_type];
+        avc.extend_from_slice(&param_len.to_be_bytes());
+        avc.extend_from_slice(params);
+        avctp_single(ctype >= 0x08, &avc)
+    }
+
+    fn decode(pkt: &[u8]) -> String {
+        try_parse_avctp(pkt).expect("valid AVCTP packet")
+    }
+
+    #[test]
+    fn rejects_short_ipid_and_foreign_pid() {
+        assert_eq!(try_parse_avctp(&[0x30, 0x11]), None);
+        // IPID set: profile identifier rejected by the remote.
+        assert_eq!(try_parse_avctp(&[0x31, 0x11, 0x0E]), None);
+        // Not an AVRCP PID.
+        assert_eq!(try_parse_avctp(&[0x30, 0x11, 0x0F]), None);
+    }
+
+    #[test]
+    fn header_only_packets_omit_avc_frame() {
+        assert_eq!(decode(&[0x30, 0x11, 0x0C]), "AVCTP/Single TL=3 Cmd");
+        assert_eq!(
+            decode(&[0x32, 0x11, 0x0E, CTYPE_STABLE, PANEL]),
+            "AVCTP/Single TL=3 Rsp"
+        );
+    }
+
+    #[test]
+    fn pass_through_press_and_release() {
+        assert_eq!(
+            decode(&avctp_single(
+                false,
+                &[CTYPE_CONTROL, PANEL, 0x7C, 0x44, 0x00]
+            )),
+            "AVCTP/Single TL=3 Cmd AVRCP CONTROL Pass_Through Play Pressed"
+        );
+        assert_eq!(
+            decode(&avctp_single(
+                false,
+                &[CTYPE_CONTROL, PANEL, 0x7C, 0xC4, 0x00]
+            )),
+            "AVCTP/Single TL=3 Cmd AVRCP CONTROL Pass_Through Play Released"
+        );
+        // Operation byte present but operand length byte missing.
+        assert_eq!(
+            decode(&avctp_single(false, &[CTYPE_CONTROL, PANEL, 0x7C, 0x44])),
+            "AVCTP/Single TL=3 Cmd AVRCP CONTROL Pass_Through"
+        );
+    }
+
+    #[test]
+    fn vendor_dependent_header_boundaries() {
+        // Fewer than 10 AV/C bytes: no room for PDU header.
+        assert_eq!(
+            decode(&avctp_single(
+                false,
+                &[
+                    CTYPE_STATUS,
+                    PANEL,
+                    0x00,
+                    0x00,
+                    0x19,
+                    0x58,
+                    0x10,
+                    0x00,
+                    0x00
+                ]
+            )),
+            "AVCTP/Single TL=3 Cmd AVRCP STATUS Vendor_Dependent"
+        );
+        assert_eq!(
+            decode(&avctp_single(
+                false,
+                &[
+                    CTYPE_STATUS,
+                    PANEL,
+                    0x00,
+                    0x00,
+                    0x12,
+                    0x34,
+                    0x10,
+                    0x00,
+                    0x00,
+                    0x00
+                ]
+            )),
+            "AVCTP/Single TL=3 Cmd AVRCP STATUS Vendor_Dependent CompanyID=0x001234"
+        );
+        // Exactly the 10-byte header with no parameters.
+        assert_eq!(
+            decode(&vendor_dependent(CTYPE_STATUS, 0x10, 0x00, &[])),
+            "AVCTP/Single TL=3 Cmd AVRCP STATUS GetCapabilities"
+        );
+    }
+
+    #[test]
+    fn avrcp_fragment_continuations_skip_param_decoding() {
+        // AVRCP-level packet type (Continue/End) carries no PDU parameter header.
+        assert_eq!(
+            decode(&vendor_dependent(
+                CTYPE_STABLE,
+                0x10,
+                0x02,
+                &[0x03, 0x01, 0x01]
+            )),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE GetCapabilities/Continue"
+        );
+        assert_eq!(
+            decode(&vendor_dependent(
+                CTYPE_STABLE,
+                0x10,
+                0x03,
+                &[0x03, 0x01, 0x01]
+            )),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE GetCapabilities/End"
+        );
+    }
+
+    #[test]
+    fn get_capabilities_count_is_bounded_by_buffer() {
+        assert_eq!(
+            decode(&vendor_dependent(CTYPE_STATUS, 0x10, 0x00, &[0x03])),
+            "AVCTP/Single TL=3 Cmd AVRCP STATUS GetCapabilities Cap=EventsSupported"
+        );
+        assert_eq!(
+            decode(&vendor_dependent(CTYPE_STABLE, 0x10, 0x00, &[0x03, 0x02, 0x01, 0x0D])),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE GetCapabilities Cap=EventsSupported [PLAYBACK_STATUS_CHANGED, VOLUME_CHANGED]"
+        );
+        // Count claims 10 events but only 2 were captured.
+        assert_eq!(
+            decode(&vendor_dependent(
+                CTYPE_STABLE,
+                0x10,
+                0x00,
+                &[0x03, 0x0A, 0x01, 0x0D]
+            )),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE GetCapabilities Cap=EventsSupported Count=10"
+        );
+    }
+
+    #[test]
+    fn list_attributes_count_is_bounded_by_buffer() {
+        let rsp = |params: &[u8]| decode(&vendor_dependent(CTYPE_STABLE, 0x11, 0x00, params));
+        assert_eq!(
+            rsp(&[0x02, 0x01, 0x02]),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE ListPlayerAppSettingAttr Attrs=[Equalizer, Repeat]"
+        );
+        // Count byte with zero following attribute IDs.
+        assert_eq!(
+            rsp(&[0x01]),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE ListPlayerAppSettingAttr NumAttrs=1"
+        );
+        assert_eq!(
+            rsp(&[0x05, 0x01]),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE ListPlayerAppSettingAttr NumAttrs=5"
+        );
+    }
+
+    /// One `GetElementAttributes` response entry (UTF-8 charset).
+    fn element_attr(attr_id: u32, value: &[u8]) -> Vec<u8> {
+        let len = u16::try_from(value.len()).expect("test value fits u16");
+        let mut entry = attr_id.to_be_bytes().to_vec();
+        entry.extend_from_slice(&0x006A_u16.to_be_bytes());
+        entry.extend_from_slice(&len.to_be_bytes());
+        entry.extend_from_slice(value);
+        entry
+    }
+
+    #[test]
+    fn get_element_attributes_stops_at_truncated_entry() {
+        let rsp = |params: &[u8]| decode(&vendor_dependent(CTYPE_STABLE, 0x20, 0x00, params));
+        let prefix = "AVCTP/Single TL=3 Rsp AVRCP STABLE GetElementAttributes";
+
+        assert_eq!(rsp(&[0x00]), format!("{prefix} NoAttributes"));
+
+        // Count says 3, one full entry followed by a partial entry header.
+        let mut params = vec![0x03];
+        params.extend(element_attr(0x01, b"Song"));
+        params.extend_from_slice(&[0x00, 0x00, 0x00, 0x02, 0x00]);
+        assert_eq!(rsp(&params), format!("{prefix} Title=\"Song\""));
+
+        // Value length runs past the captured bytes: nothing decodable.
+        let mut params = vec![0x01];
+        let mut entry = element_attr(0x01, b"Song");
+        entry.truncate(entry.len() - 2);
+        params.extend(entry);
+        assert_eq!(rsp(&params), prefix);
+    }
+
+    #[test]
+    fn get_element_attributes_summarises_beyond_three() {
+        let mut params = vec![0x05];
+        for (id, value) in [(0x01, b"T"), (0x02, b"A"), (0x03, b"B"), (0x04, b"1")] {
+            params.extend(element_attr(id, value));
+        }
+        assert_eq!(
+            decode(&vendor_dependent(CTYPE_STABLE, 0x20, 0x00, &params)),
+            "AVCTP/Single TL=3 Rsp AVRCP STABLE GetElementAttributes Title=\"T\" Artist=\"A\" Album=\"B\" +2 more"
+        );
+    }
+}
