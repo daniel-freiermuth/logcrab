@@ -83,7 +83,7 @@ pub(super) fn parse_hci_type_and_info(data: &[u8]) -> (String, String) {
     match data.first() {
         Some(0x01) => {
             // HCI Command packet
-            if data.len() >= 3 {
+            if data.len() >= 4 {
                 let opcode = u16::from_le_bytes([data[1], data[2]]);
                 let param_len = data[3];
                 let cmd_name = get_hci_command_name(opcode);
@@ -527,5 +527,185 @@ pub const fn get_l2cap_signaling_code(code: u8) -> &'static str {
         0x19 => "Credit_Based_Reconfigure_Request",
         0x1A => "Credit_Based_Reconfigure_Response",
         _ => "Unknown_Signaling",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode(data: &[u8]) -> (String, String) {
+        parse_hci_type_and_info(data)
+    }
+
+    /// Build an ACL packet (handle 0x000b, PB=2 first-flushable) carrying one
+    /// complete L2CAP frame on `cid`.
+    fn acl(cid: u16, payload: &[u8]) -> Vec<u8> {
+        let l2cap_len = u16::try_from(payload.len()).expect("test payload fits u16");
+        let acl_len = l2cap_len + 4;
+        let mut pkt = vec![0x02, 0x0B, 0x20];
+        pkt.extend_from_slice(&acl_len.to_le_bytes());
+        pkt.extend_from_slice(&l2cap_len.to_le_bytes());
+        pkt.extend_from_slice(&cid.to_le_bytes());
+        pkt.extend_from_slice(payload);
+        pkt
+    }
+
+    fn acl_info(cid: u16, payload: &[u8]) -> String {
+        let (packet_type, info) = decode(&acl(cid, payload));
+        assert_eq!(packet_type, "ACL_DATA");
+        info
+    }
+
+    #[test]
+    fn every_packet_type_below_its_header_size_is_truncated() {
+        let cases: &[(&[u8], &str)] = &[
+            (&[0x01], "HCI_CMD"),
+            (&[0x01, 0x06], "HCI_CMD"),
+            (&[0x01, 0x06, 0x04], "HCI_CMD"),
+            (&[0x02], "ACL_DATA"),
+            (&[0x02, 0x0B], "ACL_DATA"),
+            (&[0x02, 0x0B, 0x20], "ACL_DATA"),
+            (&[0x02, 0x0B, 0x20, 0x04], "ACL_DATA"),
+            (&[0x03], "SCO_DATA"),
+            (&[0x03, 0x01], "SCO_DATA"),
+            (&[0x03, 0x01, 0x00], "SCO_DATA"),
+            (&[0x04], "HCI_EVT"),
+            (&[0x04, 0x0E], "HCI_EVT"),
+        ];
+        for (data, expected_type) in cases {
+            assert_eq!(
+                decode(data),
+                ((*expected_type).to_string(), "Truncated".to_string()),
+                "input {data:02x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_packet_type_at_exact_header_size_decodes() {
+        assert_eq!(
+            decode(&[0x01, 0x06, 0x04, 0x03]),
+            (
+                "HCI_CMD".to_string(),
+                "Disconnect (0x0406) ParamLen=3".to_string()
+            )
+        );
+        assert_eq!(
+            decode(&[0x02, 0x0B, 0x20, 0x00, 0x00]),
+            (
+                "ACL_DATA".to_string(),
+                "Handle=0x000b PB=2 BC=0 Len=0".to_string()
+            )
+        );
+        assert_eq!(
+            decode(&[0x03, 0x01, 0x00, 0x30]),
+            ("SCO_DATA".to_string(), "Handle=0x0001 Len=48".to_string())
+        );
+        assert_eq!(
+            decode(&[0x04, 0x0E, 0x04]),
+            (
+                "HCI_EVT".to_string(),
+                "Command_Complete (0x0e) ParamLen=4".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn empty_and_unknown_packet_types() {
+        assert_eq!(decode(&[]), ("Unknown".to_string(), String::new()));
+        assert_eq!(decode(&[0x05]), ("ISO_DATA".to_string(), String::new()));
+        assert_eq!(
+            decode(&[0x07, 0xFF]),
+            ("HCI".to_string(), "Type=0x07".to_string())
+        );
+    }
+
+    #[test]
+    fn acl_handle_masks_off_flag_bits() {
+        // Handle 0x0abc with PB=1, BC=2 packed into the high nibble.
+        assert_eq!(
+            decode(&[0x02, 0xBC, 0x9A, 0x00, 0x00]).1,
+            "Handle=0x0abc PB=1 BC=2 Len=0"
+        );
+    }
+
+    #[test]
+    fn acl_continuation_fragment_skips_l2cap_header() {
+        // PB=1: the bytes after the ACL header are the middle of an L2CAP
+        // frame and must not be read as Len/CID, even if they look like one.
+        let pkt = [0x02, 0x0B, 0x10, 0x05, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02];
+        assert_eq!(decode(&pkt).1, "Handle=0x000b PB=1 BC=0 Len=5");
+    }
+
+    #[test]
+    fn acl_too_short_for_l2cap_header_reports_acl_summary() {
+        let pkt = [0x02, 0x0B, 0x20, 0x03, 0x00, 0x01, 0x00, 0x01];
+        assert_eq!(decode(&pkt).1, "Handle=0x000b PB=2 BC=0 Len=3");
+    }
+
+    #[test]
+    fn signaling_channels_with_and_without_payload() {
+        assert_eq!(
+            acl_info(0x0001, &[]),
+            "Handle=0x000b L2CAP(Len=0 CID=0x0001 L2CAP_Signaling)"
+        );
+        assert_eq!(
+            acl_info(0x0001, &[0x02, 0x01, 0x04, 0x00, 0x19, 0x00, 0x40, 0x00]),
+            "Handle=0x000b L2CAP(Len=8 CID=0x0001 L2CAP_Signaling Connection_Request)"
+        );
+        assert_eq!(
+            acl_info(0x0005, &[]),
+            "Handle=0x000b L2CAP(Len=0 CID=0x0005 LE_Signaling)"
+        );
+        assert_eq!(
+            acl_info(0x0005, &[0x12]),
+            "Handle=0x000b L2CAP(Len=1 CID=0x0005 LE_Signaling Connection_Parameter_Update_Request)"
+        );
+    }
+
+    #[test]
+    fn fixed_non_signaling_channel_reports_channel_name_only() {
+        assert_eq!(
+            acl_info(0x0004, &[0x0A, 0x03, 0x00]),
+            "Handle=0x000b L2CAP(Len=3 CID=0x0004 ATT)"
+        );
+    }
+
+    #[test]
+    fn dynamic_channel_falls_back_to_length_when_no_decoder_matches() {
+        // Address byte without EA bit (not RFCOMM), PID 0x0000 (not AVRCP).
+        assert_eq!(
+            acl_info(0x0040, &[0x00, 0x00, 0x00, 0xAA]),
+            "Handle=0x000b L2CAP(Len=4 CID=0x0040 Dynamically_Allocated Len=4)"
+        );
+        assert_eq!(
+            acl_info(0x0041, &[]),
+            "Handle=0x000b L2CAP(Len=0 CID=0x0041 Dynamically_Allocated Len=0)"
+        );
+        // CIDs above the 0x0040..=0x007F name range are still dynamic.
+        assert_eq!(
+            acl_info(0x0080, &[0x00]),
+            "Handle=0x000b L2CAP(Len=1 CID=0x0080 Unknown_Channel Len=1)"
+        );
+    }
+
+    #[test]
+    fn dynamic_channel_dispatches_to_rfcomm() {
+        // SABM (P=1) on DLCI 2, initiator, length 0, then FCS.
+        assert_eq!(
+            acl_info(0x0040, &[0x0B, 0x3F, 0x01, 0x5C]),
+            "Handle=0x000b L2CAP(Len=4 CID=0x0040 RFCOMM SABM DLCI=2 Connect)"
+        );
+    }
+
+    #[test]
+    fn dynamic_channel_dispatches_to_avctp() {
+        // AVCTP Single Cmd TL=3, AVRCP PID; AV/C CONTROL Panel Pass_Through Play pressed.
+        let payload = [0x30, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0x44, 0x00];
+        assert_eq!(
+            acl_info(0x0041, &payload),
+            "Handle=0x000b L2CAP(Len=8 CID=0x0041 AVCTP/Single TL=3 Cmd AVRCP CONTROL Pass_Through Play Pressed)"
+        );
     }
 }
