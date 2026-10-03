@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn normalize_empty_scores() {
-        assert!(normalize_scores(&[]).is_empty());
+        assert_eq!(normalize_scores(&[]), Vec::<f64>::new());
     }
 
     #[test]

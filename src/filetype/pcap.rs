@@ -2133,7 +2133,7 @@ mod tests {
         };
         tracker.analyze_packet(&mut pkt);
         assert!(!pkt.is_abnormal);
-        assert!(pkt.info.is_empty());
+        assert_eq!(pkt.info, "");
     }
 
     #[test]

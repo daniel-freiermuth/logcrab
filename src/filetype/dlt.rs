@@ -58,6 +58,22 @@ impl DltLogLine {
         }
     }
 
+    /// Header timestamp anchored at the inferred boot time of this ECU/app, if known.
+    fn inferred_monotonic_timestamp(
+        &self,
+        file_state: &DltFileState,
+        sync_offset: i64,
+    ) -> Option<DateTime<Local>> {
+        let header_us = self.header_timestamp_us?;
+        let key = (self.ecu_id.clone(), self.app_id.clone());
+        let boot_time = file_state.boot_times.get(&key)?;
+        Some(
+            *boot_time
+                + chrono::TimeDelta::microseconds(header_us)
+                + chrono::Duration::milliseconds(sync_offset),
+        )
+    }
+
     /// Format DLT message for display.
     ///
     /// `inferred_time` is the calibrated monotonic timestamp when available
@@ -422,25 +438,17 @@ impl LineType for DltLogLine {
     ) -> DateTime<Local> {
         use crate::config::DltTimestampSource;
         let sync_offset = file_state.sync_point_offset_ms(self.line_number);
-        match config {
+        let monotonic = match config {
             DltTimestampSource::InferredMonotonic => {
-                if let Some(header_us) = self.header_timestamp_us {
-                    let key = (self.ecu_id.clone(), self.app_id.clone());
-                    if let Some(boot_time) = file_state.boot_times.get(&key) {
-                        return *boot_time
-                            + chrono::TimeDelta::microseconds(header_us)
-                            + chrono::Duration::milliseconds(sync_offset);
-                    }
-                }
-                // Fallback: no boot_time for this app yet
-                self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
+                self.inferred_monotonic_timestamp(file_state, sync_offset)
             }
-            DltTimestampSource::StorageTime => {
-                self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
-            }
-        }
+            DltTimestampSource::StorageTime => None,
+        };
+        // Fallback for InferredMonotonic: no boot_time for this app yet
+        monotonic.unwrap_or_else(|| {
+            self.storage_time
+                + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
+        })
     }
 
     fn message(&self) -> String {
