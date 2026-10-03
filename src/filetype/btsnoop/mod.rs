@@ -6,7 +6,7 @@ mod hci;
 mod hfp;
 mod rfcomm;
 
-use chrono::{DateTime, Local, TimeDelta};
+use chrono::{DateTime, Local};
 use egui::Ui;
 use std::fs::File;
 use std::io::Read;
@@ -193,13 +193,7 @@ fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<Btsnoop
     let mut line_number = 1usize;
 
     for packet in &btsnoop_file.packets {
-        let duration_since_unix = packet.header.timestamp();
-        let Some(timestamp) = TimeDelta::from_std(duration_since_unix)
-            .ok()
-            .and_then(|delta| {
-                DateTime::from_timestamp(0, 0).map(|epoch| (epoch + delta).with_timezone(&Local))
-            })
-        else {
+        let Some(timestamp) = packet_timestamp(packet.header.timestamp_microseconds) else {
             tracing::warn!("Failed to convert packet timestamp at line {line_number}, skipping");
             line_number += 1;
             continue;
@@ -213,4 +207,123 @@ fn parse_btsnoop_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<Btsnoop
 
     tracing::info!("Parsed {} HCI packets from btsnoop file", lines.len());
     Ok(lines)
+}
+
+/// Microseconds between 0000-01-01 (the btsnoop epoch) and 1970-01-01 (the unix epoch).
+const BTSNOOP_UNIX_EPOCH_OFFSET_US: i64 = 0x00dc_ddb3_0f2f_8000;
+
+/// Convert a raw btsnoop packet timestamp to a local date-time.
+///
+/// Returns `None` for timestamps before the unix epoch or outside chrono's representable range.
+/// Deliberately avoids `btsnoop::PacketHeader::timestamp()`, which panics on pre-1970 values.
+fn packet_timestamp(timestamp_microseconds: i64) -> Option<DateTime<Local>> {
+    let us_since_unix = timestamp_microseconds.checked_sub(BTSNOOP_UNIX_EPOCH_OFFSET_US)?;
+    if us_since_unix < 0 {
+        return None;
+    }
+    DateTime::from_timestamp_micros(us_since_unix).map(|utc| utc.with_timezone(&Local))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write as _;
+    use std::sync::Arc;
+
+    /// 2000-01-01T00:00:00Z in btsnoop microseconds (since 0000-01-01).
+    const TS_2000: i64 = 0x00E0_3AB4_4A67_6000;
+    /// `HCI_Reset` command (H4 type 0x01, opcode 0x0c03, no params).
+    const HCI_RESET: &[u8] = &[0x01, 0x03, 0x0c, 0x00];
+
+    /// Serialize a btsnoop v1 file (big-endian, HCI UART datalink).
+    fn btsnoop_bytes(packets: &[(i64, &[u8])]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"btsnoop\0");
+        buf.extend_from_slice(&1u32.to_be_bytes());
+        buf.extend_from_slice(&1002u32.to_be_bytes());
+        for (ts, data) in packets {
+            let len = u32::try_from(data.len()).expect("packet len");
+            buf.extend_from_slice(&len.to_be_bytes()); // original_length
+            buf.extend_from_slice(&len.to_be_bytes()); // included_length
+            buf.extend_from_slice(&0u32.to_be_bytes()); // flags: Sent, Data
+            buf.extend_from_slice(&0u32.to_be_bytes()); // cumulative drops
+            buf.extend_from_slice(&ts.to_be_bytes());
+            buf.extend_from_slice(data);
+        }
+        buf
+    }
+
+    fn open_bytes(bytes: &[u8]) -> BtsnoopFileType {
+        let mut tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        tmp.write_all(bytes).expect("write");
+        BtsnoopFileType::open(tmp.path(), (), Arc::new(BtsnoopFileState::default()))
+            .expect("open btsnoop")
+    }
+
+    #[test]
+    fn unconvertible_timestamps_are_skipped_without_panicking() {
+        let bytes = btsnoop_bytes(&[
+            (TS_2000, HCI_RESET),
+            (0, HCI_RESET),        // zeroed timestamp: before the unix epoch
+            (i64::MAX, HCI_RESET), // beyond the representable date range
+            (i64::MIN, HCI_RESET), // would overflow the epoch subtraction
+            (TS_2000 + 1_500_000, HCI_RESET),
+        ]);
+        let lines = open_bytes(&bytes).read(100).expect("read");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].hci_info.timestamp.timestamp(), 946_684_800);
+        assert_eq!(
+            lines[1].hci_info.timestamp.timestamp_micros(),
+            946_684_801_500_000
+        );
+    }
+
+    #[test]
+    fn skipped_packets_keep_physical_line_numbers() {
+        let bytes = btsnoop_bytes(&[
+            (TS_2000, HCI_RESET),
+            (0, HCI_RESET), // bad timestamp
+            (TS_2000, &[]), // empty payload: not decodable as HCI
+            (TS_2000, HCI_RESET),
+        ]);
+        let lines = open_bytes(&bytes).read(100).expect("read");
+
+        let numbers: Vec<usize> = lines.iter().map(|l| l.line_number).collect();
+        assert_eq!(numbers, vec![1, 4]);
+    }
+
+    #[test]
+    fn header_only_file_is_fully_consumed() {
+        let bytes = btsnoop_bytes(&[]);
+        let mut reader = open_bytes(&bytes);
+
+        assert!(reader.read(10).expect("read").is_empty());
+        assert_eq!(reader.bytes_consumed(), bytes.len() as u64);
+    }
+
+    #[test]
+    fn chunked_reads_return_every_packet_once() {
+        let packets: Vec<(i64, &[u8])> = (0..5).map(|i| (TS_2000 + i * 1_000, HCI_RESET)).collect();
+        let bytes = btsnoop_bytes(&packets);
+        let mut reader = open_bytes(&bytes);
+
+        let mut seen = Vec::new();
+        let mut last_consumed = reader.bytes_consumed();
+        assert_eq!(last_consumed, 0);
+        loop {
+            let batch = reader.read(2).expect("read");
+            if batch.is_empty() {
+                break;
+            }
+            assert!(batch.len() <= 2);
+            let consumed = reader.bytes_consumed();
+            assert!(consumed > last_consumed);
+            last_consumed = consumed;
+            seen.extend(batch.iter().map(|l| l.line_number));
+        }
+
+        assert_eq!(seen, vec![1, 2, 3, 4, 5]);
+        assert_eq!(reader.bytes_consumed(), bytes.len() as u64);
+    }
 }
