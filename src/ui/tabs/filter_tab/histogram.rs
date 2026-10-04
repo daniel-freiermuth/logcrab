@@ -606,9 +606,12 @@ impl Histogram {
         let cursor_fraction = ((hover_pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
 
         let view_duration = view_end - view_start;
+        // Don't zoom in past 10 milliseconds or zoom out past full range. When the data
+        // itself spans less than 10 ms the floor drops to `full_duration`, which keeps
+        // `clamp`'s `min <= max` precondition and pins the view to the full range.
+        let min_duration = TimeDelta::milliseconds(10).min(full_duration);
         let new_duration = timedelta_from_secs_f64(view_duration.as_seconds_f64() * zoom_factor)
-            // Don't zoom in past 10 milliseconds or zoom out past full range
-            .clamp(TimeDelta::milliseconds(10), full_duration);
+            .clamp(min_duration, full_duration);
 
         // New start and end, keeping cursor at same relative position
         let new_start = view_start
@@ -981,5 +984,257 @@ impl Histogram {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    /// Arbitrary fixed epoch offset so tests don't depend on "now".
+    const BASE_MS: i64 = 1_700_000_000_000;
+
+    fn ts(ms: i64) -> DateTime<Local> {
+        Local
+            .timestamp_millis_opt(BASE_MS + ms)
+            .single()
+            .expect("valid timestamp")
+    }
+
+    /// Histogram data covering `[full_start_ms, full_end_ms]`; buckets are irrelevant to zoom math.
+    fn data(full_start_ms: i64, full_end_ms: i64) -> HistogramData {
+        HistogramData {
+            start_time: ts(full_start_ms),
+            end_time: ts(full_end_ms),
+            full_start: ts(full_start_ms),
+            full_end: ts(full_end_ms),
+            buckets: Vec::new(),
+            anomaly_buckets: Vec::new(),
+        }
+    }
+
+    /// 100 px wide histogram rect starting at x = 0.
+    fn rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 20.0))
+    }
+
+    fn at_x(x: f32) -> Pos2 {
+        egui::pos2(x, 10.0)
+    }
+
+    const ZOOM_IN: f32 = 1.0;
+    const ZOOM_OUT: f32 = -1.0;
+
+    fn assert_close(actual: DateTime<Local>, expected: DateTime<Local>) {
+        let diff = (actual - expected).abs();
+        assert!(
+            diff <= TimeDelta::milliseconds(1),
+            "expected {expected:?}, got {actual:?} (diff {diff:?})"
+        );
+    }
+
+    fn assert_within_full(zoom: &HistogramZoomState, data: &HistogramData) {
+        let (start, end) = zoom.visible_range.expect("visible range set");
+        assert!(start < end, "empty range {start:?}..{end:?}");
+        assert!(start >= data.full_start, "{start:?} before full_start");
+        assert!(end <= data.full_end, "{end:?} after full_end");
+    }
+
+    #[test]
+    fn scroll_zoom_on_single_timestamp_does_not_panic_and_leaves_range_unset() {
+        // Single match: full range is degenerate; the worker widens the view by 1 ms.
+        let data = data(0, 0);
+        for delta in [ZOOM_IN, ZOOM_OUT] {
+            let mut zoom = HistogramZoomState::default();
+            Histogram::handle_scroll_zoom(
+                &mut zoom,
+                delta,
+                at_x(50.0),
+                rect(),
+                &data,
+                ts(0),
+                ts(1),
+            );
+            assert_eq!(zoom.visible_range, None);
+        }
+    }
+
+    #[test]
+    fn scroll_zoom_on_sub_10ms_range_does_not_panic_and_stays_within_full_range() {
+        let data = data(0, 5);
+        for delta in [ZOOM_IN, ZOOM_OUT] {
+            for x in [0.0, 50.0, 100.0] {
+                let mut zoom = HistogramZoomState::default();
+                Histogram::handle_scroll_zoom(
+                    &mut zoom,
+                    delta,
+                    at_x(x),
+                    rect(),
+                    &data,
+                    ts(0),
+                    ts(5),
+                );
+                assert_within_full(&zoom, &data);
+            }
+        }
+    }
+
+    #[test]
+    fn scroll_zoom_in_keeps_cursor_time_at_same_fractional_position() {
+        let data = data(0, 10_000);
+        let mut zoom = HistogramZoomState::default();
+        // Cursor at 25% of the view → 2.5 s into the data.
+        Histogram::handle_scroll_zoom(
+            &mut zoom,
+            ZOOM_IN,
+            at_x(25.0),
+            rect(),
+            &data,
+            ts(0),
+            ts(10_000),
+        );
+
+        let (start, end) = zoom.visible_range.expect("zoomed in");
+        assert!(
+            end - start < TimeDelta::milliseconds(10_000),
+            "did not zoom in"
+        );
+        let cursor_time = start + timedelta_from_secs_f64((end - start).as_seconds_f64() * 0.25);
+        assert_close(cursor_time, ts(2_500));
+    }
+
+    #[test]
+    fn scroll_zoom_out_never_exceeds_full_range() {
+        let data = data(0, 10_000);
+        for x in [0.0, 30.0, 100.0] {
+            let mut zoom = HistogramZoomState::default();
+            let (mut view_start, mut view_end) = (ts(4_000), ts(6_000));
+            for _ in 0..20 {
+                Histogram::handle_scroll_zoom(
+                    &mut zoom,
+                    ZOOM_OUT,
+                    at_x(x),
+                    rect(),
+                    &data,
+                    view_start,
+                    view_end,
+                );
+                assert_within_full(&zoom, &data);
+                let (start, end) = zoom.visible_range.expect("range set");
+                assert!(
+                    end - start >= view_end - view_start,
+                    "zoom-out shrank the view"
+                );
+                (view_start, view_end) = (start, end);
+            }
+        }
+    }
+
+    #[test]
+    fn scroll_zoom_in_floors_at_10ms_when_data_spans_more() {
+        let data = data(0, 10_000);
+        let mut zoom = HistogramZoomState::default();
+        let (mut view_start, mut view_end) = (ts(1_000), ts(1_012));
+        for _ in 0..5 {
+            Histogram::handle_scroll_zoom(
+                &mut zoom,
+                ZOOM_IN,
+                at_x(50.0),
+                rect(),
+                &data,
+                view_start,
+                view_end,
+            );
+            let (start, end) = zoom.visible_range.expect("range set");
+            assert_eq!(end - start, TimeDelta::milliseconds(10));
+            (view_start, view_end) = (start, end);
+        }
+    }
+
+    #[test]
+    fn drag_zoom_narrower_than_min_fraction_is_ignored() {
+        let data = data(0, 10_000);
+        let mut zoom = HistogramZoomState::default();
+        // 0.4 px of 100 px = 0.004 < MIN_DRAG_ZOOM_FRACTION.
+        Histogram::complete_drag_zoom(
+            &mut zoom,
+            at_x(50.0),
+            at_x(50.4),
+            rect(),
+            &data,
+            ts(0),
+            ts(10_000),
+        );
+        assert_eq!(zoom.visible_range, None);
+    }
+
+    #[test]
+    fn drag_zoom_reversed_matches_forward() {
+        let data = data(0, 10_000);
+        let mut forward = HistogramZoomState::default();
+        let mut reversed = HistogramZoomState::default();
+        let r = rect();
+        Histogram::complete_drag_zoom(
+            &mut forward,
+            at_x(20.0),
+            at_x(60.0),
+            r,
+            &data,
+            ts(0),
+            ts(10_000),
+        );
+        Histogram::complete_drag_zoom(
+            &mut reversed,
+            at_x(60.0),
+            at_x(20.0),
+            r,
+            &data,
+            ts(0),
+            ts(10_000),
+        );
+
+        let (start, end) = forward.visible_range.expect("forward drag zoomed");
+        assert_close(start, ts(2_000));
+        assert_close(end, ts(6_000));
+        assert_eq!(reversed.visible_range, forward.visible_range);
+    }
+
+    #[test]
+    fn drag_zoom_beyond_rect_is_clamped_to_view() {
+        let data = data(0, 10_000);
+        let mut zoom = HistogramZoomState::default();
+        Histogram::complete_drag_zoom(
+            &mut zoom,
+            at_x(-50.0),
+            at_x(150.0),
+            rect(),
+            &data,
+            ts(2_000),
+            ts(4_000),
+        );
+        let (start, end) = zoom.visible_range.expect("drag zoomed");
+        assert_close(start, ts(2_000));
+        assert_close(end, ts(4_000));
+    }
+
+    #[test]
+    fn set_visible_range_ignores_empty_or_inverted_range() {
+        let mut zoom = HistogramZoomState::default();
+        zoom.set_visible_range(ts(0), ts(10));
+        zoom.set_visible_range(ts(5), ts(5));
+        zoom.set_visible_range(ts(10), ts(0));
+        assert_eq!(zoom.visible_range, Some((ts(0), ts(10))));
+    }
+
+    #[test]
+    fn timedelta_from_secs_handles_negative_values() {
+        assert_eq!(timedelta_from_secs_f64(1.5), TimeDelta::milliseconds(1_500));
+        assert_eq!(
+            timedelta_from_secs_f64(-1.5),
+            TimeDelta::milliseconds(-1_500)
+        );
+        assert_eq!(timedelta_from_secs_f32(0.5), TimeDelta::milliseconds(500));
+        assert_eq!(timedelta_from_secs_f32(-0.5), TimeDelta::milliseconds(-500));
     }
 }
