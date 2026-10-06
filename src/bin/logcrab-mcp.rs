@@ -67,10 +67,12 @@ struct AnalyzeParams {
 
 // ── Export record (one NDJSON line from `logcrab-export`) ────────────────────
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ExportRecord {
     line_number: usize,
-    timestamp_unix_ms: u64,
+    /// Mirrors `logcrab::export::ExportRecord::timestamp_unix_ms`; negative for
+    /// pre-epoch instants (e.g. time-only lines anchored to 1970 local time).
+    timestamp_unix_ms: i64,
     message: String,
     source_file: String,
     filetype: String,
@@ -124,6 +126,37 @@ fn normalize_scores(scores: &HashMap<usize, f64>) -> HashMap<usize, f64> {
             (ln, normalized)
         })
         .collect()
+}
+
+// ── Export parsing ────────────────────────────────────────────────────────────
+
+/// Parse the NDJSON stdout of `logcrab-export`, skipping blank lines.
+fn parse_export_output(stdout: &str) -> anyhow::Result<Vec<ExportRecord>> {
+    stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()
+        .map_err(|e| anyhow::anyhow!("failed to parse export output: {e}"))
+}
+
+// ── Result ordering ───────────────────────────────────────────────────────────
+
+/// Sort result entries by their `score` field, most anomalous first.
+fn sort_by_score_desc(entries: &mut [Value]) {
+    entries.sort_by(|a, b| {
+        b["score"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .partial_cmp(&a["score"].as_f64().unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
+/// Convert an export timestamp to the sidecar's unsigned representation,
+/// clamping pre-epoch instants to 0 (same policy as the GUI scoring path).
+fn sidecar_timestamp(timestamp_unix_ms: i64) -> u64 {
+    u64::try_from(timestamp_unix_ms).unwrap_or(0)
 }
 
 // ── Helper: build norm_versions map from a ModelInfo ────────────────────────
@@ -216,13 +249,7 @@ impl LogcrabMcp {
                     })
                 })
                 .collect();
-            out.sort_by(|a, b| {
-                b["score"]
-                    .as_f64()
-                    .unwrap_or(0.0)
-                    .partial_cmp(&a["score"].as_f64().unwrap_or(0.0))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            sort_by_score_desc(&mut out);
 
             Ok(json!({
                 "lines": out,
@@ -268,12 +295,7 @@ impl LogcrabMcp {
             }
             let stdout = String::from_utf8_lossy(&output.stdout);
 
-            let records: Vec<ExportRecord> = stdout
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(serde_json::from_str)
-                .collect::<Result<_, _>>()
-                .map_err(|e| anyhow::anyhow!("failed to parse export output: {e}"))?;
+            let records = parse_export_output(&stdout)?;
 
             if records.is_empty() {
                 return Ok(json!({"lines": [], "warnings": [], "total_lines": 0}));
@@ -300,7 +322,7 @@ impl LogcrabMcp {
                     InputLine::new(
                         0,
                         r.line_number,
-                        r.timestamp_unix_ms,
+                        sidecar_timestamp(r.timestamp_unix_ms),
                         r.message.clone(),
                         None,
                         Some(r.source_file.clone()),
@@ -336,13 +358,7 @@ impl LogcrabMcp {
                     })
                 })
                 .collect();
-            out.sort_by(|a, b| {
-                b["score"]
-                    .as_f64()
-                    .unwrap_or(0.0)
-                    .partial_cmp(&a["score"].as_f64().unwrap_or(0.0))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            sort_by_score_desc(&mut out);
             out.truncate(top_n);
 
             Ok(json!({
@@ -385,4 +401,127 @@ async fn main() -> anyhow::Result<()> {
     let service = LogcrabMcp::new().serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serialize records exactly as `logcrab-export` does (one JSON object per line).
+    fn export_ndjson(records: &[logcrab::export::ExportRecord<'_>]) -> String {
+        records
+            .iter()
+            .map(|r| serde_json::to_string(r).expect("serialize export record") + "\n")
+            .collect()
+    }
+
+    #[test]
+    fn parses_producer_records_field_for_field() {
+        let ndjson = export_ndjson(&[logcrab::export::ExportRecord {
+            line_number: 7,
+            timestamp_unix_ms: 1_700_000_000_123,
+            message: "TAG: hello".to_string(),
+            source_file: "a.log",
+            filetype: "logcat",
+        }]);
+
+        let records = parse_export_output(&ndjson).expect("producer output must parse");
+
+        assert_eq!(records.len(), 1);
+        let r = &records[0];
+        assert_eq!(r.line_number, 7);
+        assert_eq!(r.timestamp_unix_ms, 1_700_000_000_123);
+        assert_eq!(r.message, "TAG: hello");
+        assert_eq!(r.source_file, "a.log");
+        assert_eq!(r.filetype, "logcat");
+    }
+
+    #[test]
+    fn accepts_pre_epoch_timestamps_from_producer() {
+        // Time-only / syslog-style lines are anchored to 1970-01-01 local time,
+        // which is before the epoch in any UTC+ timezone (e.g. -3_599_000 in CET).
+        let ndjson = export_ndjson(&[
+            logcrab::export::ExportRecord {
+                line_number: 1,
+                timestamp_unix_ms: -3_599_000,
+                message: "pre-epoch".to_string(),
+                source_file: "a.log",
+                filetype: "generic",
+            },
+            logcrab::export::ExportRecord {
+                line_number: 2,
+                timestamp_unix_ms: 0,
+                message: "epoch".to_string(),
+                source_file: "a.log",
+                filetype: "generic",
+            },
+        ]);
+
+        let records = parse_export_output(&ndjson).expect("pre-epoch record must not abort parsing");
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].timestamp_unix_ms, -3_599_000);
+        assert_eq!(records[1].timestamp_unix_ms, 0);
+    }
+
+    #[test]
+    fn sidecar_timestamp_clamps_pre_epoch_to_zero() {
+        assert_eq!(sidecar_timestamp(-3_599_000), 0);
+        assert_eq!(sidecar_timestamp(0), 0);
+        assert_eq!(sidecar_timestamp(1_700_000_000_123), 1_700_000_000_123);
+    }
+
+    #[test]
+    fn skips_blank_lines_and_accepts_empty_output() {
+        assert!(parse_export_output("").expect("empty").is_empty());
+        assert!(parse_export_output("\n\n").expect("blank").is_empty());
+
+        let line = r#"{"line_number":1,"timestamp_unix_ms":5,"message":"m","source_file":"f","filetype":"t"}"#;
+        let records = parse_export_output(&format!("\n{line}\n\n{line}\n")).expect("blank lines");
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn malformed_line_reports_parse_error() {
+        let err = parse_export_output("{not json}\n").expect_err("must fail");
+        assert!(err.to_string().starts_with("failed to parse export output"));
+    }
+
+    #[test]
+    fn normalize_scores_empty_map() {
+        assert!(normalize_scores(&HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn normalize_scores_all_equal_maps_to_zero() {
+        let scores = HashMap::from([(1, 3.5), (2, 3.5), (3, 3.5)]);
+        let normalized = normalize_scores(&scores);
+        assert_eq!(normalized.len(), 3);
+        assert!(normalized.values().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn normalize_scores_maps_min_max_to_0_100() {
+        let scores = HashMap::from([(1, 2.0), (2, 4.0), (3, 6.0)]);
+        let normalized = normalize_scores(&scores);
+        assert!((normalized[&1] - 0.0).abs() < 1e-9);
+        assert!((normalized[&2] - 50.0).abs() < 1e-9);
+        assert!((normalized[&3] - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sort_by_score_desc_orders_most_anomalous_first() {
+        let mut entries = vec![
+            json!({"line_number": 1, "score": 10.0}),
+            json!({"line_number": 2, "score": 100.0}),
+            json!({"line_number": 3, "score": 0.0}),
+            json!({"line_number": 4, "score": 55.5}),
+        ];
+        sort_by_score_desc(&mut entries);
+        let order: Vec<u64> = entries
+            .iter()
+            .map(|e| e["line_number"].as_u64().expect("line_number"))
+            .collect();
+        assert_eq!(order, vec![2, 4, 1, 3]);
+    }
 }
