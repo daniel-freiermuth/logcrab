@@ -457,7 +457,8 @@ mod tests {
             },
         ]);
 
-        let records = parse_export_output(&ndjson).expect("pre-epoch record must not abort parsing");
+        let records =
+            parse_export_output(&ndjson).expect("pre-epoch record must not abort parsing");
 
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].timestamp_unix_ms, -3_599_000);
