@@ -35,10 +35,12 @@ pub struct ProgressToastState {
     pub progress: Option<f32>,
     /// Status message
     pub message: String,
-    /// When the toast was dismissed (None if still active)
+    /// When the producer dismissed the toast (None if still active)
     pub dismissed_at: Option<Instant>,
     /// Optional error message (will show error style)
     pub error: Option<String>,
+    /// Whether the user closed the toast via its close button
+    pub acknowledged: bool,
 }
 
 impl Default for ProgressToastState {
@@ -49,15 +51,25 @@ impl Default for ProgressToastState {
             message: String::new(),
             dismissed_at: None,
             error: None,
+            acknowledged: false,
         }
     }
 }
 
 impl ProgressToastState {
+    /// Record that the user closed the toast via its close button.
+    pub const fn acknowledge(&mut self) {
+        self.acknowledged = true;
+    }
+
     /// Check if this toast should be removed.
+    ///
+    /// A toast is removed once the user closes it, or once its producer dismisses
+    /// it. Errored toasts ignore the producer's dismissal and stay visible until
+    /// acknowledged, so the user can read the error.
     #[must_use]
     pub const fn should_remove(&self) -> bool {
-        self.dismissed_at.is_some()
+        self.acknowledged || (self.dismissed_at.is_some() && self.error.is_none())
     }
 }
 
@@ -117,6 +129,7 @@ impl ProgressToastHandle {
             progress: Some(0.0),
             dismissed_at: None,
             error: None,
+            acknowledged: false,
         }));
         if let Ok(mut handles) = progress_handles.lock() {
             handles.push(Arc::clone(&state));
@@ -300,7 +313,7 @@ impl ToastManager {
                 .progress_handles
                 .lock()
                 .expect("progress_handles lock poisoned");
-            // Remove toasts that have been dismissed long enough
+            // Remove dismissed toasts; errored toasts wait for acknowledgement
             handles.retain(|state| state.read().is_ok_and(|s| !s.should_remove()));
             handles
                 .iter()
@@ -343,9 +356,9 @@ impl ToastManager {
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     if Self::render_single_progress_toast(ui, state) {
-                        // Close button was clicked - dismiss immediately
+                        // Close button was clicked - remove on the next frame
                         if let Ok(mut s) = state_arc.write() {
-                            s.dismissed_at = Some(Instant::now());
+                            s.acknowledge();
                         }
                     }
                 });
@@ -443,7 +456,13 @@ mod tests {
             .lock()
             .expect("progress_handles lock poisoned")
             .iter()
-            .map(|state| state.read().expect("toast state lock poisoned").title.clone())
+            .map(|state| {
+                state
+                    .read()
+                    .expect("toast state lock poisoned")
+                    .title
+                    .clone()
+            })
             .collect()
     }
 
@@ -470,6 +489,48 @@ mod tests {
         run_frame(&mut manager);
 
         assert_eq!(tracked_titles(&manager), ["Loading"]);
+    }
+
+    #[test]
+    fn error_toast_survives_producer_dismiss_until_acknowledged() {
+        let mut manager = ToastManager::new(egui::Context::default());
+        let toast = manager.create_progress_toast("Loading", "a.log");
+
+        // Every background error path reports the error and then dismisses.
+        toast.set_error("No log lines found in file");
+        toast.dismiss();
+        run_frame(&mut manager);
+        run_frame(&mut manager);
+        assert_eq!(tracked_titles(&manager), ["Loading"]);
+
+        // The close button acknowledges the toast.
+        toast
+            .state
+            .write()
+            .expect("toast state lock poisoned")
+            .acknowledge();
+        run_frame(&mut manager);
+        assert!(tracked_titles(&manager).is_empty());
+    }
+
+    #[test]
+    fn acknowledging_running_toast_removes_it() {
+        let mut manager = ToastManager::new(egui::Context::default());
+        let toast = manager.create_progress_toast("Loading", "a.log");
+
+        toast
+            .state
+            .write()
+            .expect("toast state lock poisoned")
+            .acknowledge();
+        run_frame(&mut manager);
+        assert!(tracked_titles(&manager).is_empty());
+
+        // A late error from the producer does not resurrect a closed toast.
+        toast.set_error("Read error");
+        toast.dismiss();
+        run_frame(&mut manager);
+        assert!(tracked_titles(&manager).is_empty());
     }
 
     #[test]
