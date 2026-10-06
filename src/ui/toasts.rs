@@ -426,3 +426,64 @@ impl ToastManager {
         inner.inner
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run one headless UI frame, which prunes removable progress toasts.
+    fn run_frame(manager: &mut ToastManager) {
+        let ctx = manager.ctx.clone();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| manager.show(ctx));
+    }
+
+    fn tracked_titles(manager: &ToastManager) -> Vec<String> {
+        manager
+            .progress_handles
+            .lock()
+            .expect("progress_handles lock poisoned")
+            .iter()
+            .map(|state| state.read().expect("toast state lock poisoned").title.clone())
+            .collect()
+    }
+
+    #[test]
+    fn dismissed_toast_is_removed_on_next_frame() {
+        let mut manager = ToastManager::new(egui::Context::default());
+        let toast = manager.create_progress_toast("Loading", "a.log");
+
+        run_frame(&mut manager);
+        assert_eq!(tracked_titles(&manager), ["Loading"]);
+
+        toast.dismiss();
+        run_frame(&mut manager);
+        assert!(tracked_titles(&manager).is_empty());
+    }
+
+    #[test]
+    fn error_toast_without_dismiss_stays_visible() {
+        let mut manager = ToastManager::new(egui::Context::default());
+        let toast = manager.create_progress_toast("Loading", "a.log");
+
+        toast.set_error("Read error");
+        run_frame(&mut manager);
+        run_frame(&mut manager);
+
+        assert_eq!(tracked_titles(&manager), ["Loading"]);
+    }
+
+    #[test]
+    fn dismissing_parent_keeps_sibling_visible() {
+        let mut manager = ToastManager::new(egui::Context::default());
+        let toast = manager.create_progress_toast("Loading", "a.log");
+        let sibling = toast.spawn_sibling("ML Scoring", "Connecting to sidecar...");
+
+        toast.dismiss();
+        run_frame(&mut manager);
+        assert_eq!(tracked_titles(&manager), ["ML Scoring"]);
+
+        sibling.dismiss();
+        run_frame(&mut manager);
+        assert!(tracked_titles(&manager).is_empty());
+    }
+}
