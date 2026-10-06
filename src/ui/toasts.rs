@@ -476,7 +476,7 @@ mod tests {
 
         toast.dismiss();
         run_frame(&mut manager);
-        assert!(tracked_titles(&manager).is_empty());
+        assert_eq!(tracked_titles(&manager), Vec::<String>::new());
     }
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
             .expect("toast state lock poisoned")
             .acknowledge();
         run_frame(&mut manager);
-        assert!(tracked_titles(&manager).is_empty());
+        assert_eq!(tracked_titles(&manager), Vec::<String>::new());
     }
 
     #[test]
@@ -524,13 +524,13 @@ mod tests {
             .expect("toast state lock poisoned")
             .acknowledge();
         run_frame(&mut manager);
-        assert!(tracked_titles(&manager).is_empty());
+        assert_eq!(tracked_titles(&manager), Vec::<String>::new());
 
         // A late error from the producer does not resurrect a closed toast.
         toast.set_error("Read error");
         toast.dismiss();
         run_frame(&mut manager);
-        assert!(tracked_titles(&manager).is_empty());
+        assert_eq!(tracked_titles(&manager), Vec::<String>::new());
     }
 
     #[test]
@@ -545,6 +545,6 @@ mod tests {
 
         sibling.dismiss();
         run_frame(&mut manager);
-        assert!(tracked_titles(&manager).is_empty());
+        assert_eq!(tracked_titles(&manager), Vec::<String>::new());
     }
 }
