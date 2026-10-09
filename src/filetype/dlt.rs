@@ -432,15 +432,12 @@ impl LineType for DltLogLine {
                             + chrono::Duration::milliseconds(sync_offset);
                     }
                 }
-                // Fallback: no boot_time for this app yet
-                self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
+                // Fallback: no boot_time for this app yet, use storage time below.
             }
-            DltTimestampSource::StorageTime => {
-                self.storage_time
-                    + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
-            }
+            DltTimestampSource::StorageTime => {}
         }
+        self.storage_time
+            + chrono::Duration::milliseconds(file_state.storage_offset_ms() + sync_offset)
     }
 
     fn message(&self) -> String {
