@@ -55,7 +55,7 @@ impl AnomalyScorer for TemporalScorer {
             } else {
                 // Linear decay based on time gap
                 let ratio = (time_diff_secs as f64 / window_secs as f64).min(1.0);
-                score += ratio * 0.3;
+                score = ratio.mul_add(0.3, score);
             }
         } else {
             // Never seen before in our tracking
