@@ -283,6 +283,9 @@ impl FilterView {
                     // Use the 0-based line index that matches line_id.line_number
                     // in the sidecar protocol, NOT the 1-based LogLine.line_number.
                     let classified_line_number = line_index.line_index_within_source();
+                    // 1-based number as shown in the log table, for user-facing messages only.
+                    let display_line_number =
+                        store.get_by_id(&line_index).map_or(0, |l| l.line_number);
                     let Some(sidecar_config) = store.sidecar_config() else {
                         tracing::warn!("classify: no sidecar config set");
                         continue;
@@ -316,11 +319,11 @@ impl FilterView {
                         match result {
                             Ok(()) => {
                                 tracing::info!(
-                                    "Classification submitted: {label} for line {classified_line_number}"
+                                    "Classification submitted: {label} for line {display_line_number}"
                                 );
                                 if let Some(ref sender) = toast_sender {
                                     sender.send_success(format!(
-                                        "Submitted as {label} sample (line {classified_line_number})"
+                                        "Submitted as {label} sample (line {display_line_number})"
                                     ));
                                 }
                             }
