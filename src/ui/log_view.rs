@@ -262,13 +262,14 @@ impl CrabSession {
 
         // Add highlights from LogViewState
         for highlight in &self.state.highlights {
-            if highlight.enabled && !highlight.search.search_text.is_empty() {
-                if let Ok(regex) = &highlight.search.get_regex() {
-                    all_filter_highlights.push(FilterHighlight {
-                        regex: regex.clone(),
-                        color: highlight.color,
-                    });
-                }
+            if highlight.enabled
+                && !highlight.search.search_text.is_empty()
+                && let Ok(regex) = &highlight.search.get_regex()
+            {
+                all_filter_highlights.push(FilterHighlight {
+                    regex: regex.clone(),
+                    color: highlight.color,
+                });
             }
         }
 
@@ -372,24 +373,24 @@ impl CrabSession {
         }
 
         // Handle highlight-to-filter conversion
-        if let Some(highlight_index) = self.state.pending_highlight_to_filter.take() {
-            if let Some(highlight) = self.state.highlights.get(highlight_index) {
-                // Create a new filter with the highlight's settings
-                let mut filter_state = FilterState::new(highlight.name.clone(), highlight.color);
-                filter_state
-                    .search
-                    .search_text
-                    .clone_from(&highlight.search.search_text);
-                filter_state.search.case_sensitive = highlight.search.case_sensitive;
-                filter_state.enabled = highlight.enabled;
-                filter_state.show_in_histogram = highlight.show_in_histogram;
+        if let Some(highlight_index) = self.state.pending_highlight_to_filter.take()
+            && let Some(highlight) = self.state.highlights.get(highlight_index)
+        {
+            // Create a new filter with the highlight's settings
+            let mut filter_state = FilterState::new(highlight.name.clone(), highlight.color);
+            filter_state
+                .search
+                .search_text
+                .clone_from(&highlight.search.search_text);
+            filter_state.search.case_sensitive = highlight.search.case_sensitive;
+            filter_state.enabled = highlight.enabled;
+            filter_state.show_in_histogram = highlight.show_in_histogram;
 
-                self.add_filter_view(false, Some(filter_state));
+            self.add_filter_view(false, Some(filter_state));
 
-                // Remove the highlight
-                self.state.highlights.remove(highlight_index);
-                self.state.modified = true;
-            }
+            // Remove the highlight
+            self.state.highlights.remove(highlight_index);
+            self.state.modified = true;
         }
 
         // Handle filter-to-highlight conversion
@@ -485,10 +486,10 @@ impl CrabSession {
         }
 
         let focused_tab = self.dock_state.find_active_focused().map(|(_, tab)| tab);
-        if let Some(focused_tab) = focused_tab {
-            if focused_tab.process_events(actions, &mut self.state) {
-                self.save_crab_file();
-            }
+        if let Some(focused_tab) = focused_tab
+            && focused_tab.process_events(actions, &mut self.state)
+        {
+            self.save_crab_file();
         }
     }
 

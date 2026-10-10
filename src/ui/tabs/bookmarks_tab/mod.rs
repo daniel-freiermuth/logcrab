@@ -313,18 +313,16 @@ impl LogCrabTab for BookmarksView {
                     .button("Export…")
                     .on_hover_text("Export all bookmarks to file")
                     .clicked()
-                {
-                    if let Some(path) = rfd::FileDialog::new()
+                    && let Some(path) = rfd::FileDialog::new()
                         .set_title("Export Bookmarks")
                         .add_filter("Text", &["txt"])
                         .set_file_name("bookmarks.txt")
                         .save_file()
-                    {
-                        if let Err(e) = Self::export_bookmarks(data_state, &path) {
-                            tracing::error!("Failed to export bookmarks: {e}");
-                        } else {
-                            tracing::info!("Bookmarks exported to {}", path.display());
-                        }
+                {
+                    if let Err(e) = Self::export_bookmarks(data_state, &path) {
+                        tracing::error!("Failed to export bookmarks: {e}");
+                    } else {
+                        tracing::info!("Bookmarks exported to {}", path.display());
                     }
                 }
             });
@@ -348,10 +346,11 @@ impl LogCrabTab for BookmarksView {
     ) -> bool {
         // Handle Enter key for starting bookmark rename (when not already editing)
         // enter_pressed_this_frame is set during render when we have UI context
-        if self.enter_pressed_this_frame && self.edited_store_id.is_none() {
-            if let Some(selected) = data_state.selected_line_index {
-                self.start_renaming_bookmark(selected, data_state);
-            }
+        if self.enter_pressed_this_frame
+            && self.edited_store_id.is_none()
+            && let Some(selected) = data_state.selected_line_index
+        {
+            self.start_renaming_bookmark(selected, data_state);
         }
 
         for action in actions {

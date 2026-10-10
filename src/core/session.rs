@@ -249,28 +249,28 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
         }
 
         // v3+: remap the per-format slug key to the canonical `file_state` key.
-        if let Some(obj) = value.as_object_mut() {
-            if let Some(slug_state) = obj.remove(FT::SLUG) {
-                // Check the per-filetype state_version before handing to serde,
-                // so "too new" reaches the caller as a typed error with a good message
-                // rather than being silently swallowed as a missing field.
-                let max_sv = <<FT::LineType as crate::filetype::LineType>::FileState
+        if let Some(obj) = value.as_object_mut()
+            && let Some(slug_state) = obj.remove(FT::SLUG)
+        {
+            // Check the per-filetype state_version before handing to serde,
+            // so "too new" reaches the caller as a typed error with a good message
+            // rather than being silently swallowed as a missing field.
+            let max_sv = <<FT::LineType as crate::filetype::LineType>::FileState
                 as crate::filetype::LogFileState>::MAX_STATE_VERSION;
-                if let Some(max_sv) = max_sv {
-                    let state_version = slug_state
-                        .get("state_version")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0) as u32;
-                    if state_version > max_sv {
-                        return Err(SessionError::StateVersionTooNew {
-                            slug: FT::SLUG,
-                            found: state_version,
-                            supported: max_sv,
-                        });
-                    }
+            if let Some(max_sv) = max_sv {
+                let state_version = slug_state
+                    .get("state_version")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as u32;
+                if state_version > max_sv {
+                    return Err(SessionError::StateVersionTooNew {
+                        slug: FT::SLUG,
+                        found: state_version,
+                        supported: max_sv,
+                    });
                 }
-                obj.insert("file_state".to_string(), slug_state);
             }
+            obj.insert("file_state".to_string(), slug_state);
         }
 
         serde_json::from_value(value).map_err(SessionError::Parse)
@@ -287,10 +287,10 @@ impl<FT: crate::filetype::InputFileType> CrabFile<FT> {
 
         let mut value = serde_json::to_value(self).map_err(SessionError::Serialize)?;
 
-        if let Some(obj) = value.as_object_mut() {
-            if let Some(state) = obj.remove("file_state") {
-                obj.insert(FT::SLUG.to_string(), state);
-            }
+        if let Some(obj) = value.as_object_mut()
+            && let Some(state) = obj.remove("file_state")
+        {
+            obj.insert(FT::SLUG.to_string(), state);
         }
 
         let json = serde_json::to_string_pretty(&value).map_err(SessionError::Serialize)?;

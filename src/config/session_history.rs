@@ -51,10 +51,10 @@ impl RecordedSession {
     pub fn contains_file(&self, path: &Path) -> bool {
         let canonical = path.canonicalize().ok();
         self.files.iter().any(|f| {
-            if let Some(ref c) = canonical {
-                if let Ok(fc) = f.canonicalize() {
-                    return &fc == c;
-                }
+            if let Some(ref c) = canonical
+                && let Ok(fc) = f.canonicalize()
+            {
+                return &fc == c;
             }
             f == path
         })

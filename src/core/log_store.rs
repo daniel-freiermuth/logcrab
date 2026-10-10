@@ -1035,10 +1035,10 @@ impl LogStore {
         let sources = self.sources.read().expect("sources lock poisoned");
         sources.values().any(|source| {
             // Try canonical comparison first, fall back to direct comparison
-            if let Some(ref canonical) = canonical_path {
-                if let Ok(source_canonical) = source.file_path().canonicalize() {
-                    return &source_canonical == canonical;
-                }
+            if let Some(ref canonical) = canonical_path
+                && let Ok(source_canonical) = source.file_path().canonicalize()
+            {
+                return &source_canonical == canonical;
             }
             source.file_path() == path
         })
