@@ -916,17 +916,17 @@ pub fn storage_time_to_datetime(
 
 /// Convert a `dlt_core::dlt::Message` to `DltLogLine`.
 pub fn convert_dlt_message(msg: &dlt_core::dlt::Message, line_number: usize) -> Option<DltLogLine> {
-    let storage_time = storage_time_to_datetime(&msg.storage_header.as_ref()?.timestamp)?;
+    let Some(storage_header) = msg.storage_header.as_ref() else {
+        tracing::error!("DLT message missing Storage Header for line {line_number}");
+        return None;
+    };
+    let storage_time = storage_time_to_datetime(&storage_header.timestamp)?;
 
     if msg.header.ecu_id.is_none() {
         tracing::warn!("DLT message missing ECU ID for line {line_number}");
     }
     if msg.extended_header.is_none() {
         tracing::error!("DLT message missing Extended Header for line {line_number}");
-        return None;
-    }
-    if msg.storage_header.is_none() {
-        tracing::error!("DLT message missing Storage Header for line {line_number}");
         return None;
     }
 
