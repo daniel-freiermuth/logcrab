@@ -345,25 +345,9 @@ impl LineType for PcapLogLine {
         _config: &PcapConfig,
         file_state: &PcapFileState,
     ) {
-        if ui.button("⏱ Calibrate Time Here").clicked() {
-            let raw_time = self.packet_info.timestamp;
-            let display_time =
-                raw_time + chrono::Duration::milliseconds(file_state.time_offset_ms());
-            *file_state
-                .inner
-                .calibration
-                .lock()
-                .expect("calibration lock poisoned") = Some((
-                raw_time,
-                crate::filetype::CalibrationWindow::new(
-                    display_time,
-                    false,
-                    Some(display_time),
-                    raw_time,
-                ),
-            ));
-            ui.close();
-        }
+        file_state
+            .inner
+            .render_calibration_context_menu(ui, self.packet_info.timestamp);
 
         // SOME/IP SD decoding toggle for multicast packets
         if let Some(key) = self.packet_info.multicast_key() {

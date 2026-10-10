@@ -26,6 +26,34 @@ impl SimpleFileState {
     pub fn set_time_offset_ms(&self, v: i64) {
         self.time_offset_ms.store(v, Ordering::Relaxed);
     }
+
+    /// Render the "⏱ Calibrate Time Here" context menu button.
+    ///
+    /// Opens a [`CalibrationWindow`](crate::filetype::CalibrationWindow) for the given `raw_time` when the user clicks.
+    /// Used by every filetype whose `FileState` is (or wraps) `SimpleFileState`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the calibration mutex is poisoned.
+    pub fn render_calibration_context_menu(
+        &self,
+        ui: &mut egui::Ui,
+        raw_time: chrono::DateTime<chrono::Local>,
+    ) {
+        if ui.button("⏱ Calibrate Time Here").clicked() {
+            let display_time = raw_time + chrono::Duration::milliseconds(self.time_offset_ms());
+            *self.calibration.lock().expect("calibration lock poisoned") = Some((
+                raw_time,
+                crate::filetype::CalibrationWindow::new(
+                    display_time,
+                    false,
+                    Some(display_time),
+                    raw_time,
+                ),
+            ));
+            ui.close();
+        }
+    }
 }
 
 impl Default for SimpleFileState {
