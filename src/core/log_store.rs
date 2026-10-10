@@ -390,11 +390,13 @@ where
         crab_path
     }
 
-    /// Acquire an exclusive lock on the .crab file
-    /// Returns None if the lock cannot be acquired (file already open in another instance)
+    /// Acquire an exclusive lock on the .crab file.
+    ///
+    /// Returns `None` if the lock cannot be acquired: either another instance
+    /// holds it (contention) or the file cannot be opened/locked (I/O error).
+    /// The two cases are logged differently.
     fn acquire_crab_lock(crab_path: &Path) -> Option<File> {
-        use fs2::FileExt;
-        use std::fs::OpenOptions;
+        use std::fs::{OpenOptions, TryLockError};
 
         // Open or create the .crab file
         let file = match OpenOptions::new()
@@ -412,7 +414,7 @@ where
         };
 
         // Try to acquire exclusive lock
-        match file.try_lock_exclusive() {
+        match file.try_lock() {
             Ok(()) => {
                 tracing::info!(
                     "Successfully acquired exclusive lock on {}",
@@ -420,11 +422,15 @@ where
                 );
                 Some(file)
             }
-            Err(e) => {
-                tracing::error!(
-                    "Cannot lock .crab file {} (already open in another instance?): {e}",
+            Err(TryLockError::WouldBlock) => {
+                tracing::info!(
+                    ".crab file {} is locked by another instance",
                     crab_path.display()
                 );
+                None
+            }
+            Err(TryLockError::Error(e)) => {
+                tracing::error!("Cannot lock .crab file {}: {e}", crab_path.display());
                 None
             }
         }
