@@ -24,7 +24,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// DLT timestamp source configuration
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,12 +213,24 @@ impl GlobalConfig {
 
     /// Parse config JSON into a `GlobalConfig`, handling version probing and migration.
     ///
-    /// Returns `Self::default()` (or a read-only default) on any error.
-    fn parse_contents(contents: &str) -> Self {
+    /// Whitespace-only contents yield `Self::default()` (nothing to preserve).
+    /// A newer schema version yields a read-only default.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserialization error when non-empty contents cannot be
+    /// parsed. Callers must not overwrite the file in that case, or the
+    /// user's settings would be lost.
+    fn parse_contents(contents: &str) -> Result<Self, serde_json::Error> {
         #[derive(Deserialize)]
         struct VersionProbe {
             schema_version: Option<u32>,
         }
+
+        if contents.trim().is_empty() {
+            return Ok(Self::default());
+        }
+
         let file_version = serde_json::from_str::<VersionProbe>(contents)
             .map_or(0, |p| p.schema_version.unwrap_or(0));
 
@@ -229,51 +241,44 @@ impl GlobalConfig {
                 file_version,
                 SCHEMA_VERSION
             );
-            return Self {
+            return Ok(Self {
                 read_only: true,
                 ..Self::default()
-            };
+            });
         }
 
         // v0 = old binary that never wrote schema_version: inject the field
         // so the struct can deserialize without losing any existing settings.
-        let parse_result: Option<Self> = if file_version == 0 {
+        let mut config = if file_version == 0 {
             tracing::info!("Config has no schema_version, treating as v0 and migrating");
-            serde_json::from_str::<serde_json::Value>(contents)
-                .ok()
-                .and_then(|mut v| {
-                    v.as_object_mut()?
-                        .insert("schema_version".to_string(), serde_json::json!(0u32));
-                    serde_json::from_value::<Self>(v).ok()
-                })
+            let mut value = serde_json::from_str::<serde_json::Value>(contents)?;
+            value
+                .as_object_mut()
+                .ok_or_else(|| {
+                    <serde_json::Error as serde::de::Error>::custom("config is not a JSON object")
+                })?
+                .insert("schema_version".to_string(), serde_json::json!(0u32));
+            serde_json::from_value::<Self>(value)?
         } else {
-            serde_json::from_str::<Self>(contents).ok()
+            serde_json::from_str::<Self>(contents)?
         };
 
-        match parse_result {
-            None => {
-                tracing::warn!("Failed to parse config, using defaults");
-                Self::default()
-            }
-            Some(mut config) => {
-                if config.schema_version < SCHEMA_VERSION {
-                    // v1 → v2: sidecar scoring fields added with serde defaults;
-                    // no explicit field changes needed — serde already populated them.
-                    tracing::info!(
-                        "Migrated config from schema v{} to v{}",
-                        config.schema_version,
-                        SCHEMA_VERSION
-                    );
-                    config.schema_version = SCHEMA_VERSION;
-                }
-                tracing::info!(
-                    "Loaded {} shortcuts and {} favorite filters",
-                    config.shortcuts.len(),
-                    config.favorite_filters.len()
-                );
-                config
-            }
+        if config.schema_version < SCHEMA_VERSION {
+            // v1 → v2: sidecar scoring fields added with serde defaults;
+            // no explicit field changes needed — serde already populated them.
+            tracing::info!(
+                "Migrated config from schema v{} to v{}",
+                config.schema_version,
+                SCHEMA_VERSION
+            );
+            config.schema_version = SCHEMA_VERSION;
         }
+        tracing::info!(
+            "Loaded {} shortcuts and {} favorite filters",
+            config.shortcuts.len(),
+            config.favorite_filters.len()
+        );
+        Ok(config)
     }
 
     /// Load global config from disk at startup.
@@ -283,13 +288,28 @@ impl GlobalConfig {
     /// - **version == current**: deserialized as-is.
     /// - **version > current**: falls back to defaults with `read_only = true`
     ///   so `update()` will not overwrite the newer-version file.
+    /// - **unparseable**: logs the error and falls back to defaults with
+    ///   `read_only = true`; `update()` will also refuse to overwrite it.
     pub fn load() -> Self {
         if let Some(path) = Self::config_path() {
             if path.exists() {
                 tracing::info!("Loading global config from {}", path.display());
                 match std::fs::read_to_string(&path) {
                     Err(e) => tracing::warn!("Failed to read config file: {e}"),
-                    Ok(contents) => return Self::parse_contents(&contents),
+                    Ok(contents) => match Self::parse_contents(&contents) {
+                        Ok(config) => return config,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to parse config {}: {e} — using defaults \
+                                 (read-only: will not overwrite)",
+                                path.display()
+                            );
+                            return Self {
+                                read_only: true,
+                                ..Self::default()
+                            };
+                        }
+                    },
                 }
             } else {
                 tracing::info!("No global config found, using defaults");
@@ -313,10 +333,16 @@ impl GlobalConfig {
     /// Returns the updated config so the caller can replace its cached copy.
     /// # Errors
     ///
-    /// Returns an error when the requested operation cannot be completed.
+    /// Returns an error when the requested operation cannot be completed,
+    /// including when the on-disk file exists but cannot be parsed (the file
+    /// is left untouched so no user settings are lost).
     pub fn update(f: impl FnOnce(&mut Self)) -> Result<Self, String> {
         let path = Self::config_path().ok_or("Could not determine config directory")?;
+        Self::update_at(&path, f)
+    }
 
+    /// [`Self::update`] against an explicit file path.
+    fn update_at(path: &Path, f: impl FnOnce(&mut Self)) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {e}"))?;
@@ -329,7 +355,7 @@ impl GlobalConfig {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(&path)
+            .open(path)
             .map_err(|e| format!("Failed to open config file: {e}"))?;
 
         file.lock_exclusive()
@@ -339,11 +365,12 @@ impl GlobalConfig {
         file.read_to_string(&mut contents)
             .map_err(|e| format!("Failed to read config file: {e}"))?;
 
-        let mut config = if contents.is_empty() {
-            Self::default()
-        } else {
-            Self::parse_contents(&contents)
-        };
+        let mut config = Self::parse_contents(&contents).map_err(|e| {
+            format!(
+                "Refusing to overwrite unparseable config {}: {e}",
+                path.display()
+            )
+        })?;
 
         // Apply the caller's mutation. For read-only configs we still apply
         // in-memory so the current session reflects the change.
@@ -383,7 +410,7 @@ mod tests {
     #[test]
     fn v0_config_without_schema_version_migrates() {
         let json = r#"{ "bright_mode": true }"#;
-        let config = GlobalConfig::parse_contents(json);
+        let config = GlobalConfig::parse_contents(json).expect("should parse");
 
         assert_eq!(config.schema_version, SCHEMA_VERSION);
         assert!(
@@ -403,7 +430,7 @@ mod tests {
             ],
             "bright_mode": false
         }"#;
-        let config = GlobalConfig::parse_contents(json);
+        let config = GlobalConfig::parse_contents(json).expect("should parse");
 
         assert_eq!(config.schema_version, SCHEMA_VERSION);
         assert_eq!(config.shortcuts.len(), 1);
@@ -417,7 +444,7 @@ mod tests {
     #[test]
     fn future_version_sets_read_only() {
         let json = format!(r#"{{ "schema_version": {} }}"#, SCHEMA_VERSION + 95);
-        let config = GlobalConfig::parse_contents(&json);
+        let config = GlobalConfig::parse_contents(&json).expect("should parse");
 
         assert!(config.read_only);
         assert_eq!(config.schema_version, SCHEMA_VERSION); // defaults
@@ -427,23 +454,23 @@ mod tests {
         assert!(config.favorite_filters.is_empty());
     }
 
-    /// Malformed JSON should fall back to defaults without crashing.
+    /// Malformed JSON is reported as an error rather than replaced by defaults.
     #[test]
-    fn malformed_json_falls_back_to_defaults() {
-        let config = GlobalConfig::parse_contents("not json at all {{{");
-
-        assert_eq!(config.schema_version, SCHEMA_VERSION);
-        assert!(!config.read_only);
-        assert!(!config.bright_mode);
+    fn malformed_json_is_error() {
+        assert!(GlobalConfig::parse_contents("not json at all {{{").is_err());
     }
 
-    /// Valid JSON that is not an object (e.g. an array) should fall back.
+    /// Valid JSON that is not an object (e.g. an array) is an error.
     #[test]
-    fn json_array_falls_back_to_defaults() {
-        let config = GlobalConfig::parse_contents("[1, 2, 3]");
+    fn json_array_is_error() {
+        assert!(GlobalConfig::parse_contents("[1, 2, 3]").is_err());
+    }
 
-        assert_eq!(config.schema_version, SCHEMA_VERSION);
-        assert!(!config.read_only);
+    /// A field with the wrong type is an error, not a silent reset.
+    #[test]
+    fn wrong_field_type_is_error() {
+        let json = format!(r#"{{ "schema_version": {SCHEMA_VERSION}, "shortcuts": 5 }}"#);
+        assert!(GlobalConfig::parse_contents(&json).is_err());
     }
 
     /// Valid JSON object with unknown fields should preserve known fields
@@ -457,7 +484,7 @@ mod tests {
                 "totally_made_up_field": 42
             }}"#,
         );
-        let config = GlobalConfig::parse_contents(&json);
+        let config = GlobalConfig::parse_contents(&json).expect("should parse");
 
         assert_eq!(config.schema_version, SCHEMA_VERSION);
         assert!(config.bright_mode);
@@ -469,7 +496,7 @@ mod tests {
     #[test]
     fn v1_config_migrates_to_current() {
         let json = r#"{ "schema_version": 1, "bright_mode": true }"#;
-        let config = GlobalConfig::parse_contents(json);
+        let config = GlobalConfig::parse_contents(json).expect("should parse");
 
         assert_eq!(config.schema_version, SCHEMA_VERSION);
         assert!(config.bright_mode);
@@ -484,20 +511,56 @@ mod tests {
     #[test]
     fn current_version_no_migration() {
         let json = format!(r#"{{ "schema_version": {SCHEMA_VERSION}, "bright_mode": true }}"#);
-        let config = GlobalConfig::parse_contents(&json);
+        let config = GlobalConfig::parse_contents(&json).expect("should parse");
 
         assert_eq!(config.schema_version, SCHEMA_VERSION);
         assert!(config.bright_mode);
         assert!(!config.read_only);
     }
 
-    /// Empty string input should fall back to defaults (the `VersionProbe`
-    /// parse fails, `file_version` becomes 0, then Value parse also fails).
+    /// Empty (or whitespace-only) input has nothing to preserve and yields
+    /// writable defaults.
     #[test]
     fn empty_string_falls_back_to_defaults() {
-        let config = GlobalConfig::parse_contents("");
+        let config = GlobalConfig::parse_contents(" \n").expect("should parse");
 
         assert_eq!(config.schema_version, SCHEMA_VERSION);
         assert!(!config.read_only);
+    }
+
+    /// `update` must refuse to overwrite a file it cannot parse, leaving the
+    /// user's settings on disk intact.
+    #[test]
+    fn update_refuses_to_overwrite_unparseable_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+        let original = format!(
+            r#"{{ "schema_version": {SCHEMA_VERSION}, "shortcuts": 5, "bright_mode": true }}"#
+        );
+        std::fs::write(&path, &original).expect("write fixture");
+
+        let result = GlobalConfig::update_at(&path, |c| c.hide_duplicates = true);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).expect("read back"), original);
+    }
+
+    /// `update` on a valid file applies the mutation and preserves other fields.
+    #[test]
+    fn update_persists_mutation_and_keeps_existing_fields() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            format!(r#"{{ "schema_version": {SCHEMA_VERSION}, "bright_mode": true }}"#),
+        )
+        .expect("write fixture");
+
+        GlobalConfig::update_at(&path, |c| c.hide_duplicates = true).expect("update");
+
+        let on_disk = std::fs::read_to_string(&path).expect("read back");
+        let on_disk = GlobalConfig::parse_contents(&on_disk).expect("should parse");
+        assert!(on_disk.bright_mode);
+        assert!(on_disk.hide_duplicates);
     }
 }
