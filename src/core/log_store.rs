@@ -208,8 +208,9 @@ where
     crab_path: PathBuf,
     /// OS exclusive lock on the `.crab` session file.
     ///
-    /// `None` — lock released because the file was written by a newer `LogCrab`;
-    ///           all reads and writes are refused.
+    /// `None` — lock released because the file was written by a newer `LogCrab`
+    ///           or could not be read/parsed; all reads and writes are refused
+    ///           so the existing file is never overwritten.
     /// `Some(mutex)` — lock held; mutex provides `&mut File` for writes.
     crab: Option<Mutex<File>>,
     version: AtomicU64,
@@ -325,8 +326,11 @@ where
     /// Parse the `.crab` file immediately after locking it.
     ///
     /// Returns `(Some(file), Some(data))` on success.
-    /// Returns `(Some(file), None)` when the file is empty or unparseable.
-    /// Returns `(None, None)` on `VersionTooNew`, releasing the OS lock.
+    /// Returns `(Some(file), None)` when the file is empty (new session).
+    /// Returns `(None, None)` on any load error (unreadable, unparseable, or
+    /// written by a newer `LogCrab`), after warning the user. The handle is
+    /// dropped to release the OS lock so a later save cannot overwrite data we
+    /// failed to understand.
     fn open_crab_file(
         file: File,
         crab_path: &Path,
@@ -334,13 +338,8 @@ where
     ) -> (Option<File>, Option<CrabFile<FT>>) {
         let mut file = file;
         match CrabFile::<FT>::load_from_file(&mut file) {
-            Ok(data) => (Some(file), Some(data)),
-            Err(SessionError::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                (Some(file), None) // Empty .crab file (just created)
-            }
-            Err(SessionError::Parse(_)) => {
-                (Some(file), None) // Unparseable, fine for a new session
-            }
+            Ok(Some(data)) => (Some(file), Some(data)),
+            Ok(None) => (Some(file), None), // Empty .crab file (just created)
             Err(SessionError::VersionTooNew { found, supported }) => {
                 let msg = format!(
                     ".crab file {} was written by a newer LogCrab (v{found}, app supports up to v{supported}); \
@@ -371,8 +370,17 @@ where
                 (None, None)
             }
             Err(e) => {
-                tracing::warn!("Failed to load .crab file {}: {e}", crab_path.display());
-                (Some(file), None)
+                let msg = format!(
+                    "Failed to load .crab file {}: {e}; bookmarks and file state not loaded \
+                     and the file will not be modified this session — fix or delete it to \
+                     resume saving",
+                    crab_path.display()
+                );
+                tracing::warn!("{msg}");
+                warnings.send(msg);
+                // Drop `file` here to release the OS lock — keeping it would let
+                // the next save overwrite the user's bookmarks with an empty session.
+                (None, None)
             }
         }
     }
@@ -514,7 +522,7 @@ where
     pub fn save_crab_file(&self, filters: &[SavedFilter], highlights: &[SavedHighlight]) {
         let Some(mutex) = &self.crab else {
             tracing::warn!(
-                "Skipping save to {} — .crab file is from a newer version of LogCrab",
+                "Skipping save to {} — .crab file could not be loaded or is from a newer LogCrab",
                 self.crab_path.display()
             );
             return;
@@ -1617,4 +1625,56 @@ pub struct Bookmark {
     /// Line index within the source (not a global `StoreID`)
     pub line_index: usize,
     pub name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_source(log_path: &Path) -> (SourceData<GenericFileType>, crate::ui::ToastSender) {
+        let warnings = crate::ui::ToastManager::new(egui::Context::default()).sender();
+        let (source, _, _) = SourceData::<GenericFileType>::new(
+            log_path.to_path_buf(),
+            Arc::new(RwLock::new(())),
+            &warnings,
+        );
+        (source, warnings)
+    }
+
+    #[test]
+    fn corrupt_crab_file_is_reported_and_never_overwritten() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("foo.log");
+        let crab_path = dir.path().join("foo.log.crab");
+        let corrupt = br#"{"version": 3, "bookmarks": ["#;
+        std::fs::write(&crab_path, corrupt).expect("write crab");
+
+        let (source, warnings) = open_source(&log_path);
+        let errors = warnings.take_pending_errors();
+        assert_eq!(errors.len(), 1, "expected one warning, got {errors:?}");
+        assert!(errors[0].contains("foo.log.crab"), "{}", errors[0]);
+
+        source.set_bookmark(7, "after reopen".to_string());
+        source.save_crab_file(&[], &[]);
+        assert_eq!(std::fs::read(&crab_path).expect("read crab"), corrupt);
+    }
+
+    #[test]
+    fn empty_crab_file_opens_silently_and_is_saved() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("foo.log");
+        let crab_path = dir.path().join("foo.log.crab");
+
+        let (source, warnings) = open_source(&log_path);
+        assert!(warnings.take_pending_errors().is_empty());
+
+        source.set_bookmark(7, "first".to_string());
+        source.save_crab_file(&[], &[]);
+        drop(source);
+
+        let (reopened, warnings) = open_source(&log_path);
+        assert!(warnings.take_pending_errors().is_empty());
+        assert!(reopened.has_bookmark(7));
+        assert!(crab_path.exists());
+    }
 }
