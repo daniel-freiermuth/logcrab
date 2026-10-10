@@ -106,12 +106,6 @@ pub struct ModelInfo {
     pub output: OutputInfo,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct FilterProfileInfo {
-    pub id: String,
-    pub description: String,
-}
-
 // ── InputLine ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -536,20 +530,8 @@ impl SidecarClient {
         Ok(result)
     }
 
-    /// Like [`score_stream`], keeping the stream open for explain requests.
-    /// # Errors
-    ///
-    /// Returns an error when the requested operation cannot be completed.
-    pub fn score_stream_with_explain(
-        &self,
-        model_id: &str,
-        normalization_versions: &HashMap<&str, u32>,
-        lines: &[InputLine],
-    ) -> Result<(ScoreStreamResult, ExplainSession)> {
-        self.open_score_stream(model_id, normalization_versions, lines, &mut |_, _| {})
-    }
-
-    /// Like [`score_stream_with_explain`], invoking `on_scores` incrementally
+    /// Like [`score_stream`], keeping the stream open for explain requests and
+    /// invoking `on_scores` incrementally
     /// after each GPU batch so the UI can update as scores arrive.
     /// # Errors
     ///
