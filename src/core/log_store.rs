@@ -1172,16 +1172,6 @@ impl LogStore {
             .map_or(0.0, |store| store.get(line_index))
     }
 
-    /// Set ML sidecar scores for a source.
-    pub fn set_sidecar_scores(&self, source_id: u64, scores: &[f64]) {
-        profiling::scope!("LogStore::set_sidecar_scores");
-        self.sidecar_scores
-            .entry(source_id)
-            .or_default()
-            .set_all(scores);
-        self.sources_version.fetch_add(1, AtomicOrdering::SeqCst);
-    }
-
     /// Set ML sidecar scores, UNK flags, rare flags, and scored flags for a source.
     pub fn set_sidecar_scores_with_unk(
         &self,
