@@ -182,7 +182,7 @@ impl LogCrabApp {
             if !paths.is_empty() {
                 match SessionHistory::update(|h| h.record(paths)) {
                     Ok(updated) => self.session_history = updated,
-                    Err(e) => tracing::error!("Failed to save session history: {e}"),
+                    Err(e) => tracing::error!("Failed to save session history: {e:#}"),
                 }
             }
         }
@@ -299,7 +299,7 @@ impl LogCrabApp {
                     let dir = parent.to_path_buf();
                     match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
                         Ok(updated) => self.global_config = updated,
-                        Err(e) => tracing::error!("Failed to update config: {e}"),
+                        Err(e) => tracing::error!("Failed to update config: {e:#}"),
                     }
                 }
             }
@@ -328,7 +328,7 @@ impl LogCrabApp {
                     let dir = parent.to_path_buf();
                     match GlobalConfig::update(|c| c.last_log_directory = Some(dir)) {
                         Ok(updated) => self.global_config = updated,
-                        Err(e) => tracing::error!("Failed to update config: {e}"),
+                        Err(e) => tracing::error!("Failed to update config: {e:#}"),
                     }
                 }
             }
@@ -384,11 +384,11 @@ impl LogCrabApp {
                         }
                         Err(e) => {
                             tracing::error!(
-                                "Failed to import filters from {}: {e}",
+                                "Failed to import filters from {}: {e:#}",
                                 path.display()
                             );
                             self.toast_manager.show_error(format!(
-                                "Failed to import {}: {e}",
+                                "Failed to import {}: {e:#}",
                                 path.file_name().map_or_else(
                                     || "filters".to_string(),
                                     |n| n.to_string_lossy().to_string()
@@ -483,12 +483,12 @@ impl LogCrabApp {
                             let dir = parent.to_path_buf();
                             match GlobalConfig::update(|c| c.last_filters_directory = Some(dir)) {
                                 Ok(updated) => self.global_config = updated,
-                                Err(e) => tracing::error!("Failed to update config: {e}"),
+                                Err(e) => tracing::error!("Failed to update config: {e:#}"),
                             }
                         }
                         match log_view.export_filters(&path) {
                             Ok(()) => tracing::info!("Filters exported successfully"),
-                            Err(e) => tracing::error!("Failed to export filters: {e}"),
+                            Err(e) => tracing::error!("Failed to export filters: {e:#}"),
                         }
                     }
                     ui.close();
@@ -510,7 +510,7 @@ impl LogCrabApp {
                                 match GlobalConfig::update(|c| c.last_filters_directory = Some(dir))
                                 {
                                     Ok(updated) => self.global_config = updated,
-                                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                                    Err(e) => tracing::error!("Failed to update config: {e:#}"),
                                 }
                             }
                         }
@@ -523,7 +523,7 @@ impl LogCrabApp {
                                     );
                                 }
                                 Err(e) => tracing::error!(
-                                    "Failed to import filters from {}: {e}",
+                                    "Failed to import filters from {}: {e:#}",
                                     path.display()
                                 ),
                             }
@@ -582,7 +582,7 @@ impl LogCrabApp {
                 let new_val = self.global_config.show_bookmarks_in_timeline;
                 match GlobalConfig::update(|c| c.show_bookmarks_in_timeline = new_val) {
                     Ok(updated) => self.global_config = updated,
-                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                    Err(e) => tracing::error!("Failed to update config: {e:#}"),
                 }
             }
 
@@ -601,7 +601,7 @@ impl LogCrabApp {
                 let new_val = self.global_config.bright_mode;
                 match GlobalConfig::update(|c| c.bright_mode = new_val) {
                     Ok(updated) => self.global_config = updated,
-                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                    Err(e) => tracing::error!("Failed to update config: {e:#}"),
                 }
             }
 
@@ -611,7 +611,7 @@ impl LogCrabApp {
                 let new_fc = self.global_config.file_config.clone();
                 match GlobalConfig::update(|c| c.file_config = new_fc) {
                     Ok(updated) => self.global_config = updated,
-                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                    Err(e) => tracing::error!("Failed to update config: {e:#}"),
                 }
                 if let Some(ref mut session) = self.session {
                     session
@@ -634,7 +634,7 @@ impl LogCrabApp {
                 let new_val = self.global_config.use_sidecar_scoring;
                 match GlobalConfig::update(|c| c.use_sidecar_scoring = new_val) {
                     Ok(updated) => self.global_config = updated,
-                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                    Err(e) => tracing::error!("Failed to update config: {e:#}"),
                 }
             }
 
@@ -649,7 +649,7 @@ impl LogCrabApp {
                 let new_val = self.global_config.color_by_ml_score;
                 match GlobalConfig::update(|c| c.color_by_ml_score = new_val) {
                     Ok(updated) => self.global_config = updated,
-                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                    Err(e) => tracing::error!("Failed to update config: {e:#}"),
                 }
             }
 
@@ -665,7 +665,7 @@ impl LogCrabApp {
                     let new_val = self.global_config.grey_rare_ml_lines;
                     match GlobalConfig::update(|c| c.grey_rare_ml_lines = new_val) {
                         Ok(updated) => self.global_config = updated,
-                        Err(e) => tracing::error!("Failed to update config: {e}"),
+                        Err(e) => tracing::error!("Failed to update config: {e:#}"),
                     }
                 }
 
@@ -682,7 +682,7 @@ impl LogCrabApp {
                 let new_val = self.global_config.hide_duplicates;
                 match GlobalConfig::update(|c| c.hide_duplicates = new_val) {
                     Ok(updated) => self.global_config = updated,
-                    Err(e) => tracing::error!("Failed to update config: {e}"),
+                    Err(e) => tracing::error!("Failed to update config: {e:#}"),
                 }
             }
         });
@@ -808,7 +808,7 @@ impl LogCrabApp {
                         h.sessions.retain(|s| !s.same_files(files));
                     }) {
                         Ok(updated) => self.session_history = updated,
-                        Err(e) => tracing::error!("Failed to save session history: {e}"),
+                        Err(e) => tracing::error!("Failed to save session history: {e:#}"),
                     }
                 } else if let Some(idx) = session_to_restore {
                     let session = self.session_history.sessions[idx].clone();
@@ -993,7 +993,7 @@ impl LogCrabApp {
             let new_shortcuts = self.global_config.shortcuts.clone();
             match GlobalConfig::update(|c| c.shortcuts = new_shortcuts) {
                 Ok(updated) => self.global_config = updated,
-                Err(e) => tracing::error!("Failed to update config: {e}"),
+                Err(e) => tracing::error!("Failed to update config: {e:#}"),
             }
         }
 
@@ -1139,7 +1139,7 @@ impl eframe::App for LogCrabApp {
                                 c.selected_model = model;
                             }) {
                                 Ok(updated) => self.global_config = updated,
-                                Err(e) => tracing::error!("Failed to update config: {e}"),
+                                Err(e) => tracing::error!("Failed to update config: {e:#}"),
                             }
                             // Update store with new sidecar config
                             if let Some(session) = &self.session {
