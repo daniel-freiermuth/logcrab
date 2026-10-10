@@ -43,6 +43,11 @@ struct Args {
     profile_output: PathBuf,
 }
 
+// The direct `winit` dependency only exists to enable winit's default features (see
+// Cargo.toml). If it ever resolves to a different winit than eframe's, those features
+// silently stop applying; this coercion turns that into a compile error.
+const _: fn(winit::window::WindowAttributes) -> eframe::WindowAttributes = std::convert::identity;
+
 fn main() -> eframe::Result<()> {
     println!(
         r"
