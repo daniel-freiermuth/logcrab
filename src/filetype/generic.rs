@@ -199,7 +199,7 @@ impl TextFileType for GenericFileType {
 // ============================================================================
 
 static ISO_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:?\d{2})?)")
+    Regex::new(r"^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)")
         .expect("valid regex literal")
 });
 static HYPHENATED_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
@@ -277,16 +277,18 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
         if let Ok(dt) = DateTime::parse_from_rfc3339(&normalized_ts) {
             timestamp = Some(dt.with_timezone(&Local));
             remaining = remaining[caps[0].len()..].trim_start();
-        } else if let Ok(naive) =
-            chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S%.3f")
-        {
-            timestamp = Local.from_local_datetime(&naive).single();
-            remaining = remaining[caps[0].len()..].trim_start();
-        } else if let Ok(naive) =
-            chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S")
-        {
-            timestamp = Local.from_local_datetime(&naive).single();
-            remaining = remaining[caps[0].len()..].trim_start();
+        } else {
+            // Offset-less timestamps are local time; the naive formats expect a
+            // space separator, so normalise 'T' first.
+            let naive_ts = ts_str.replacen('T', " ", 1);
+            if let Ok(naive) =
+                chrono::NaiveDateTime::parse_from_str(&naive_ts, "%Y-%m-%d %H:%M:%S%.f").or_else(
+                    |_| chrono::NaiveDateTime::parse_from_str(&naive_ts, "%Y-%m-%d %H:%M:%S"),
+                )
+            {
+                timestamp = Local.from_local_datetime(&naive).single();
+                remaining = remaining[caps[0].len()..].trim_start();
+            }
         }
     } else if let Ok(Some(caps)) = BRACKETED_TIMESTAMP.captures(remaining) {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S%.3f")
@@ -551,6 +553,72 @@ mod tests {
         assert_eq!(
             line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
             "1970-01-01 01:34:00"
+        );
+    }
+
+    #[test]
+    fn test_iso_t_separator_without_offset_with_milliseconds() {
+        let raw = "2025-11-20T14:23:45.123 INFO Service started".to_string();
+        let line = parse_generic_line(raw, 1)
+            .expect("should parse ISO timestamp with 'T' separator and no offset");
+        assert_eq!(line.message_text, "INFO Service started");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            "2025-11-20 14:23:45.123"
+        );
+    }
+
+    #[test]
+    fn test_iso_t_separator_without_offset_without_fraction() {
+        let raw = "2025-11-20T14:23:45 INFO Service started".to_string();
+        let line = parse_generic_line(raw, 1)
+            .expect("should parse ISO timestamp with 'T' separator, no offset, no fraction");
+        assert_eq!(line.message_text, "INFO Service started");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2025-11-20 14:23:45"
+        );
+    }
+
+    #[test]
+    fn test_iso_rfc3339_with_microseconds_and_utc_offset() {
+        let raw = "2025-11-20T14:23:45.123456Z INFO Request handled".to_string();
+        let line = parse_generic_line(raw, 1)
+            .expect("should parse RFC 3339 timestamp with sub-millisecond precision");
+        assert_eq!(line.message_text, "INFO Request handled");
+        assert_eq!(
+            line.timestamp
+                .with_timezone(&chrono::Utc)
+                .format("%Y-%m-%d %H:%M:%S%.6f")
+                .to_string(),
+            "2025-11-20 14:23:45.123456"
+        );
+    }
+
+    #[test]
+    fn test_iso_rfc3339_with_nanoseconds_and_numeric_offset() {
+        let raw = "2025-11-20T14:23:45.123456789+02:00 WARN Slow query".to_string();
+        let line = parse_generic_line(raw, 1)
+            .expect("should parse RFC 3339 timestamp with nanoseconds and offset");
+        assert_eq!(line.message_text, "WARN Slow query");
+        assert_eq!(
+            line.timestamp
+                .with_timezone(&chrono::Utc)
+                .format("%Y-%m-%d %H:%M:%S%.9f")
+                .to_string(),
+            "2025-11-20 12:23:45.123456789"
+        );
+    }
+
+    #[test]
+    fn test_iso_space_separator_with_microseconds() {
+        let raw = "2025-11-20 14:23:45.123456 INFO Cache warmed".to_string();
+        let line = parse_generic_line(raw, 1)
+            .expect("should parse space-separated timestamp with microseconds");
+        assert_eq!(line.message_text, "INFO Cache warmed");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
+            "2025-11-20 14:23:45.123456"
         );
     }
 }
