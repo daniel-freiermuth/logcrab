@@ -53,7 +53,22 @@ ram-profiling = ["dhat"]
 cpu-profiling = ["profiling/profile-with-tracy", "dep:tracy-client"]
 
 [dependencies]
-eframe = { version = "0.36.2", features = ["glow"] }
+# eframe's default features compile in wgpu, which LogCrab does not use: it renders with
+# glow (see `renderer` in src/main.rs). The list below is eframe's defaults with `wgpu`
+# swapped for `glow` and the wasm-only `web_screen_reader` dropped.
+eframe = { version = "0.36.2", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "x11",
+] }
+# Only here to enable winit's default features (Wayland client-side decorations,
+# `wayland-dlopen`), which eframe's `default` turned on via `winit/default` and which an
+# explicit eframe feature list cannot express. Must stay on the winit release eframe
+# uses; src/main.rs fails to compile if it does not.
+winit = "0.30.13"
 egui = "0.36.2"
 egui_extras = "0.36.2"
 egui_dock = "0.21.1"
