@@ -271,12 +271,6 @@ impl ExplainSession {
         self.request_tx.try_send(target_line_number).is_ok()
     }
 
-    /// Poll for a completed explanation without blocking.
-    #[must_use]
-    pub fn try_recv(&self) -> Option<ExplainResult> {
-        self.result_rx.try_recv().ok()
-    }
-
     #[must_use]
     pub fn poll_status(&self) -> ExplainPollStatus {
         match self.result_rx.try_recv() {
