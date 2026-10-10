@@ -402,3 +402,255 @@ impl std::error::Error for SessionError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filetype::bugreport::{BugreportFileType, BUGREPORT_STATE_VERSION};
+    use crate::filetype::generic::GenericFileType;
+    use crate::filetype::HasSlug;
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    fn file_with(content: &str) -> std::fs::File {
+        let mut file = tempfile::tempfile().expect("tempfile");
+        file.write_all(content.as_bytes()).expect("write");
+        file
+    }
+
+    fn raw_contents(file: &mut std::fs::File) -> String {
+        let mut s = String::new();
+        file.seek(SeekFrom::Start(0)).expect("seek");
+        file.read_to_string(&mut s).expect("read");
+        s
+    }
+
+    fn load<FT: crate::filetype::InputFileType>(content: &str) -> Result<CrabFile<FT>, SessionError>
+    where
+        <FT::LineType as crate::filetype::LineType>::FileState: for<'de> Deserialize<'de>,
+    {
+        CrabFile::<FT>::load_from_file(&mut file_with(content))
+    }
+
+    fn to_json<T: Serialize>(value: &T) -> serde_json::Value {
+        serde_json::to_value(value).expect("serializable")
+    }
+
+    fn search(text: &str, color: Color32) -> SavedSearch {
+        SavedSearch {
+            search_text: text.to_string(),
+            exclude_text: "noise".to_string(),
+            case_sensitive: true,
+            name: format!("{text} name"),
+            color,
+            enabled: false,
+            show_in_histogram: true,
+        }
+    }
+
+    fn bugreport_session() -> CrabFile<BugreportFileType> {
+        let state = crate::filetype::bugreport::BugreportFileState::default();
+        state.set_logcat_offset_ms(1234);
+        state.set_dmesg_offset_ms(-5678);
+        CrabFile {
+            version: CRAB_FILE_VERSION,
+            bookmarks: vec![
+                Bookmark {
+                    line_index: 7,
+                    name: "first".to_string(),
+                },
+                Bookmark {
+                    line_index: 42,
+                    name: "second".to_string(),
+                },
+            ],
+            filters: vec![search("ERROR", Color32::from_rgb(1, 2, 3))],
+            highlights: vec![search("WARN", Color32::from_rgb(200, 100, 50))],
+            file_state: state,
+        }
+    }
+
+    #[test]
+    fn round_trip_preserves_session_and_stores_state_under_slug() {
+        let original = bugreport_session();
+        let mut file = tempfile::tempfile().expect("tempfile");
+        original.save_to_file(&mut file).expect("save");
+
+        let raw: serde_json::Value =
+            serde_json::from_str(&raw_contents(&mut file)).expect("saved file is JSON");
+        assert_eq!(BugreportFileType::SLUG, "bugreport");
+        assert!(
+            raw.get("file_state").is_none(),
+            "state must not use generic key"
+        );
+        assert_eq!(raw["bugreport"]["state_version"], BUGREPORT_STATE_VERSION);
+        assert_eq!(raw["bugreport"]["logcat_offset_ms"], 1234);
+        assert_eq!(raw["bugreport"]["dmesg_offset_ms"], -5678);
+
+        let loaded = CrabFile::<BugreportFileType>::load_from_file(&mut file).expect("load");
+        assert_eq!(loaded.version, CRAB_FILE_VERSION);
+        assert_eq!(loaded.file_state.logcat_offset_ms(), 1234);
+        assert_eq!(loaded.file_state.dmesg_offset_ms(), -5678);
+        // Bookmark/SavedSearch have no PartialEq; compare their serialized form.
+        assert_eq!(to_json(&loaded.bookmarks), to_json(&original.bookmarks));
+        assert_eq!(to_json(&loaded.filters), to_json(&original.filters));
+        assert_eq!(to_json(&loaded.highlights), to_json(&original.highlights));
+        assert_eq!(loaded.filters[0].color, Color32::from_rgb(1, 2, 3));
+        assert!(!loaded.filters[0].enabled);
+    }
+
+    #[test]
+    fn v1_file_without_version_migrates_time_offset() {
+        let loaded = load::<GenericFileType>(
+            r#"{"bookmarks":[{"line_index":3,"name":"b"}],"filters":[],"time_offset_ms":4242}"#,
+        )
+        .expect("v1 loads");
+        assert_eq!(loaded.version, CRAB_FILE_VERSION);
+        assert_eq!(loaded.file_state.time_offset_ms(), 4242);
+        assert_eq!(loaded.bookmarks.len(), 1);
+        assert_eq!(loaded.bookmarks[0].line_index, 3);
+        assert!(loaded.highlights.is_empty());
+    }
+
+    #[test]
+    fn v2_file_migrates_via_file_state_from_v2() {
+        let loaded = load::<BugreportFileType>(
+            r#"{"version":2,"bookmarks":[],"filters":[{"search_text":"x"}],"highlights":[],"time_offset_ms":-900}"#,
+        )
+        .expect("v2 loads");
+        assert_eq!(loaded.version, CRAB_FILE_VERSION);
+        // Bugreport maps the single legacy offset to the logcat side only.
+        assert_eq!(loaded.file_state.logcat_offset_ms(), -900);
+        assert_eq!(loaded.file_state.dmesg_offset_ms(), 0);
+        assert_eq!(loaded.filters[0].search_text, "x");
+        assert_eq!(loaded.filters[0].color, Color32::YELLOW);
+        assert!(loaded.filters[0].enabled);
+    }
+
+    #[test]
+    fn v2_file_with_slug_key_ignores_it() {
+        // A v2 file never has slug keys; if one is present it must not be
+        // treated as v3+ state (routing is by version, not by key presence).
+        let loaded = load::<GenericFileType>(
+            r#"{"version":2,"bookmarks":[],"filters":[],"time_offset_ms":5,"generic":{"time_offset_ms":99}}"#,
+        )
+        .expect("v2 loads");
+        assert_eq!(loaded.file_state.time_offset_ms(), 5);
+    }
+
+    #[test]
+    fn version_newer_than_supported_is_refused() {
+        let content = format!(
+            r#"{{"version":{},"bookmarks":[],"filters":[]}}"#,
+            CRAB_FILE_VERSION + 1
+        );
+        let err = load::<GenericFileType>(&content).err();
+        assert!(
+            matches!(
+                err,
+                Some(SessionError::VersionTooNew { found, supported })
+                    if found == CRAB_FILE_VERSION + 1 && supported == CRAB_FILE_VERSION
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn version_beyond_u32_is_not_migrated_as_legacy() {
+        // 2^32 + 1 truncates to 1 under `as u32`; it must never load as a
+        // migrated v1 session.
+        let result = load::<GenericFileType>(
+            r#"{"version":4294967297,"bookmarks":[],"filters":[],"time_offset_ms":1}"#,
+        );
+        assert!(result.is_err(), "unexpectedly loaded as a legacy session");
+    }
+
+    #[test]
+    fn non_integer_version_is_not_loaded() {
+        for version in [r#""4""#, "4.5", "-1", "null"] {
+            let content = format!(r#"{{"version":{version},"bookmarks":[],"filters":[]}}"#);
+            let result = load::<GenericFileType>(&content);
+            assert!(
+                matches!(result, Err(SessionError::Parse(_))),
+                "version {version}: got {:?}",
+                result.as_ref().err()
+            );
+        }
+    }
+
+    #[test]
+    fn state_version_newer_than_supported_is_refused() {
+        let content = format!(
+            r#"{{"version":{CRAB_FILE_VERSION},"bookmarks":[],"filters":[],
+               "bugreport":{{"state_version":{},"logcat_offset_ms":1}}}}"#,
+            BUGREPORT_STATE_VERSION + 1
+        );
+        let err = load::<BugreportFileType>(&content).err();
+        assert!(
+            matches!(
+                err,
+                Some(SessionError::StateVersionTooNew { slug: "bugreport", found, supported })
+                    if found == BUGREPORT_STATE_VERSION + 1 && supported == BUGREPORT_STATE_VERSION
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn missing_state_version_is_treated_as_zero() {
+        // logcrab 0.35 wrote bugreport state as SimpleFileState (no state_version).
+        let loaded = load::<BugreportFileType>(
+            r#"{"version":3,"bookmarks":[],"filters":[],"bugreport":{"time_offset_ms":77}}"#,
+        )
+        .expect("unversioned state loads");
+        assert_eq!(loaded.file_state.logcat_offset_ms(), 77);
+        assert_eq!(loaded.file_state.dmesg_offset_ms(), 0);
+    }
+
+    #[test]
+    fn absent_slug_loads_default_state_and_keeps_bookmarks() {
+        // Written while the file was detected as logcat, now re-detected as
+        // bugreport: the foreign slug's state_version must not be checked and
+        // its state must not leak into ours.
+        let loaded = load::<BugreportFileType>(
+            r#"{"version":4,"bookmarks":[{"line_index":1,"name":"kept"}],"filters":[],
+               "logcat":{"state_version":999,"time_offset_ms":555}}"#,
+        )
+        .expect("loads with default state");
+        assert_eq!(loaded.file_state.logcat_offset_ms(), 0);
+        assert_eq!(loaded.file_state.dmesg_offset_ms(), 0);
+        assert_eq!(loaded.bookmarks.len(), 1);
+        assert_eq!(loaded.bookmarks[0].name, "kept");
+    }
+
+    #[test]
+    fn empty_and_malformed_files_are_parse_errors() {
+        for content in [
+            "",
+            "   \n",
+            "{not json",
+            r#"{"version":4,"bookmarks":"#,
+            "[]",
+        ] {
+            let result = load::<GenericFileType>(content);
+            assert!(
+                matches!(result, Err(SessionError::Parse(_))),
+                "content {content:?}: got {:?}",
+                result.as_ref().err()
+            );
+        }
+    }
+
+    #[test]
+    fn save_truncates_longer_previous_contents() {
+        let mut file = file_with(&format!("{{\"padding\":\"{}\"}}", "x".repeat(64 * 1024)));
+        let session = bugreport_session();
+        session.save_to_file(&mut file).expect("save");
+
+        let raw = raw_contents(&mut file);
+        assert_eq!(file.metadata().expect("metadata").len(), raw.len() as u64);
+        assert!(!raw.contains("padding"));
+        serde_json::from_str::<serde_json::Value>(&raw).expect("no trailing bytes");
+        let loaded = CrabFile::<BugreportFileType>::load_from_file(&mut file).expect("load");
+        assert_eq!(loaded.bookmarks.len(), 2);
+    }
+}

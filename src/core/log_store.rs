@@ -1618,3 +1618,71 @@ pub struct Bookmark {
     pub line_index: usize,
     pub name: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filetype::bugreport::BUGREPORT_STATE_VERSION;
+
+    /// Open a `SourceData` whose `.crab` file initially contains `crab_contents`,
+    /// save a session with one filter, and return the `.crab` contents afterwards.
+    fn crab_after_open_and_save<FT>(crab_contents: &str) -> String
+    where
+        FT: InputFileType,
+        FT::LineType: Clone,
+        <FT::LineType as LineType>::Config: Default,
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("app.log");
+        let crab_path = dir.path().join("app.log.crab");
+        std::fs::write(&crab_path, crab_contents).expect("write crab");
+
+        let toasts = crate::ui::ToastManager::new(egui::Context::default());
+        let (source, _filters, _highlights) = SourceData::<FT>::new(
+            log_path,
+            Arc::new(RwLock::new(Default::default())),
+            &toasts.sender(),
+        );
+        let filter = SavedFilter {
+            search_text: "written-by-this-build".to_string(),
+            exclude_text: String::new(),
+            case_sensitive: false,
+            name: String::new(),
+            color: egui::Color32::YELLOW,
+            enabled: true,
+            show_in_histogram: false,
+        };
+        source.save_crab_file(&[filter], &[]);
+        drop(source);
+
+        std::fs::read_to_string(&crab_path).expect("read crab")
+    }
+
+    #[test]
+    fn crab_file_from_newer_build_is_never_overwritten() {
+        let newer = format!(
+            r#"{{"version":{},"bookmarks":[{{"line_index":1,"name":"future"}}],"filters":[]}}"#,
+            CRAB_FILE_VERSION + 1
+        );
+        assert_eq!(crab_after_open_and_save::<GenericFileType>(&newer), newer);
+    }
+
+    #[test]
+    fn crab_file_with_newer_filetype_state_is_never_overwritten() {
+        let newer = format!(
+            r#"{{"version":{CRAB_FILE_VERSION},"bookmarks":[],"filters":[],"bugreport":{{"state_version":{},"logcat_offset_ms":9}}}}"#,
+            BUGREPORT_STATE_VERSION + 1
+        );
+        assert_eq!(crab_after_open_and_save::<BugreportFileType>(&newer), newer);
+    }
+
+    #[test]
+    fn unparseable_or_empty_crab_file_is_replaced_on_save() {
+        for contents in ["", "{corrupt"] {
+            let saved = crab_after_open_and_save::<GenericFileType>(contents);
+            let value: serde_json::Value = serde_json::from_str(&saved).expect("valid JSON");
+            assert_eq!(value["version"], CRAB_FILE_VERSION, "contents {contents:?}");
+            assert_eq!(value["filters"][0]["search_text"], "written-by-this-build");
+        }
+    }
+}
