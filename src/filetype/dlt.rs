@@ -946,3 +946,203 @@ pub fn convert_dlt_message(msg: &dlt_core::dlt::Message, line_number: usize) -> 
         line_number,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::DltTimestampSource;
+    use crate::filetype::LogFileState;
+    use chrono::TimeZone;
+
+    fn storage_time() -> DateTime<Local> {
+        Local
+            .with_ymd_and_hms(2026, 3, 1, 12, 0, 0)
+            .single()
+            .expect("unambiguous local time")
+    }
+
+    fn line(line_number: usize, header_timestamp_us: Option<i64>) -> DltLogLine {
+        let message = dlt_core::dlt::Message {
+            storage_header: None,
+            header: dlt_core::dlt::StandardHeader {
+                version: 1,
+                endianness: dlt_core::dlt::Endianness::Big,
+                has_extended_header: false,
+                message_counter: 0,
+                ecu_id: Some("ECU1".to_string()),
+                session_id: None,
+                timestamp: None,
+                payload_length: 0,
+            },
+            extended_header: None,
+            payload: dlt_core::dlt::PayloadContent::Verbose(Vec::new()),
+        };
+        DltLogLine::new(
+            message,
+            storage_time(),
+            header_timestamp_us,
+            "ECU1".to_string(),
+            "APP1".to_string(),
+            line_number,
+        )
+    }
+
+    fn state_with_sync_points(points: &[(usize, i64)]) -> DltFileState {
+        let state = DltFileState::default();
+        state
+            .sync_points
+            .lock()
+            .expect("sync_points lock poisoned")
+            .extend(points.iter().map(|&(from_line, offset_ms)| SyncPoint {
+                from_line,
+                offset_ms,
+            }));
+        state
+    }
+
+    #[test]
+    fn sync_point_offset_is_zero_without_sync_points() {
+        let state = DltFileState::default();
+        assert_eq!(state.sync_point_offset_ms(0), 0);
+        assert_eq!(state.sync_point_offset_ms(usize::MAX), 0);
+    }
+
+    #[test]
+    fn sync_point_offset_is_piecewise_constant_from_each_point() {
+        let state = state_with_sync_points(&[(10, 500), (20, -1_500)]);
+        let cases = [
+            (0, 0),          // before the first point
+            (9, 0),          // last line before the first point
+            (10, 500),       // exactly on the first point (inclusive)
+            (15, 500),       // between points
+            (19, 500),       // last line before the second point
+            (20, -1_500),    // exactly on the second point
+            (1_000, -1_500), // after the last point
+        ];
+        for (line_number, expected) in cases {
+            assert_eq!(
+                state.sync_point_offset_ms(line_number),
+                expected,
+                "line {line_number}"
+            );
+        }
+    }
+
+    #[test]
+    fn storage_time_mode_adds_storage_and_sync_offsets() {
+        let state = state_with_sync_points(&[(5, 250)]);
+        state.storage_offset_ms.store(1_000, Ordering::Relaxed);
+
+        let before = line(4, Some(7_000_000)).timestamp(&DltTimestampSource::StorageTime, &state);
+        let after = line(5, Some(7_000_000)).timestamp(&DltTimestampSource::StorageTime, &state);
+
+        assert_eq!(
+            before,
+            storage_time() + chrono::Duration::milliseconds(1_000)
+        );
+        assert_eq!(
+            after,
+            storage_time() + chrono::Duration::milliseconds(1_250)
+        );
+    }
+
+    #[test]
+    fn inferred_mode_adds_sync_offset_to_boot_time_plus_header_time() {
+        let state = state_with_sync_points(&[(5, 250)]);
+        // Storage offset belongs to storage-time mode and must not leak into
+        // calibrated monotonic timestamps.
+        state.storage_offset_ms.store(1_000, Ordering::Relaxed);
+        let boot_time = storage_time() - chrono::Duration::hours(1);
+        state
+            .boot_times
+            .insert(("ECU1".to_string(), "APP1".to_string()), boot_time);
+
+        let ts = line(5, Some(7_000_000)).timestamp(&DltTimestampSource::InferredMonotonic, &state);
+
+        assert_eq!(
+            ts,
+            boot_time + chrono::Duration::seconds(7) + chrono::Duration::milliseconds(250)
+        );
+    }
+
+    #[test]
+    fn inferred_mode_falls_back_to_storage_time_with_all_offsets() {
+        let state = state_with_sync_points(&[(5, 250)]);
+        state.storage_offset_ms.store(1_000, Ordering::Relaxed);
+        // Boot time exists, but for a different (ecu, app) pair.
+        state.boot_times.insert(
+            ("ECU1".to_string(), "OTHER".to_string()),
+            storage_time() - chrono::Duration::hours(1),
+        );
+        let expected = storage_time() + chrono::Duration::milliseconds(1_250);
+
+        let no_boot_time =
+            line(5, Some(7_000_000)).timestamp(&DltTimestampSource::InferredMonotonic, &state);
+        let no_header_time =
+            line(5, None).timestamp(&DltTimestampSource::InferredMonotonic, &state);
+
+        assert_eq!(no_boot_time, expected);
+        assert_eq!(no_header_time, expected);
+    }
+
+    #[test]
+    fn serde_round_trip_preserves_persisted_state() {
+        let state = state_with_sync_points(&[(10, 500), (20, -1_500)]);
+        state.storage_offset_ms.store(-42, Ordering::Relaxed);
+        let boot_time = storage_time() - chrono::Duration::hours(1);
+        state
+            .boot_times
+            .insert(("ECU1".to_string(), "APP1".to_string()), boot_time);
+        state
+            .boot_times
+            .insert(("ECU2".to_string(), String::new()), storage_time());
+
+        let json = serde_json::to_string(&state).expect("serialize");
+        let restored: DltFileState = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(restored.storage_offset_ms(), -42);
+        assert_eq!(restored.boot_times.len(), 2);
+        assert_eq!(
+            restored
+                .boot_times
+                .get(&("ECU1".to_string(), "APP1".to_string()))
+                .map(|e| *e.value()),
+            Some(boot_time)
+        );
+        assert_eq!(
+            restored
+                .boot_times
+                .get(&("ECU2".to_string(), String::new()))
+                .map(|e| *e.value()),
+            Some(storage_time())
+        );
+        assert_eq!(restored.sync_point_offset_ms(9), 0);
+        assert_eq!(restored.sync_point_offset_ms(10), 500);
+        assert_eq!(restored.sync_point_offset_ms(25), -1_500);
+    }
+
+    #[test]
+    fn deserialize_drops_boot_time_keys_without_separator_and_defaults_missing_fields() {
+        // `\u001f` is BOOT_TIME_KEY_SEP, JSON-escaped as `serde_json` writes it.
+        let json = r#"{"boot_times": {"ECU1\u001fAPP1": "2026-03-01T11:00:00Z", "legacy": "2026-03-01T11:00:00Z"}}"#;
+
+        let state: DltFileState = serde_json::from_str(json).expect("deserialize");
+
+        assert_eq!(state.storage_offset_ms(), 0);
+        assert_eq!(state.boot_times.len(), 1);
+        assert!(state
+            .boot_times
+            .contains_key(&("ECU1".to_string(), "APP1".to_string())));
+        assert_eq!(state.sync_point_offset_ms(usize::MAX), 0);
+    }
+
+    #[test]
+    fn pending_jump_line_is_taken_once() {
+        let state = DltFileState::default();
+        assert_eq!(state.take_pending_jump_line(), None);
+
+        state.pending_jump_line.store(41, Ordering::Relaxed);
+        assert_eq!(state.take_pending_jump_line(), Some(41));
+        assert_eq!(state.take_pending_jump_line(), None);
+    }
+}
