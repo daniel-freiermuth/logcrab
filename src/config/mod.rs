@@ -371,6 +371,16 @@ impl GlobalConfig {
         tracing::info!("Updated global config");
         Ok(config)
     }
+
+    /// Convenience wrapper around [`Self::update`] that applies the result to
+    /// `config` on success and logs on failure, eliminating the repeated
+    /// match boilerplate at every call-site.
+    pub fn update_and_apply(config: &mut Self, f: impl FnOnce(&mut Self)) {
+        match Self::update(f) {
+            Ok(updated) => *config = updated,
+            Err(e) => tracing::error!("Failed to update config: {e}"),
+        }
+    }
 }
 
 #[cfg(test)]

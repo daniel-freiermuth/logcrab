@@ -301,10 +301,9 @@ impl LogCrabTab for BookmarksView {
                 .changed()
             {
                 let new_val = global_config.show_bookmarks_in_timeline;
-                match GlobalConfig::update(|c| c.show_bookmarks_in_timeline = new_val) {
-                    Ok(updated) => *global_config = updated,
-                    Err(e) => tracing::error!("Failed to save config: {e}"),
-                }
+                GlobalConfig::update_and_apply(global_config, |c| {
+                    c.show_bookmarks_in_timeline = new_val;
+                });
             }
             ui.label("Show in Timeline");
 

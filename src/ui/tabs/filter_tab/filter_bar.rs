@@ -79,7 +79,7 @@ impl FilterBar {
         let new_name = self.temp_favorite_name.clone();
         let search_text = filter.search.search_text.clone();
         let case_sensitive = filter.search.case_sensitive;
-        match GlobalConfig::update(|c| {
+        GlobalConfig::update_and_apply(global_config, |c| {
             if let Some(fav) = c
                 .favorite_filters
                 .iter_mut()
@@ -87,10 +87,7 @@ impl FilterBar {
             {
                 fav.name.clone_from(&new_name);
             }
-        }) {
-            Ok(updated) => *global_config = updated,
-            Err(e) => tracing::error!("Failed to save config: {e}"),
-        }
+        });
     }
 
     /// Render the filter bar UI

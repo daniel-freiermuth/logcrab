@@ -37,12 +37,9 @@ pub fn render_shortcuts_window(
                         // Save the reset bindings
                         shortcut_bindings.save_to_config(global_config);
                         let default_shortcuts = global_config.shortcuts.clone();
-                        match GlobalConfig::update(|c| {
+                        GlobalConfig::update_and_apply(global_config, |c| {
                             c.shortcuts = default_shortcuts;
-                        }) {
-                            Ok(updated) => *global_config = updated,
-                            Err(e) => tracing::error!("Failed to save config: {e}"),
-                        }
+                        });
                     }
                 });
             });
