@@ -431,6 +431,10 @@ mod tests {
         CrabFile::<FT>::load_from_file(&mut file_with(content))
     }
 
+    fn to_json<T: Serialize>(value: &T) -> serde_json::Value {
+        serde_json::to_value(value).expect("serializable")
+    }
+
     fn search(text: &str, color: Color32) -> SavedSearch {
         SavedSearch {
             search_text: text.to_string(),
@@ -474,7 +478,10 @@ mod tests {
         let raw: serde_json::Value =
             serde_json::from_str(&raw_contents(&mut file)).expect("saved file is JSON");
         assert_eq!(BugreportFileType::SLUG, "bugreport");
-        assert!(raw.get("file_state").is_none(), "state must not use generic key");
+        assert!(
+            raw.get("file_state").is_none(),
+            "state must not use generic key"
+        );
         assert_eq!(raw["bugreport"]["state_version"], BUGREPORT_STATE_VERSION);
         assert_eq!(raw["bugreport"]["logcat_offset_ms"], 1234);
         assert_eq!(raw["bugreport"]["dmesg_offset_ms"], -5678);
@@ -484,18 +491,9 @@ mod tests {
         assert_eq!(loaded.file_state.logcat_offset_ms(), 1234);
         assert_eq!(loaded.file_state.dmesg_offset_ms(), -5678);
         // Bookmark/SavedSearch have no PartialEq; compare their serialized form.
-        assert_eq!(
-            serde_json::to_value(&loaded.bookmarks).unwrap(),
-            serde_json::to_value(&original.bookmarks).unwrap()
-        );
-        assert_eq!(
-            serde_json::to_value(&loaded.filters).unwrap(),
-            serde_json::to_value(&original.filters).unwrap()
-        );
-        assert_eq!(
-            serde_json::to_value(&loaded.highlights).unwrap(),
-            serde_json::to_value(&original.highlights).unwrap()
-        );
+        assert_eq!(to_json(&loaded.bookmarks), to_json(&original.bookmarks));
+        assert_eq!(to_json(&loaded.filters), to_json(&original.filters));
+        assert_eq!(to_json(&loaded.highlights), to_json(&original.highlights));
         assert_eq!(loaded.filters[0].color, Color32::from_rgb(1, 2, 3));
         assert!(!loaded.filters[0].enabled);
     }
@@ -545,13 +543,15 @@ mod tests {
             r#"{{"version":{},"bookmarks":[],"filters":[]}}"#,
             CRAB_FILE_VERSION + 1
         );
-        match load::<GenericFileType>(&content) {
-            Err(SessionError::VersionTooNew { found, supported }) => {
-                assert_eq!(found, CRAB_FILE_VERSION + 1);
-                assert_eq!(supported, CRAB_FILE_VERSION);
-            }
-            other => panic!("expected VersionTooNew, got {:?}", other.err()),
-        }
+        let err = load::<GenericFileType>(&content).err();
+        assert!(
+            matches!(
+                err,
+                Some(SessionError::VersionTooNew { found, supported })
+                    if found == CRAB_FILE_VERSION + 1 && supported == CRAB_FILE_VERSION
+            ),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -584,18 +584,15 @@ mod tests {
                "bugreport":{{"state_version":{},"logcat_offset_ms":1}}}}"#,
             BUGREPORT_STATE_VERSION + 1
         );
-        match load::<BugreportFileType>(&content) {
-            Err(SessionError::StateVersionTooNew {
-                slug,
-                found,
-                supported,
-            }) => {
-                assert_eq!(slug, "bugreport");
-                assert_eq!(found, BUGREPORT_STATE_VERSION + 1);
-                assert_eq!(supported, BUGREPORT_STATE_VERSION);
-            }
-            other => panic!("expected StateVersionTooNew, got {:?}", other.err()),
-        }
+        let err = load::<BugreportFileType>(&content).err();
+        assert!(
+            matches!(
+                err,
+                Some(SessionError::StateVersionTooNew { slug: "bugreport", found, supported })
+                    if found == BUGREPORT_STATE_VERSION + 1 && supported == BUGREPORT_STATE_VERSION
+            ),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -627,7 +624,13 @@ mod tests {
 
     #[test]
     fn empty_and_malformed_files_are_parse_errors() {
-        for content in ["", "   \n", "{not json", r#"{"version":4,"bookmarks":"#, "[]"] {
+        for content in [
+            "",
+            "   \n",
+            "{not json",
+            r#"{"version":4,"bookmarks":"#,
+            "[]",
+        ] {
             let result = load::<GenericFileType>(content);
             assert!(
                 matches!(result, Err(SessionError::Parse(_))),
@@ -644,10 +647,7 @@ mod tests {
         session.save_to_file(&mut file).expect("save");
 
         let raw = raw_contents(&mut file);
-        assert_eq!(
-            file.metadata().expect("metadata").len(),
-            raw.len() as u64
-        );
+        assert_eq!(file.metadata().expect("metadata").len(), raw.len() as u64);
         assert!(!raw.contains("padding"));
         serde_json::from_str::<serde_json::Value>(&raw).expect("no trailing bytes");
         let loaded = CrabFile::<BugreportFileType>::load_from_file(&mut file).expect("load");
