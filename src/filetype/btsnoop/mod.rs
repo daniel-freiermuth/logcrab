@@ -294,6 +294,20 @@ mod tests {
     }
 
     #[test]
+    fn truncated_command_packet_is_reported_without_panicking() {
+        let bytes = btsnoop_bytes(&[
+            (TS_2000, &[0x01, 0x03, 0x0c]), // opcode present, parameter length missing
+            (TS_2000, HCI_RESET),
+        ]);
+        let lines = open_bytes(&bytes).read(100).expect("read");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].hci_info.packet_type, "HCI_CMD");
+        assert_eq!(lines[0].hci_info.info, "Truncated");
+        assert_eq!(lines[1].line_number, 2);
+    }
+
+    #[test]
     fn header_only_file_is_fully_consumed() {
         let bytes = btsnoop_bytes(&[]);
         let mut reader = open_bytes(&bytes);
