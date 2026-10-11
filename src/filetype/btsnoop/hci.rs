@@ -83,7 +83,7 @@ pub(super) fn parse_hci_type_and_info(data: &[u8]) -> (String, String) {
     match data.first() {
         Some(0x01) => {
             // HCI Command packet
-            if data.len() >= 3 {
+            if data.len() >= 4 {
                 let opcode = u16::from_le_bytes([data[1], data[2]]);
                 let param_len = data[3];
                 let cmd_name = get_hci_command_name(opcode);
