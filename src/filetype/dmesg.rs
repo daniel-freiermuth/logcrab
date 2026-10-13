@@ -100,6 +100,10 @@ impl LineType for DmesgLogLine {
         }
     }
 
+    fn search_message(&self, _config: &(), _file_state: &DmesgFileState) -> String {
+        self.message_text.clone()
+    }
+
     fn raw(&self) -> String {
         self.raw_line.clone()
     }

@@ -304,9 +304,9 @@ impl FilterWorker {
                     profiling::scope!("filter_lines");
 
                     let Some(filtered_indices) = request.store.get_matching_ids(
-                        |display_msg, raw| {
+                        |search_msg, raw| {
                             let matches_include =
-                                request.regex.is_match(display_msg).unwrap_or(false)
+                                request.regex.is_match(search_msg).unwrap_or(false)
                                     || request.regex.is_match(raw).unwrap_or(false);
 
                             if !matches_include {
@@ -315,7 +315,7 @@ impl FilterWorker {
 
                             request.exclude_regex.as_ref().is_none_or(|exclude_regex| {
                                 let matches_exclude =
-                                    exclude_regex.is_match(display_msg).unwrap_or(false)
+                                    exclude_regex.is_match(search_msg).unwrap_or(false)
                                         || exclude_regex.is_match(raw).unwrap_or(false);
                                 !matches_exclude
                             })
