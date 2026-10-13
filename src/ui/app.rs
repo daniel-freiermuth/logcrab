@@ -1213,9 +1213,12 @@ mod tests {
         viewport
             .commands
             .iter()
-            .filter_map(|cmd| match cmd {
-                egui::ViewportCommand::Title(title) => Some(title.as_str()),
-                _ => None,
+            .filter_map(|cmd| {
+                if let egui::ViewportCommand::Title(title) = cmd {
+                    Some(title.as_str())
+                } else {
+                    None
+                }
             })
             .collect()
     }
