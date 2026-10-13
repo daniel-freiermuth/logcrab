@@ -24,11 +24,10 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Local};
-use egui::Color32;
 
 use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::log_store::StoreID;
-use crate::core::{FilterWorkerHandle, LogStore, SearchRule};
+use crate::core::{FilterWorkerHandle, LogStore, SavedSearch, SearchRule};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 
 /// Shared state for a log viewing session.
@@ -80,12 +79,9 @@ pub struct SessionState {
 #[derive(Debug, Clone)]
 pub struct FilterToHighlightData {
     pub filter_uuid: usize,
-    pub name: String,
-    pub search_text: String,
-    pub case_sensitive: bool,
-    pub color: Color32,
-    pub enabled: bool,
-    pub show_in_histogram: bool,
+    /// The filter's search settings, in the same shape used for persistence
+    /// so no field (e.g. the exclude pattern) can be dropped in conversion.
+    pub rule: SavedSearch,
 }
 
 impl FilterToHighlightData {
@@ -94,24 +90,14 @@ impl FilterToHighlightData {
     pub fn from_filter(filter_uuid: usize, filter: &SearchRule) -> Self {
         Self {
             filter_uuid,
-            name: filter.name.clone(),
-            search_text: filter.search.search_text.clone(),
-            case_sensitive: filter.search.case_sensitive,
-            color: filter.color,
-            enabled: filter.enabled,
-            show_in_histogram: filter.show_in_histogram,
+            rule: SavedSearch::from(filter),
         }
     }
 
     /// Build the highlight rule that replaces the converted filter.
     #[must_use]
     pub fn into_highlight(self) -> SearchRule {
-        let mut highlight = SearchRule::new(self.name, self.color);
-        highlight.search.search_text = self.search_text;
-        highlight.search.case_sensitive = self.case_sensitive;
-        highlight.enabled = self.enabled;
-        highlight.show_in_histogram = self.show_in_histogram;
-        highlight
+        SearchRule::from(&self.rule)
     }
 }
 
@@ -204,6 +190,7 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::Color32;
 
     #[test]
     fn filter_to_highlight_keeps_every_search_setting() {
