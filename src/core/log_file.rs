@@ -456,3 +456,80 @@ impl LogFileLoader {
         toast.update(1.0, "ML scoring done!");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filetype::generic::{GenericFileType, GenericLogLine};
+    use crate::ui::ToastManager;
+    use chrono::TimeZone;
+
+    /// Heuristic scores of a freshly loaded generic source after applying `time_offset_ms`.
+    fn heuristic_scores_with_offset(time_offset_ms: i64) -> Vec<f64> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("scoring.log");
+        let toasts = ToastManager::new(egui::Context::default());
+        let (source, _, _) = SourceData::<GenericFileType>::new(
+            path.clone(),
+            Arc::new(RwLock::new(())),
+            &toasts.sender(),
+        );
+        source.file_state.set_time_offset_ms(time_offset_ms);
+
+        let base = chrono::Local
+            .with_ymd_and_hms(2026, 1, 1, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let messages = [
+            "INFO service started",
+            "INFO heartbeat ok",
+            "INFO heartbeat ok",
+            "DEBUG cache hit 1",
+            "INFO heartbeat ok",
+            "DEBUG cache hit 2",
+            "INFO heartbeat ok",
+            "INFO heartbeat ok",
+            "DEBUG cache hit 3",
+            "INFO heartbeat ok",
+            "INFO heartbeat ok",
+            "DEBUG cache hit 4",
+            "INFO heartbeat ok",
+            "INFO a much longer informational message here",
+            "INFO heartbeat ok",
+            "ERROR connection refused",
+        ];
+        let lines = messages
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                GenericLogLine::new(
+                    (*msg).to_string(),
+                    base + chrono::Duration::seconds(i as i64),
+                    (*msg).to_string(),
+                    i + 1,
+                )
+            })
+            .collect();
+        source.append_lines(lines);
+
+        let source = Arc::new(source);
+        let store = LogStore::new();
+        let toast = toasts.create_progress_toast("Scoring", "scoring.log");
+        let source_id = source.source_id();
+        LogFileLoader::score_heuristic(&source, &path, &toast, &store, source_id);
+
+        (0..messages.len())
+            .map(|idx| store.get_score(source_id, idx))
+            .collect()
+    }
+
+    #[test]
+    fn heuristic_scores_do_not_depend_on_time_calibration() {
+        let uncalibrated = heuristic_scores_with_offset(0);
+        let calibrated = heuristic_scores_with_offset(500);
+
+        assert!(uncalibrated[..10].iter().all(|&s| s == 0.0));
+        assert!(uncalibrated[10..].iter().any(|&s| s > 0.0));
+        assert_eq!(uncalibrated, calibrated);
+    }
+}
