@@ -75,15 +75,7 @@ impl FilterState {
     /// Build the filter that replaces the converted highlight rule `highlight`.
     #[must_use]
     pub fn from_highlight(highlight: &SearchRule) -> Self {
-        let mut filter_state = Self::new(highlight.name.clone(), highlight.color);
-        filter_state
-            .search
-            .search_text
-            .clone_from(&highlight.search.search_text);
-        filter_state.search.case_sensitive = highlight.search.case_sensitive;
-        filter_state.enabled = highlight.enabled;
-        filter_state.show_in_histogram = highlight.show_in_histogram;
-        filter_state
+        Self::from(&SavedFilter::from(highlight))
     }
 }
 
