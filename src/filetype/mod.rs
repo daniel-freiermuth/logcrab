@@ -168,8 +168,8 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
     /// Get the formatted message (may be constructed lazily).
     ///
     /// Returns the raw log message without any display decorations and without
-    /// any dependency on `Config` or `FileState`. Used for filtering, anomaly
-    /// detection, and template key computation.
+    /// any dependency on `Config` or `FileState`. Used for anomaly detection and
+    /// template key computation.
     ///
     /// **Stability invariant:** the returned string must be identical regardless
     /// of UI settings, time offsets, or calibration state. This is the string
@@ -187,6 +187,17 @@ pub trait LineType: std::fmt::Debug + Send + Sync {
     /// have multiple timestamp modes (e.g. DLT's `StorageTime` vs
     /// `InferredMonotonic`) can vary the decoration accordingly.
     fn display_message(&self, config: &Self::Config, file_state: &Self::FileState) -> String;
+
+    /// Get the message text that search filters and exclude patterns match against.
+    ///
+    /// Same content as [`Self::display_message`] — including content overlays such
+    /// as decoded SOME/IP entries — but without time decorations (calibration
+    /// offsets, sync-point offsets, inferred-time prefixes).
+    ///
+    /// **Stability invariant:** the returned string must not depend on time
+    /// offsets or calibration state, so calibrating a source never changes which
+    /// lines a filter matches.
+    fn search_message(&self, config: &Self::Config, file_state: &Self::FileState) -> String;
 
     /// Get the raw line as it appeared in the source (may be constructed lazily)
     fn raw(&self) -> String;

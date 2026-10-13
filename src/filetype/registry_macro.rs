@@ -548,10 +548,11 @@ macro_rules! register_filetypes {
                 }
             }
 
-            /// Filter lines by display-message and raw text in timestamp order.
+            /// Filter lines by search-message and raw text in timestamp order.
             ///
-            /// Predicate receives `(display_message, raw)` — the display message includes
-            /// any active per-source overlays (e.g. SOME/IP SD decoding for PCAP).
+            /// Predicate receives `(search_message, raw)` — the search message includes
+            /// any active per-source overlays (e.g. SOME/IP SD decoding for PCAP) but no
+            /// time-calibration decorations.
             pub fn filter_sorted_by_search<F, C>(
                 &self,
                 predicate: &F,

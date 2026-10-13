@@ -727,12 +727,12 @@ where
         Some((ts_ms, line.message()))
     }
 
-    /// Filter lines by their *display message* and *raw* string, in timestamp order.
+    /// Filter lines by their *search message* and *raw* string, in timestamp order.
     ///
-    /// Unlike `filter_sorted_mapped`, the predicate receives the display message produced
-    /// by `display_message(config, file_state)` — which includes any active overlays such
-    /// as SOME/IP SD decoded entries — and the raw string.  All config and file-state locks
-    /// are acquired once for the whole scan.
+    /// The predicate receives the message produced by `search_message(config, file_state)`
+    /// — which includes any active content overlays such as SOME/IP SD decoded entries but
+    /// no time-calibration decorations — and the raw string.  All config and file-state
+    /// locks are acquired once for the whole scan.
     ///
     /// # Panics
     ///
@@ -762,9 +762,9 @@ where
                         return None;
                     }
                     let line = &lines[idx];
-                    let display_msg = line.display_message(&*config, file_state);
+                    let search_msg = line.search_message(&*config, file_state);
                     let raw = line.raw();
-                    if predicate(&display_msg, &raw) {
+                    if predicate(&search_msg, &raw) {
                         matches.push(idx);
                     }
                 }
