@@ -88,6 +88,33 @@ pub struct FilterToHighlightData {
     pub show_in_histogram: bool,
 }
 
+impl FilterToHighlightData {
+    /// Capture the settings of the filter rule `filter` (shown in tab `filter_uuid`).
+    #[must_use]
+    pub fn from_filter(filter_uuid: usize, filter: &SearchRule) -> Self {
+        Self {
+            filter_uuid,
+            name: filter.name.clone(),
+            search_text: filter.search.search_text.clone(),
+            case_sensitive: filter.search.case_sensitive,
+            color: filter.color,
+            enabled: filter.enabled,
+            show_in_histogram: filter.show_in_histogram,
+        }
+    }
+
+    /// Build the highlight rule that replaces the converted filter.
+    #[must_use]
+    pub fn into_highlight(self) -> SearchRule {
+        let mut highlight = SearchRule::new(self.name, self.color);
+        highlight.search.search_text = self.search_text;
+        highlight.search.case_sensitive = self.case_sensitive;
+        highlight.enabled = self.enabled;
+        highlight.show_in_histogram = self.show_in_histogram;
+        highlight
+    }
+}
+
 impl SessionState {
     /// Create a new session state with the given log store and worker handles.
     pub const fn new(
@@ -171,5 +198,30 @@ impl SessionState {
     pub fn remove_bookmark(&mut self, id: &StoreID) {
         self.store.remove_bookmark(id);
         self.modified = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_to_highlight_keeps_every_search_setting() {
+        let mut filter = SearchRule::new("errors".to_string(), Color32::RED);
+        filter.search.search_text = "error".to_string();
+        filter.search.exclude_text = "benign".to_string();
+        filter.search.case_sensitive = true;
+        filter.enabled = false;
+        filter.show_in_histogram = true;
+
+        let highlight = FilterToHighlightData::from_filter(7, &filter).into_highlight();
+
+        assert_eq!(highlight.name, "errors");
+        assert_eq!(highlight.color, Color32::RED);
+        assert_eq!(highlight.search.search_text, "error");
+        assert_eq!(highlight.search.exclude_text, "benign");
+        assert!(highlight.search.case_sensitive);
+        assert!(!highlight.enabled);
+        assert!(highlight.show_in_histogram);
     }
 }
