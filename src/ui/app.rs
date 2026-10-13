@@ -1175,8 +1175,15 @@ impl Drop for LogCrabApp {
     }
 }
 
-/// Send `title` to the viewport and remember it in `last_sent`.
+/// Send `title` to the viewport unless it equals `last_sent`.
+///
+/// `send_viewport_cmd` also requests a repaint, so sending an unchanged title
+/// from per-frame code would schedule a new frame forever and the app would
+/// never go idle.
 fn send_window_title(ctx: &egui::Context, last_sent: &mut Option<String>, title: String) {
+    if last_sent.as_deref() == Some(title.as_str()) {
+        return;
+    }
     ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
     *last_sent = Some(title);
 }
