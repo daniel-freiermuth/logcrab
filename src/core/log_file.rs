@@ -242,7 +242,7 @@ impl LogFileLoader {
                 toast.update(progress, format!("Scoring... ({idx}/{total_lines})"));
             }
 
-            let Some(log_line) = data_source.get_as_log_line(idx) else {
+            let Some(log_line) = data_source.get_scoring_line(idx) else {
                 tracing::warn!("Skipping scoring for line {idx} due to missing entry");
                 raw_scores.push(0.0);
                 continue;
@@ -504,7 +504,7 @@ mod tests {
             .map(|(i, msg)| {
                 GenericLogLine::new(
                     (*msg).to_string(),
-                    base + chrono::Duration::seconds(i as i64),
+                    base + chrono::Duration::seconds(i64::try_from(i).expect("small index")),
                     (*msg).to_string(),
                     i + 1,
                 )
