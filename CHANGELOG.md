@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The generic text reader no longer drops year-less lines dated Feb 29 (syslog `Feb 29 …`,
   logcat `02-29 …`). Logs without a year stay in 1970, which has no Feb 29, so these lines are
   placed at the start of that day (1970-03-01 00:00); their time of day is not kept.
+- Filters and exclude patterns no longer change their matches when a source's
+  time is calibrated; they ignore the time-offset prefix shown before messages.
 
 ## [1.3.0] - 2026-09-01
 
