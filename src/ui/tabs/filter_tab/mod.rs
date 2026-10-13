@@ -444,15 +444,9 @@ impl FilterView {
                 }
                 FilterViewEvent::ConvertToHighlight => {
                     // Request conversion to highlight - LogView will handle it and close this tab
-                    data_state.pending_filter_to_highlight = Some(FilterToHighlightData {
-                        filter_uuid: self.state.get_id(),
-                        name: self.state.name.clone(),
-                        search_text: self.state.search.search_text.clone(),
-                        case_sensitive: self.state.search.case_sensitive,
-                        color: self.state.color,
-                        enabled: self.state.enabled,
-                        show_in_histogram: self.state.show_in_histogram,
-                    });
+                    data_state.pending_filter_to_highlight = Some(
+                        FilterToHighlightData::from_filter(self.state.get_id(), &self.state.rule),
+                    );
                 }
             }
         }

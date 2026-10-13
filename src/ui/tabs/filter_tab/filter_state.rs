@@ -71,6 +71,20 @@ impl FilterState {
     pub const fn get_id(&self) -> usize {
         self.rule.id()
     }
+
+    /// Build the filter that replaces the converted highlight rule `highlight`.
+    #[must_use]
+    pub fn from_highlight(highlight: &SearchRule) -> Self {
+        let mut filter_state = Self::new(highlight.name.clone(), highlight.color);
+        filter_state
+            .search
+            .search_text
+            .clone_from(&highlight.search.search_text);
+        filter_state.search.case_sensitive = highlight.search.case_sensitive;
+        filter_state.enabled = highlight.enabled;
+        filter_state.show_in_histogram = highlight.show_in_histogram;
+        filter_state
+    }
 }
 
 // ============================================================================
@@ -114,5 +128,30 @@ impl From<&SavedFilter> for FilterState {
 impl From<&FilterState> for SavedFilter {
     fn from(filter: &FilterState) -> Self {
         Self::from(&filter.rule)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn highlight_to_filter_keeps_every_search_setting() {
+        let mut highlight = SearchRule::new("errors".to_string(), Color32::RED);
+        highlight.search.search_text = "error".to_string();
+        highlight.search.exclude_text = "benign".to_string();
+        highlight.search.case_sensitive = true;
+        highlight.enabled = false;
+        highlight.show_in_histogram = true;
+
+        let filter = FilterState::from_highlight(&highlight);
+
+        assert_eq!(filter.name, "errors");
+        assert_eq!(filter.color, Color32::RED);
+        assert_eq!(filter.search.search_text, "error");
+        assert_eq!(filter.search.exclude_text, "benign");
+        assert!(filter.search.case_sensitive);
+        assert!(!filter.enabled);
+        assert!(filter.show_in_histogram);
     }
 }

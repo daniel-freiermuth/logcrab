@@ -21,7 +21,6 @@ use crate::core::histogram_worker::HistogramWorkerHandle;
 use crate::core::session::CRAB_FILTERS_VERSION;
 use crate::core::{
     CrabFilters, FilterRequestPriority, LogFileLoader, LogStore, SavedFilter, SavedHighlight,
-    SearchRule,
 };
 use crate::input::ShortcutAction;
 use crate::ui::filter_highlight::FilterHighlight;
@@ -375,14 +374,7 @@ impl CrabSession {
         if let Some(highlight_index) = self.state.pending_highlight_to_filter.take() {
             if let Some(highlight) = self.state.highlights.get(highlight_index) {
                 // Create a new filter with the highlight's settings
-                let mut filter_state = FilterState::new(highlight.name.clone(), highlight.color);
-                filter_state
-                    .search
-                    .search_text
-                    .clone_from(&highlight.search.search_text);
-                filter_state.search.case_sensitive = highlight.search.case_sensitive;
-                filter_state.enabled = highlight.enabled;
-                filter_state.show_in_histogram = highlight.show_in_histogram;
+                let filter_state = FilterState::from_highlight(highlight);
 
                 self.add_filter_view(false, Some(filter_state));
 
@@ -394,11 +386,8 @@ impl CrabSession {
 
         // Handle filter-to-highlight conversion
         if let Some(data) = self.state.pending_filter_to_highlight.take() {
-            let mut highlight = SearchRule::new(data.name, data.color);
-            highlight.search.search_text = data.search_text;
-            highlight.search.case_sensitive = data.case_sensitive;
-            highlight.enabled = data.enabled;
-            highlight.show_in_histogram = data.show_in_histogram;
+            let filter_uuid = data.filter_uuid;
+            let highlight = data.into_highlight();
 
             self.state.highlights.push(highlight);
             self.state.modified = true;
@@ -406,7 +395,7 @@ impl CrabSession {
             // Close the filter tab that was converted
             // Find the tab by uuid and remove it
             self.dock_state
-                .retain_tabs(|t| t.get_uuid() != Some(data.filter_uuid));
+                .retain_tabs(|t| t.get_uuid() != Some(filter_uuid));
         }
     }
 
