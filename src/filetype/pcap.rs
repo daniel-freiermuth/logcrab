@@ -1420,8 +1420,21 @@ fn parse_icmp_info(data: &[u8]) -> String {
     }
 }
 
-fn pcap_ts_to_datetime(sec: u32, usec: u32) -> Option<DateTime<Local>> {
-    Local.timestamp_opt(i64::from(sec), usec * 1000).single()
+/// Convert a classic pcap record timestamp to a local `DateTime`.
+///
+/// `frac` is the raw sub-second field of the record: microseconds for the
+/// standard magic, nanoseconds when the file header uses the nanosecond magic.
+/// Returns `None` when the sub-second value is out of range for its unit.
+fn pcap_ts_to_datetime(sec: u32, frac: u32, nanosecond_precision: bool) -> Option<DateTime<Local>> {
+    let nanos = if nanosecond_precision {
+        frac
+    } else {
+        frac.checked_mul(1000)?
+    };
+    if nanos >= 1_000_000_000 {
+        return None;
+    }
+    Local.timestamp_opt(i64::from(sec), nanos).single()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1478,17 +1491,28 @@ fn parse_legacy_pcap_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     let mut lines = Vec::new();
     let mut line_number = 1usize;
     let mut flow_tracker = TcpFlowTracker::new();
+    let mut nanosecond_precision = false;
     loop {
         match pcap_reader.next() {
             Ok((offset, block)) => {
-                if let PcapBlockOwned::Legacy(packet) = block {
-                    let timestamp = pcap_ts_to_datetime(packet.ts_sec, packet.ts_usec)
-                        .unwrap_or_else(Local::now);
-                    if let Some(mut packet_info) = parse_packet_data(packet.data, timestamp) {
-                        flow_tracker.analyze_packet(&mut packet_info);
-                        lines.push(PcapLogLine::new(packet_info, line_number));
-                        line_number += 1;
+                match block {
+                    PcapBlockOwned::LegacyHeader(header) => {
+                        nanosecond_precision = header.is_nanosecond_precision();
                     }
+                    PcapBlockOwned::Legacy(packet) => {
+                        let timestamp = pcap_ts_to_datetime(
+                            packet.ts_sec,
+                            packet.ts_usec,
+                            nanosecond_precision,
+                        )
+                        .unwrap_or_else(Local::now);
+                        if let Some(mut packet_info) = parse_packet_data(packet.data, timestamp) {
+                            flow_tracker.analyze_packet(&mut packet_info);
+                            lines.push(PcapLogLine::new(packet_info, line_number));
+                            line_number += 1;
+                        }
+                    }
+                    PcapBlockOwned::NG(_) => {}
                 }
                 if !lines.is_empty() && lines.len() % 10_000 == 0 {
                     flow_tracker.cleanup(10_000);
@@ -2159,14 +2183,14 @@ mod tests {
 
     #[test]
     fn pcap_ts_zero_is_epoch() {
-        let dt = pcap_ts_to_datetime(0, 0).expect("epoch should be valid");
+        let dt = pcap_ts_to_datetime(0, 0, false).expect("epoch should be valid");
         assert_eq!(dt.timestamp(), 0);
     }
 
     #[test]
     fn pcap_ts_known_value() {
         // 2025-01-01 00:00:00 UTC = 1735689600
-        let dt = pcap_ts_to_datetime(1_735_689_600, 0);
+        let dt = pcap_ts_to_datetime(1_735_689_600, 0, false);
         assert!(dt.is_some());
         assert_eq!(dt.expect("should parse").timestamp(), 1_735_689_600);
     }
@@ -2180,7 +2204,12 @@ mod tests {
     /// sub-second field (microseconds or nanoseconds, depending on the magic).
     fn write_legacy_pcap(magic: u32, records: &[(u32, u32)]) -> tempfile::NamedTempFile {
         use std::io::Write as _;
-        let frame = eth_frame([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], [0xff; 6], 0x0806, &[0u8; 28]);
+        let frame = eth_frame(
+            [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+            [0xff; 6],
+            0x0806,
+            &[0u8; 28],
+        );
         let frame_len = u32::try_from(frame.len()).expect("frame fits in u32");
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&magic.to_le_bytes());
@@ -2216,8 +2245,14 @@ mod tests {
         let lines = parse_pcap_to_lines(file.path()).expect("nanosecond pcap should parse");
         assert_eq!(lines.len(), 2);
         // 2023-11-14T22:13:20.002Z and 2023-11-14T22:13:20.500Z
-        assert_eq!(utc_nanos(lines[0].packet_info.timestamp), (1_700_000_000, 2_000_000));
-        assert_eq!(utc_nanos(lines[1].packet_info.timestamp), (1_700_000_000, 500_000_000));
+        assert_eq!(
+            utc_nanos(lines[0].packet_info.timestamp),
+            (1_700_000_000, 2_000_000)
+        );
+        assert_eq!(
+            utc_nanos(lines[1].packet_info.timestamp),
+            (1_700_000_000, 500_000_000)
+        );
     }
 
     #[test]
@@ -2225,6 +2260,9 @@ mod tests {
         let file = write_legacy_pcap(0xa1b2_c3d4, &[(1_700_000_000, 500_000)]);
         let lines = parse_pcap_to_lines(file.path()).expect("microsecond pcap should parse");
         assert_eq!(lines.len(), 1);
-        assert_eq!(utc_nanos(lines[0].packet_info.timestamp), (1_700_000_000, 500_000_000));
+        assert_eq!(
+            utc_nanos(lines[0].packet_info.timestamp),
+            (1_700_000_000, 500_000_000)
+        );
     }
 }
