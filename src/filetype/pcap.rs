@@ -2170,4 +2170,61 @@ mod tests {
         assert!(dt.is_some());
         assert_eq!(dt.expect("should parse").timestamp(), 1_735_689_600);
     }
+
+    // ================================================================
+    // Legacy pcap timestamp precision (end to end through the parser)
+    // ================================================================
+
+    /// Write a little-endian classic pcap with the given magic and one ARP
+    /// record per `(ts_sec, ts_frac)` pair, where `ts_frac` is the raw
+    /// sub-second field (microseconds or nanoseconds, depending on the magic).
+    fn write_legacy_pcap(magic: u32, records: &[(u32, u32)]) -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let frame = eth_frame([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], [0xff; 6], 0x0806, &[0u8; 28]);
+        let frame_len = u32::try_from(frame.len()).expect("frame fits in u32");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&magic.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes()); // version major
+        bytes.extend_from_slice(&4u16.to_le_bytes()); // version minor
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // thiszone
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // sigfigs
+        bytes.extend_from_slice(&65535u32.to_le_bytes()); // snaplen
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // LINKTYPE_ETHERNET
+        for &(sec, frac) in records {
+            bytes.extend_from_slice(&sec.to_le_bytes());
+            bytes.extend_from_slice(&frac.to_le_bytes());
+            bytes.extend_from_slice(&frame_len.to_le_bytes()); // incl_len
+            bytes.extend_from_slice(&frame_len.to_le_bytes()); // orig_len
+            bytes.extend_from_slice(&frame);
+        }
+        let mut file = tempfile::NamedTempFile::new().expect("create temp pcap");
+        file.write_all(&bytes).expect("write temp pcap");
+        file.flush().expect("flush temp pcap");
+        file
+    }
+
+    fn utc_nanos(dt: DateTime<Local>) -> (i64, u32) {
+        (dt.timestamp(), dt.timestamp_subsec_nanos())
+    }
+
+    #[test]
+    fn legacy_pcap_nanosecond_timestamps_are_not_scaled() {
+        let file = write_legacy_pcap(
+            0xa1b2_3c4d,
+            &[(1_700_000_000, 2_000_000), (1_700_000_000, 500_000_000)],
+        );
+        let lines = parse_pcap_to_lines(file.path()).expect("nanosecond pcap should parse");
+        assert_eq!(lines.len(), 2);
+        // 2023-11-14T22:13:20.002Z and 2023-11-14T22:13:20.500Z
+        assert_eq!(utc_nanos(lines[0].packet_info.timestamp), (1_700_000_000, 2_000_000));
+        assert_eq!(utc_nanos(lines[1].packet_info.timestamp), (1_700_000_000, 500_000_000));
+    }
+
+    #[test]
+    fn legacy_pcap_microsecond_timestamps_are_scaled() {
+        let file = write_legacy_pcap(0xa1b2_c3d4, &[(1_700_000_000, 500_000)]);
+        let lines = parse_pcap_to_lines(file.path()).expect("microsecond pcap should parse");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(utc_nanos(lines[0].packet_info.timestamp), (1_700_000_000, 500_000_000));
+    }
 }
