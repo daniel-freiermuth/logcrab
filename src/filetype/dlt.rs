@@ -853,12 +853,10 @@ impl InputFileType for DltFileType {
     fn read(&mut self, lines_to_read: usize) -> anyhow::Result<Vec<Self::LineType>> {
         let mut result = Vec::with_capacity(lines_to_read);
 
-        // Safety cap: avoid spinning on files with many un-parseable messages.
-        let attempt_limit = lines_to_read * 10 + 64;
-        let mut attempts = 0;
-
-        while result.len() < lines_to_read && attempts < attempt_limit {
-            attempts += 1;
+        // No attempt cap: an empty result signals EOF to `ChunkedLoader`, so dropped or
+        // unparseable messages must not end the chunk early. Every `read_message` call
+        // consumes input (at least one storage header) or reports EOF, so this terminates.
+        while result.len() < lines_to_read {
             match read_message(&mut self.reader, None) {
                 Ok(Some(dlt_core::parse::ParsedMessage::Item(msg))) => {
                     if let Some(line) = convert_dlt_message(&msg, self.line_number) {
@@ -945,4 +943,178 @@ pub fn convert_dlt_message(msg: &dlt_core::dlt::Message, line_number: usize) -> 
         app_id,
         line_number,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone as _;
+    use dlt_core::dlt::{
+        DltTimeStamp, Endianness, ExtendedHeaderConfig, LogLevel, Message, MessageConfig,
+        MessageType, PayloadContent, StorageHeader,
+    };
+    use std::io::Write as _;
+
+    const STORAGE_SECS: u32 = 1_700_000_000;
+
+    /// Build one DLT message with a storage header.
+    ///
+    /// `app_id = None` produces a non-verbose message without an extended header,
+    /// which `convert_dlt_message` drops.
+    fn dlt_message(app_id: Option<&str>, header_ts: Option<u32>, storage_secs: u32) -> Message {
+        let extended_header_info = app_id.map(|app| ExtendedHeaderConfig {
+            message_type: MessageType::Log(LogLevel::Info),
+            app_id: app.to_string(),
+            context_id: "CTX".to_string(),
+        });
+        let payload = if extended_header_info.is_some() {
+            PayloadContent::Verbose(vec![])
+        } else {
+            PayloadContent::NonVerbose(42, vec![1, 2, 3])
+        };
+        let conf = MessageConfig {
+            version: 1,
+            counter: 0,
+            endianness: Endianness::Big,
+            ecu_id: Some("ECU1".to_string()),
+            session_id: None,
+            timestamp: header_ts,
+            payload,
+            extended_header_info,
+        };
+        let storage = StorageHeader {
+            timestamp: DltTimeStamp {
+                seconds: storage_secs,
+                microseconds: 0,
+            },
+            ecu_id: "ECU1".to_string(),
+        };
+        Message::new(conf, Some(storage))
+    }
+
+    fn dlt_bytes(app_id: Option<&str>, header_ts: Option<u32>, storage_secs: u32) -> Vec<u8> {
+        dlt_message(app_id, header_ts, storage_secs).as_bytes()
+    }
+
+    fn open_bytes(bytes: &[u8], state: Arc<DltFileState>) -> DltFileType {
+        let mut tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        tmp.write_all(bytes).expect("write");
+        DltFileType::open(
+            tmp.path(),
+            crate::config::DltTimestampSource::default(),
+            state,
+        )
+        .expect("open dlt")
+    }
+
+    /// Drive `read` the way `ChunkedLoader::run` does: stop at the first empty chunk.
+    fn read_until_empty(ft: &mut DltFileType, chunk_size: usize) -> Vec<DltLogLine> {
+        let mut all = Vec::new();
+        loop {
+            let chunk = ft.read(chunk_size).expect("read");
+            if chunk.is_empty() {
+                return all;
+            }
+            all.extend(chunk);
+        }
+    }
+
+    #[test]
+    fn long_run_of_dropped_messages_does_not_end_loading_early() {
+        let chunk_size = 4;
+        // Well past any per-call attempt budget proportional to the chunk size.
+        let dropped = chunk_size * 10 + 64 + 100;
+        let mut bytes = Vec::new();
+        for _ in 0..dropped {
+            bytes.extend(dlt_bytes(None, Some(1), STORAGE_SECS));
+        }
+        for i in 0..3 {
+            bytes.extend(dlt_bytes(Some("APP"), Some(10), STORAGE_SECS + i));
+        }
+
+        let mut ft = open_bytes(&bytes, Arc::new(DltFileState::default()));
+        let lines = read_until_empty(&mut ft, chunk_size);
+
+        let storage_secs: Vec<_> = lines.iter().map(|l| l.storage_time.timestamp()).collect();
+        let base = i64::from(STORAGE_SECS);
+        assert_eq!(storage_secs, vec![base, base + 1, base + 2]);
+        // Dropped messages never consume a line number.
+        let line_numbers: Vec<_> = lines.iter().map(|l| l.line_number).collect();
+        assert_eq!(line_numbers, vec![1, 2, 3]);
+        assert_eq!(ft.bytes_consumed(), bytes.len() as u64);
+    }
+
+    #[test]
+    fn corrupted_bytes_between_messages_are_skipped_with_contiguous_line_numbers() {
+        let mut bytes = dlt_bytes(Some("APP"), Some(10), STORAGE_SECS);
+        // Junk without the storage-header magic. dlt-core resynchronises by scanning
+        // storage-header-sized (16-byte) blocks for the magic, so keep the junk aligned.
+        bytes.extend([0xFF; 32]);
+        // A message whose extended header announces a verbose argument that the
+        // (empty) payload does not contain: read_message reports a parse error.
+        let mut truncated = dlt_message(Some("APP"), Some(10), STORAGE_SECS);
+        if let Some(ext) = truncated.extended_header.as_mut() {
+            ext.argument_count = 1;
+        }
+        let truncated = truncated.as_bytes();
+        assert!(
+            read_message(&mut DltMessageReader::new(truncated.as_slice(), true), None).is_err(),
+            "fixture must exercise the parse-error path"
+        );
+        bytes.extend(truncated);
+        bytes.extend(dlt_bytes(Some("APP"), Some(10), STORAGE_SECS + 1));
+        bytes.extend(dlt_bytes(Some("APP"), Some(10), STORAGE_SECS + 2));
+
+        let mut ft = open_bytes(&bytes, Arc::new(DltFileState::default()));
+        let lines = read_until_empty(&mut ft, 100);
+
+        let line_numbers: Vec<_> = lines.iter().map(|l| l.line_number).collect();
+        assert_eq!(line_numbers, vec![1, 2, 3]);
+        let base = i64::from(STORAGE_SECS);
+        let storage_secs: Vec<_> = lines.iter().map(|l| l.storage_time.timestamp()).collect();
+        assert_eq!(storage_secs, vec![base, base + 1, base + 2]);
+    }
+
+    #[test]
+    fn boot_times_seed_new_pairs_and_keep_persisted_entries() {
+        let persisted_key = ("ECU1".to_string(), "OLD".to_string());
+        let persisted = Local
+            .timestamp_opt(1_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let state = Arc::new(DltFileState::default());
+        state.boot_times.insert(persisted_key.clone(), persisted);
+
+        // Header timestamps are in 0.1 ms ticks: 50_000 ticks = 5 s since boot.
+        let mut bytes = dlt_bytes(Some("OLD"), Some(50_000), STORAGE_SECS);
+        bytes.extend(dlt_bytes(Some("NEW"), Some(50_000), STORAGE_SECS));
+        // A later message of the same pair must not overwrite the first-seen boot time.
+        bytes.extend(dlt_bytes(Some("NEW"), Some(10_000), STORAGE_SECS + 100));
+        // No header timestamp: nothing to seed from.
+        bytes.extend(dlt_bytes(Some("NOTS"), None, STORAGE_SECS));
+
+        let mut ft = open_bytes(&bytes, Arc::clone(&state));
+        let lines = read_until_empty(&mut ft, 100);
+        assert_eq!(lines.len(), 4);
+
+        assert_eq!(
+            state.boot_times.get(&persisted_key).map(|v| *v),
+            Some(persisted)
+        );
+        let expected_new_boot = Local
+            .timestamp_opt(i64::from(STORAGE_SECS) - 5, 0)
+            .single()
+            .expect("valid timestamp");
+        assert_eq!(
+            state
+                .boot_times
+                .get(&("ECU1".to_string(), "NEW".to_string()))
+                .map(|v| *v),
+            Some(expected_new_boot)
+        );
+        assert!(!state
+            .boot_times
+            .contains_key(&("ECU1".to_string(), "NOTS".to_string())));
+        assert_eq!(state.boot_times.len(), 2);
+    }
 }
