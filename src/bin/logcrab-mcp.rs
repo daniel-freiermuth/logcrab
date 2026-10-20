@@ -33,6 +33,7 @@
 use std::collections::HashMap;
 
 use logcrab::anomaly::sidecar_client::{InputLine, SidecarClient};
+use logcrab::export::ExportRecord;
 use rmcp::{
     handler::server::wrapper::Parameters, tool, tool_handler, tool_router, transport::stdio,
     ServerHandler, ServiceExt,
@@ -63,19 +64,6 @@ struct AnalyzeParams {
     model_id: String,
     /// Maximum number of results to return sorted by anomaly score (default: 50)
     top_n: Option<usize>,
-}
-
-// ── Export record (one NDJSON line from `logcrab-export`) ────────────────────
-
-#[derive(Debug, Deserialize)]
-struct ExportRecord {
-    line_number: usize,
-    /// Mirrors `logcrab::export::ExportRecord::timestamp_unix_ms`; negative for
-    /// pre-epoch instants (e.g. time-only lines anchored to 1970 local time).
-    timestamp_unix_ms: i64,
-    message: String,
-    source_file: String,
-    filetype: String,
 }
 
 // ── Server struct ─────────────────────────────────────────────────────────────
@@ -131,7 +119,7 @@ fn normalize_scores(scores: &HashMap<usize, f64>) -> HashMap<usize, f64> {
 // ── Export parsing ────────────────────────────────────────────────────────────
 
 /// Parse the NDJSON stdout of `logcrab-export`, skipping blank lines.
-fn parse_export_output(stdout: &str) -> anyhow::Result<Vec<ExportRecord>> {
+fn parse_export_output(stdout: &str) -> anyhow::Result<Vec<ExportRecord<'static>>> {
     stdout
         .lines()
         .filter(|l| !l.is_empty())
@@ -325,8 +313,8 @@ impl LogcrabMcp {
                         sidecar_timestamp(r.timestamp_unix_ms),
                         r.message.clone(),
                         None,
-                        Some(r.source_file.clone()),
-                        Some(r.filetype.clone()),
+                        Some(r.source_file.to_string()),
+                        Some(r.filetype.to_string()),
                     )
                 })
                 .collect();
@@ -408,7 +396,7 @@ mod tests {
     use super::*;
 
     /// Serialize records exactly as `logcrab-export` does (one JSON object per line).
-    fn export_ndjson(records: &[logcrab::export::ExportRecord<'_>]) -> String {
+    fn export_ndjson(records: &[ExportRecord<'_>]) -> String {
         records
             .iter()
             .map(|r| serde_json::to_string(r).expect("serialize export record") + "\n")
@@ -417,12 +405,12 @@ mod tests {
 
     #[test]
     fn parses_producer_records_field_for_field() {
-        let ndjson = export_ndjson(&[logcrab::export::ExportRecord {
+        let ndjson = export_ndjson(&[ExportRecord {
             line_number: 7,
             timestamp_unix_ms: 1_700_000_000_123,
             message: "TAG: hello".to_string(),
-            source_file: "a.log",
-            filetype: "logcat",
+            source_file: "a.log".into(),
+            filetype: "logcat".into(),
         }]);
 
         let records = parse_export_output(&ndjson).expect("producer output must parse");
@@ -441,19 +429,19 @@ mod tests {
         // Time-only / syslog-style lines are anchored to 1970-01-01 local time,
         // which is before the epoch in any UTC+ timezone (e.g. -3_599_000 in CET).
         let ndjson = export_ndjson(&[
-            logcrab::export::ExportRecord {
+            ExportRecord {
                 line_number: 1,
                 timestamp_unix_ms: -3_599_000,
                 message: "pre-epoch".to_string(),
-                source_file: "a.log",
-                filetype: "generic",
+                source_file: "a.log".into(),
+                filetype: "generic".into(),
             },
-            logcrab::export::ExportRecord {
+            ExportRecord {
                 line_number: 2,
                 timestamp_unix_ms: 0,
                 message: "epoch".to_string(),
-                source_file: "a.log",
-                filetype: "generic",
+                source_file: "a.log".into(),
+                filetype: "generic".into(),
             },
         ]);
 

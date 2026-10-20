@@ -4,23 +4,32 @@
 //! Export primitives shared by `logcrab-export` and the macro-generated
 //! `export_dispatch` function in `core::log_store`.
 
+use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::filetype::{InputFileType, LineType};
 
 /// One NDJSON record emitted by `logcrab-export`.
-#[derive(Serialize)]
+///
+/// This is the single wire contract between `logcrab-export` (producer) and
+/// its consumers such as `logcrab-mcp`. String fields are [`Cow`] so the
+/// producer can borrow while consumers deserialize into owned
+/// `ExportRecord<'static>` values.
+///
+/// `timestamp_unix_ms` is signed: it is negative for pre-epoch instants
+/// (e.g. time-only lines anchored to 1970-01-01 in a UTC+ local timezone).
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ExportRecord<'a> {
     pub line_number: usize,
     pub timestamp_unix_ms: i64,
     pub message: String,
-    pub source_file: &'a str,
-    pub filetype: &'a str,
+    pub source_file: Cow<'a, str>,
+    pub filetype: Cow<'a, str>,
 }
 
 const EXPORT_CHUNK: usize = 4096;
@@ -64,8 +73,8 @@ pub fn export_typed<FT: InputFileType>(
                 line_number: line.line_number(),
                 timestamp_unix_ms: ts.timestamp_millis(),
                 message: line.message(),
-                source_file: &source_file,
-                filetype,
+                source_file: Cow::Borrowed(&source_file),
+                filetype: Cow::Borrowed(filetype),
             };
             serde_json::to_writer(&mut *out, &record).context("failed to serialize record")?;
             writeln!(out).context("write error")?;
