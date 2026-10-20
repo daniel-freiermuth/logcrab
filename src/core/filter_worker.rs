@@ -404,6 +404,286 @@ impl FilterWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::log_store::{DataSourceVariant, SourceData};
+    use crate::filetype::dmesg::{DmesgFileType, DmesgLogLine};
+    use chrono::{Local, TimeZone};
+    use std::sync::RwLock;
+
+    /// Never matches `SLOW_LINE`, but fancy-regex's backtracking VM explores an
+    /// exponential number of `(a|aa)` splits before failing, so scanning
+    /// `SLOW_LINE_COUNT` lines takes far longer than `SUPERSEDED_SEARCH_GRACE` even in
+    /// release builds on many cores, while each line stays short enough for the
+    /// per-line cancellation check to abort promptly.
+    const SLOW_PATTERN: &str = r"^(a|aa)+\1b";
+    const SLOW_LINE: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    const SLOW_LINE_COUNT: usize = 8192;
+
+    /// Generous upper bound for results that should arrive; never reached on success.
+    const RESULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+    struct TestStore {
+        store: Arc<LogStore>,
+        /// Holds the `.crab` sidecar created by `SourceData::new`.
+        _dir: tempfile::TempDir,
+    }
+
+    fn store_with_lines(lines: &[&str]) -> TestStore {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let warnings = crate::ui::ToastManager::new(egui::Context::default()).sender();
+        let (source, _, _) = SourceData::<DmesgFileType>::new(
+            dir.path().join("test.log"),
+            Arc::new(RwLock::new(())),
+            &warnings,
+        );
+        source.append_lines(
+            lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| {
+                    let seconds = i64::try_from(index).expect("line index fits in i64");
+                    let timestamp = Local
+                        .timestamp_opt(seconds, 0)
+                        .single()
+                        .expect("valid timestamp");
+                    DmesgLogLine::new((*line).to_owned(), timestamp, (*line).to_owned(), index)
+                })
+                .collect(),
+        );
+        let store = LogStore::new();
+        store.add_source(DataSourceVariant::from(Arc::new(source)));
+        TestStore { store, _dir: dir }
+    }
+
+    fn slow_store() -> TestStore {
+        store_with_lines(&vec![SLOW_LINE; SLOW_LINE_COUNT])
+    }
+
+    fn request(
+        filter_id: usize,
+        pattern: &str,
+        store: &Arc<LogStore>,
+        priority: FilterRequestPriority,
+        result_tx: &Sender<FilterResult>,
+    ) -> FilterRequest {
+        FilterRequest {
+            filter_id,
+            regex: Regex::new(pattern).expect("valid test regex"),
+            exclude_regex: None,
+            store: Arc::clone(store),
+            result_tx: result_tx.clone(),
+            search_text: pattern.to_owned(),
+            exclude_text: String::new(),
+            case_sensitive: false,
+            hide_duplicates: false,
+            cancellation: FilterCancellation::new(),
+            priority,
+        }
+    }
+
+    struct WorkerHarness {
+        handle: FilterWorkerHandle,
+        request_rx: Receiver<FilterRequest>,
+        scheduler: Arc<FilterWorkerScheduler>,
+    }
+
+    fn worker_harness() -> WorkerHarness {
+        let (request_tx, request_rx) = channel();
+        let scheduler = Arc::new(FilterWorkerScheduler {
+            active_cancellation: Mutex::new(None),
+        });
+        WorkerHarness {
+            handle: FilterWorkerHandle {
+                request_tx,
+                is_filtering: Arc::new(AtomicBool::new(false)),
+                scheduler: Arc::clone(&scheduler),
+            },
+            request_rx,
+            scheduler,
+        }
+    }
+
+    impl WorkerHarness {
+        /// Processes everything already queued, then returns because every handle is dropped.
+        fn run_queued_to_shutdown(self) -> (Arc<AtomicBool>, Arc<FilterWorkerScheduler>) {
+            let is_filtering = Arc::clone(&self.handle.is_filtering);
+            drop(self.handle);
+            FilterWorker::worker_loop(&self.request_rx, &is_filtering, &self.scheduler);
+            (is_filtering, self.scheduler)
+        }
+
+        /// Runs the worker loop on its own thread, like `FilterWorker::new`.
+        fn spawn(self) -> (FilterWorkerHandle, std::thread::JoinHandle<()>) {
+            let is_filtering = Arc::clone(&self.handle.is_filtering);
+            let scheduler = self.scheduler;
+            let request_rx = self.request_rx;
+            let thread = std::thread::spawn(move || {
+                FilterWorker::worker_loop(&request_rx, &is_filtering, &scheduler);
+            });
+            (self.handle, thread)
+        }
+    }
+
+    fn has_active_request(scheduler: &FilterWorkerScheduler) -> bool {
+        scheduler
+            .active_cancellation
+            .lock()
+            .expect("scheduler lock")
+            .is_some()
+    }
+
+    fn wait_until_request_is_active(scheduler: &FilterWorkerScheduler) {
+        let deadline = Instant::now() + RESULT_TIMEOUT;
+        while !has_active_request(scheduler) {
+            assert!(
+                Instant::now() < deadline,
+                "worker never started the request"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Search texts of all delivered results, in delivery order.
+    fn delivered_searches(result_rx: &Receiver<FilterResult>) -> Vec<String> {
+        result_rx
+            .try_iter()
+            .map(|result| result.search_text)
+            .collect()
+    }
+
+    fn fast_store() -> TestStore {
+        store_with_lines(&["alpha one", "beta two", "gamma three"])
+    }
+
+    #[test]
+    fn interactive_requests_run_before_already_queued_background_requests() {
+        let test_store = fast_store();
+        let (result_tx, result_rx) = channel();
+        let harness = worker_harness();
+        for (filter_id, pattern, priority) in [
+            (1, "alpha", FilterRequestPriority::Background),
+            (2, "beta", FilterRequestPriority::Background),
+            (3, "gamma", FilterRequestPriority::Interactive),
+        ] {
+            harness.handle.send_request(request(
+                filter_id,
+                pattern,
+                &test_store.store,
+                priority,
+                &result_tx,
+            ));
+        }
+
+        let (is_filtering, scheduler) = harness.run_queued_to_shutdown();
+
+        assert_eq!(delivered_searches(&result_rx), ["gamma", "alpha", "beta"]);
+        assert!(!is_filtering.load(Ordering::Relaxed));
+        assert!(!has_active_request(&scheduler));
+    }
+
+    #[test]
+    fn superseded_request_finishing_within_grace_period_still_delivers_result() {
+        let test_store = fast_store();
+        let (result_tx, result_rx) = channel();
+        let harness = worker_harness();
+        let superseded = request(
+            1,
+            "alpha",
+            &test_store.store,
+            FilterRequestPriority::Interactive,
+            &result_tx,
+        );
+        let superseded_cancellation = superseded.cancellation.clone();
+        harness.handle.send_request(superseded);
+        harness.handle.send_request(request(
+            2,
+            "beta",
+            &test_store.store,
+            FilterRequestPriority::Interactive,
+            &result_tx,
+        ));
+
+        harness.run_queued_to_shutdown();
+
+        assert!(
+            superseded_cancellation.is_cancelled(),
+            "a request dequeued while interactive work is pending must be marked superseded"
+        );
+        let results: Vec<FilterResult> = result_rx.try_iter().collect();
+        let searches: Vec<&str> = results.iter().map(|r| r.search_text.as_str()).collect();
+        assert_eq!(searches, ["alpha", "beta"]);
+        assert_eq!(results[0].filtered_indices.len(), 1);
+    }
+
+    #[test]
+    fn superseded_request_exceeding_grace_period_is_discarded() {
+        let test_store = slow_store();
+        let (result_tx, result_rx) = channel();
+        let harness = worker_harness();
+        harness.handle.send_request(request(
+            1,
+            SLOW_PATTERN,
+            &test_store.store,
+            FilterRequestPriority::Interactive,
+            &result_tx,
+        ));
+        harness.handle.send_request(request(
+            2,
+            "a",
+            &test_store.store,
+            FilterRequestPriority::Interactive,
+            &result_tx,
+        ));
+
+        let (is_filtering, scheduler) = harness.run_queued_to_shutdown();
+
+        assert_eq!(delivered_searches(&result_rx), ["a"]);
+        assert!(!is_filtering.load(Ordering::Relaxed));
+        assert!(
+            !has_active_request(&scheduler),
+            "discarded requests must not stay registered as active"
+        );
+    }
+
+    #[test]
+    fn interactive_send_preempts_running_interactive_request() {
+        let test_store = slow_store();
+        let (result_tx, result_rx) = channel();
+        let harness = worker_harness();
+        let scheduler = Arc::clone(&harness.scheduler);
+        let (handle, thread) = harness.spawn();
+        let running = request(
+            1,
+            SLOW_PATTERN,
+            &test_store.store,
+            FilterRequestPriority::Interactive,
+            &result_tx,
+        );
+        let running_cancellation = running.cancellation.clone();
+        handle.send_request(running);
+        wait_until_request_is_active(&scheduler);
+
+        handle.send_request(request(
+            2,
+            "a",
+            &test_store.store,
+            FilterRequestPriority::Interactive,
+            &result_tx,
+        ));
+        let first_result = result_rx
+            .recv_timeout(RESULT_TIMEOUT)
+            .expect("preempting request must deliver a result");
+
+        drop(handle);
+        thread.join().expect("worker thread panicked");
+        assert!(running_cancellation.is_cancelled());
+        assert_eq!(first_result.search_text, "a");
+        assert_eq!(first_result.filtered_indices.len(), SLOW_LINE_COUNT);
+        assert_eq!(
+            delivered_searches(&result_rx),
+            Vec::<String>::new(),
+            "the preempted request must not deliver a result"
+        );
+    }
 
     #[test]
     fn superseded_searches_finish_within_grace_period() {
