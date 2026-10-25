@@ -1648,14 +1648,14 @@ mod tests {
         let crab_path = dir.path().join("foo.log.crab");
 
         let (source, warnings) = open_source(&log_path);
-        assert!(warnings.take_pending_errors().is_empty());
+        assert_eq!(warnings.take_pending_errors(), Vec::<String>::new());
 
         source.set_bookmark(7, "first".to_string());
         source.save_crab_file(&[], &[]);
         drop(source);
 
         let (reopened, warnings) = open_source(&log_path);
-        assert!(warnings.take_pending_errors().is_empty());
+        assert_eq!(warnings.take_pending_errors(), Vec::<String>::new());
         assert!(reopened.has_bookmark(7));
         assert!(crab_path.exists());
     }
