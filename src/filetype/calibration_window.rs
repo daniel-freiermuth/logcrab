@@ -139,13 +139,11 @@ impl CalibrationWindow {
                         || (sync_enabled && (enter_pressed || enter_submitted));
                     let should_cancel = ui.button("Cancel").clicked() || escape_pressed;
 
-                    if should_sync {
-                        if let Ok(target_time) = parsed_time {
-                            result = CalibrationResult::Confirmed {
-                                target_time,
-                                apply_to_all_apps: self.apply_to_all_apps,
-                            };
-                        }
+                    if should_sync && let Ok(target_time) = parsed_time {
+                        result = CalibrationResult::Confirmed {
+                            target_time,
+                            apply_to_all_apps: self.apply_to_all_apps,
+                        };
                     }
                     if should_cancel {
                         result = CalibrationResult::Cancelled;

@@ -543,18 +543,18 @@ impl Histogram {
         // Scroll wheel zoom (centered on cursor)
         if response.hovered() {
             let scroll_delta = raw_vertical_wheel_delta(ui);
-            if scroll_delta.abs() > 0.0 {
-                if let Some(hover_pos) = response.hover_pos() {
-                    Self::handle_scroll_zoom(
-                        zoom,
-                        scroll_delta,
-                        hover_pos,
-                        rect,
-                        data,
-                        view_start,
-                        view_end,
-                    );
-                }
+            if scroll_delta.abs() > 0.0
+                && let Some(hover_pos) = response.hover_pos()
+            {
+                Self::handle_scroll_zoom(
+                    zoom,
+                    scroll_delta,
+                    hover_pos,
+                    rect,
+                    data,
+                    view_start,
+                    view_end,
+                );
             }
         }
 
@@ -1027,15 +1027,15 @@ impl Histogram {
                 );
             }
 
-            if let Some(selected_line_index) = selected_line_index {
-                if let Some(line) = store.get_by_id(&selected_line_index) {
-                    let sel_ts = line.timestamp;
-                    ui.separator();
-                    ui.colored_label(
-                        selected_color,
-                        format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
-                    );
-                }
+            if let Some(selected_line_index) = selected_line_index
+                && let Some(line) = store.get_by_id(&selected_line_index)
+            {
+                let sel_ts = line.timestamp;
+                ui.separator();
+                ui.colored_label(
+                    selected_color,
+                    format!("Selected: {}", sel_ts.format("%H:%M:%S%.3f")),
+                );
             }
         });
     }

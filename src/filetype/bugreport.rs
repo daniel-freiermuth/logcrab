@@ -48,25 +48,25 @@ pub fn detect_header_info(content: &str) -> Option<(i32, i64)> {
     let mut uptime_minutes: Option<i64> = None;
 
     for line in content.lines().take(100) {
-        if dumpstate_dt.is_none() {
-            if let Ok(Some(caps)) = DUMPSTATE_FULL.captures(line) {
-                let dt_str = caps[1].to_string();
-                if let Ok(ndt) = NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M:%S") {
-                    if let Some(dt) = Local.from_local_datetime(&ndt).single() {
-                        dumpstate_dt = Some(dt);
-                    }
-                }
+        if dumpstate_dt.is_none()
+            && let Ok(Some(caps)) = DUMPSTATE_FULL.captures(line)
+        {
+            let dt_str = caps[1].to_string();
+            if let Ok(ndt) = NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M:%S")
+                && let Some(dt) = Local.from_local_datetime(&ndt).single()
+            {
+                dumpstate_dt = Some(dt);
             }
         }
 
-        if uptime_minutes.is_none() {
-            if let Ok(Some(caps)) = UPTIME_LINE.captures(line) {
-                let weeks: i64 = caps[1].parse().unwrap_or(0);
-                let days: i64 = caps[2].parse().unwrap_or(0);
-                let hours: i64 = caps[3].parse().unwrap_or(0);
-                let minutes: i64 = caps[4].parse().unwrap_or(0);
-                uptime_minutes = Some(weeks * 7 * 24 * 60 + days * 24 * 60 + hours * 60 + minutes);
-            }
+        if uptime_minutes.is_none()
+            && let Ok(Some(caps)) = UPTIME_LINE.captures(line)
+        {
+            let weeks: i64 = caps[1].parse().unwrap_or(0);
+            let days: i64 = caps[2].parse().unwrap_or(0);
+            let hours: i64 = caps[3].parse().unwrap_or(0);
+            let minutes: i64 = caps[4].parse().unwrap_or(0);
+            uptime_minutes = Some(weeks * 7 * 24 * 60 + days * 24 * 60 + hours * 60 + minutes);
         }
 
         if dumpstate_dt.is_some() && uptime_minutes.is_some() {
