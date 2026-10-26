@@ -71,6 +71,9 @@ pub struct LogCrabApp {
     /// to one or more previous sessions, we show a dialog to let them choose.
     /// Contains (`files_being_opened`, `matching_sessions`).
     pending_session_offer: Option<PendingSessionOffer>,
+
+    /// Window title last sent to the viewport (None before the first send)
+    window_title: Option<String>,
 }
 
 /// State for the "restore session?" dialog
@@ -91,7 +94,7 @@ enum SessionOfferAction {
 
 impl LogCrabApp {
     /// Update the window title based on open files
-    fn update_window_title(&self, ctx: &egui::Context) {
+    fn update_window_title(&mut self, ctx: &egui::Context) {
         let title = self.session.as_ref().map_or_else(
             || "LogCrab".to_string(),
             |session| {
@@ -105,7 +108,7 @@ impl LogCrabApp {
                 }
             },
         );
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        send_window_title(ctx, &mut self.window_title, title);
     }
 
     #[must_use]
@@ -139,6 +142,7 @@ impl LogCrabApp {
             toast_manager: ToastManager::new(cc.egui_ctx.clone()),
             session_history,
             pending_session_offer: None,
+            window_title: None,
         };
 
         // Load initial files if provided via command line
@@ -1171,5 +1175,79 @@ impl Drop for LogCrabApp {
             session.save_crab_file();
         }
         self.record_current_session();
+    }
+}
+
+/// Send `title` to the viewport unless it equals `last_sent`.
+///
+/// `send_viewport_cmd` also requests a repaint, so sending an unchanged title
+/// from per-frame code would schedule a new frame forever and the app would
+/// never go idle.
+fn send_window_title(ctx: &egui::Context, last_sent: &mut Option<String>, title: String) {
+    if last_sent.as_deref() == Some(title.as_str()) {
+        return;
+    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+    *last_sent = Some(title);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run one headless frame that sets the window title, like `App::logic` does.
+    fn run_title_frame(
+        ctx: &egui::Context,
+        last_sent: &mut Option<String>,
+        title: &str,
+    ) -> egui::ViewportOutput {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            send_window_title(ui.ctx(), last_sent, title.to_string());
+        });
+        let viewport = output
+            .viewport_output
+            .remove(&egui::ViewportId::ROOT)
+            .expect("root viewport output");
+        output.drop_without_applying_deltas();
+        viewport
+    }
+
+    fn sent_titles(viewport: &egui::ViewportOutput) -> Vec<&str> {
+        viewport
+            .commands
+            .iter()
+            .filter_map(|cmd| {
+                if let egui::ViewportCommand::Title(title) = cmd {
+                    Some(title.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unchanged_window_title_lets_the_app_go_idle() {
+        let ctx = egui::Context::default();
+        let mut last_sent = None;
+
+        let first = run_title_frame(&ctx, &mut last_sent, "a.log - LogCrab");
+        assert_eq!(sent_titles(&first), ["a.log - LogCrab"]);
+
+        // Let egui's own start-up passes settle.
+        for _ in 0..3 {
+            let _ = run_title_frame(&ctx, &mut last_sent, "a.log - LogCrab");
+        }
+
+        let idle = run_title_frame(&ctx, &mut last_sent, "a.log - LogCrab");
+        assert_eq!(
+            idle.repaint_delay,
+            std::time::Duration::MAX,
+            "an unchanged title must not schedule another frame"
+        );
+        assert_eq!(sent_titles(&idle), Vec::<&str>::new(), "title re-sent");
+
+        let changed = run_title_frame(&ctx, &mut last_sent, "a.log, b.log - LogCrab");
+        assert_eq!(sent_titles(&changed), ["a.log, b.log - LogCrab"]);
     }
 }
