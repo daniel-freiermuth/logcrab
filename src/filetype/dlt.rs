@@ -486,6 +486,14 @@ impl LineType for DltLogLine {
         }
     }
 
+    fn search_message(
+        &self,
+        _config: &crate::config::DltTimestampSource,
+        _file_state: &DltFileState,
+    ) -> String {
+        self.format_body()
+    }
+
     fn raw(&self) -> String {
         format!("{:?}", self.dlt_message)
     }

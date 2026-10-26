@@ -727,12 +727,12 @@ where
         Some((ts_ms, line.message()))
     }
 
-    /// Filter lines by their *display message* and *raw* string, in timestamp order.
+    /// Filter lines by their *search message* and *raw* string, in timestamp order.
     ///
-    /// Unlike `filter_sorted_mapped`, the predicate receives the display message produced
-    /// by `display_message(config, file_state)` — which includes any active overlays such
-    /// as SOME/IP SD decoded entries — and the raw string.  All config and file-state locks
-    /// are acquired once for the whole scan.
+    /// The predicate receives the message produced by `search_message(config, file_state)`
+    /// — which includes any active content overlays such as SOME/IP SD decoded entries but
+    /// no time-calibration decorations — and the raw string.  All config and file-state
+    /// locks are acquired once for the whole scan.
     ///
     /// # Panics
     ///
@@ -762,9 +762,9 @@ where
                         return None;
                     }
                     let line = &lines[idx];
-                    let display_msg = line.display_message(&*config, file_state);
+                    let search_msg = line.search_message(&*config, file_state);
                     let raw = line.raw();
-                    if predicate(&display_msg, &raw) {
+                    if predicate(&search_msg, &raw) {
                         matches.push(idx);
                     }
                 }
@@ -1612,6 +1612,8 @@ pub struct Bookmark {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+    use fancy_regex::Regex;
 
     fn open_source(log_path: &Path) -> (SourceData<GenericFileType>, crate::ui::ToastSender) {
         let warnings = crate::ui::ToastManager::new(egui::Context::default()).sender();
@@ -1658,5 +1660,71 @@ mod tests {
         assert_eq!(warnings.take_pending_errors(), Vec::<String>::new());
         assert!(reopened.has_bookmark(7));
         assert!(crab_path.exists());
+    }
+
+    fn generic_source(dir: &Path) -> SourceData<GenericFileType> {
+        let (source, _warnings) = open_source(&dir.join("test.log"));
+        let lines = ["ERROR disk full", "INFO request took 12ms", "INFO all good"]
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                let secs = u32::try_from(i).expect("small index");
+                let ts = Local
+                    .with_ymd_and_hms(2026, 1, 1, 0, 0, secs)
+                    .single()
+                    .expect("valid timestamp");
+                GenericLogLine::new(
+                    format!("2026-01-01 00:00:0{secs} {msg}"),
+                    ts,
+                    (*msg).to_string(),
+                    i + 1,
+                )
+            })
+            .collect();
+        source.append_lines(lines);
+        source
+    }
+
+    /// Same include/exclude predicate shape as `FilterWorker::worker_loop`.
+    fn search(
+        source: &SourceData<GenericFileType>,
+        include: &str,
+        exclude: Option<&str>,
+    ) -> Vec<usize> {
+        let include = Regex::new(include).expect("valid include regex");
+        let exclude = exclude.map(|e| Regex::new(e).expect("valid exclude regex"));
+        let is_match = |re: &Regex, msg: &str, raw: &str| {
+            re.is_match(msg).unwrap_or(false) || re.is_match(raw).unwrap_or(false)
+        };
+        source
+            .filter_sorted_by_search(
+                &|msg: &str, raw: &str| {
+                    is_match(&include, msg, raw)
+                        && exclude.as_ref().is_none_or(|ex| !is_match(ex, msg, raw))
+                },
+                &|| false,
+            )
+            .expect("search not cancelled")
+    }
+
+    #[test]
+    fn time_calibration_does_not_change_search_results() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = generic_source(dir.path());
+
+        let queries = [("^ERROR", None), ("\\d+ms", None), ("INFO", Some("ms"))];
+        let before: Vec<Vec<usize>> = queries
+            .iter()
+            .map(|(inc, exc)| search(&source, inc, *exc))
+            .collect();
+        assert_eq!(before, vec![vec![0], vec![1], vec![2]]);
+
+        source.file_state.set_time_offset_ms(500);
+        source.rebuild_time_index();
+        let after: Vec<Vec<usize>> = queries
+            .iter()
+            .map(|(inc, exc)| search(&source, inc, *exc))
+            .collect();
+        assert_eq!(after, before);
     }
 }

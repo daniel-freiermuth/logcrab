@@ -82,6 +82,10 @@ impl LineType for BtsnoopLogLine {
         }
     }
 
+    fn search_message(&self, _config: &(), _file_state: &BtsnoopFileState) -> String {
+        self.hci_info.format_message()
+    }
+
     fn raw(&self) -> String {
         self.hci_info.format_raw()
     }
