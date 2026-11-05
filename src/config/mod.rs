@@ -343,27 +343,7 @@ impl GlobalConfig {
 
     /// [`Self::update`] against an explicit file path.
     fn update_at(path: &Path, f: impl FnOnce(&mut Self)) -> anyhow::Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating config directory {}", parent.display()))?;
-        }
-
-        // Open or create the file and hold an exclusive lock for the entire
-        // read-modify-write cycle.
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)
-            .with_context(|| format!("opening {}", path.display()))?;
-
-        file.lock()
-            .with_context(|| format!("locking {}", path.display()))?;
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let (mut file, contents) = open_locked_for_update(path)?;
 
         let mut config = Self::parse_contents(&contents).with_context(|| {
             format!(
@@ -385,13 +365,7 @@ impl GlobalConfig {
         }
 
         let json = serde_json::to_string_pretty(&config).context("serializing config")?;
-
-        file.seek(SeekFrom::Start(0))
-            .with_context(|| format!("seeking {}", path.display()))?;
-        file.set_len(0)
-            .with_context(|| format!("truncating {}", path.display()))?;
-        file.write_all(json.as_bytes())
-            .with_context(|| format!("writing {}", path.display()))?;
+        overwrite_locked(&mut file, path, &json)?;
 
         // Lock releases when `file` is dropped here.
         tracing::info!("Updated global config");
@@ -407,6 +381,47 @@ impl GlobalConfig {
             Err(e) => tracing::error!("Failed to update config: {e:#}"),
         }
     }
+}
+
+/// Open (or create) `path` with an exclusive advisory lock and read its
+/// contents, creating the parent directory if needed.
+///
+/// The lock is held until the returned file is dropped, so the caller's
+/// read-modify-write cycle is serialized against other instances.
+fn open_locked_for_update(path: &Path) -> anyhow::Result<(std::fs::File, String)> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating config directory {}", parent.display()))?;
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .with_context(|| format!("opening {}", path.display()))?;
+
+    file.lock()
+        .with_context(|| format!("locking {}", path.display()))?;
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .with_context(|| format!("reading {}", path.display()))?;
+
+    Ok((file, contents))
+}
+
+/// Replace the entire contents of a file returned by
+/// [`open_locked_for_update`] with `json`, keeping the lock held.
+fn overwrite_locked(file: &mut std::fs::File, path: &Path, json: &str) -> anyhow::Result<()> {
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("seeking {}", path.display()))?;
+    file.set_len(0)
+        .with_context(|| format!("truncating {}", path.display()))?;
+    file.write_all(json.as_bytes())
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]
