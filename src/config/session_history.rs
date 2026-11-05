@@ -19,7 +19,7 @@
 use anyhow::Context as _;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Maximum number of sessions to remember
@@ -272,25 +272,7 @@ impl SessionHistory {
 
     /// [`Self::update`] against an explicit file path.
     fn update_at(path: &Path, f: impl FnOnce(&mut Self)) -> anyhow::Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating config directory {}", parent.display()))?;
-        }
-
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)
-            .with_context(|| format!("opening {}", path.display()))?;
-
-        file.lock()
-            .with_context(|| format!("locking {}", path.display()))?;
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let (mut file, contents) = super::open_locked_for_update(path)?;
 
         let mut history = Self::parse_contents(&contents).with_context(|| {
             format!(
@@ -309,13 +291,7 @@ impl SessionHistory {
         }
 
         let json = serde_json::to_string_pretty(&history).context("serializing session history")?;
-
-        file.seek(SeekFrom::Start(0))
-            .with_context(|| format!("seeking {}", path.display()))?;
-        file.set_len(0)
-            .with_context(|| format!("truncating {}", path.display()))?;
-        file.write_all(json.as_bytes())
-            .with_context(|| format!("writing {}", path.display()))?;
+        super::overwrite_locked(&mut file, path, &json)?;
 
         // Lock releases when file is dropped
         Ok(history)
