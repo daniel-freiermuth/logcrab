@@ -283,26 +283,32 @@ impl LogCrabApp {
         }
     }
 
-    /// Show file dialog and load selected file
-    fn open_file_dialog(&mut self) {
+    /// Show the log file picker, starting in the last used directory.
+    /// Remembers the directory of the first picked file.
+    fn pick_log_files(&mut self) -> Option<Vec<PathBuf>> {
         let mut dialog = rfd::FileDialog::new()
             .add_filter("Log Files", &all_file_extensions())
             .add_filter("All Files", &["*"]);
 
-        if let Some(ref dir) = self.global_config.last_log_directory {
+        if let Some(dir) = &self.global_config.last_log_directory {
             dialog = dialog.set_directory(dir);
         }
 
-        if let Some(paths) = dialog.pick_files() {
-            if let Some(first) = paths.first()
-                && let Some(parent) = first.parent()
-            {
-                let dir = parent.to_path_buf();
-                GlobalConfig::update_and_apply(&mut self.global_config, |c| {
-                    c.last_log_directory = Some(dir);
-                });
-            }
+        let paths = dialog.pick_files()?;
+        if let Some(first) = paths.first()
+            && let Some(parent) = first.parent()
+        {
+            let dir = parent.to_path_buf();
+            GlobalConfig::update_and_apply(&mut self.global_config, |c| {
+                c.last_log_directory = Some(dir);
+            });
+        }
+        Some(paths)
+    }
 
+    /// Show file dialog and load selected file
+    fn open_file_dialog(&mut self) {
+        if let Some(paths) = self.pick_log_files() {
             // Check if any of the selected files belong to a previous session
             if !self.check_session_offer(paths.clone()) {
                 self.open_files_as_new_session(paths);
@@ -312,25 +318,7 @@ impl LogCrabApp {
 
     /// Show file dialog and add selected file(s) to the current workspace
     fn add_file_dialog(&mut self) {
-        let mut dialog = rfd::FileDialog::new()
-            .add_filter("Log Files", &all_file_extensions())
-            .add_filter("All Files", &["*"]);
-
-        if let Some(ref dir) = self.global_config.last_log_directory {
-            dialog = dialog.set_directory(dir);
-        }
-
-        if let Some(paths) = dialog.pick_files() {
-            // Remember the directory from the first file
-            if let Some(first) = paths.first()
-                && let Some(parent) = first.parent()
-            {
-                let dir = parent.to_path_buf();
-                GlobalConfig::update_and_apply(&mut self.global_config, |c| {
-                    c.last_log_directory = Some(dir);
-                });
-            }
-
+        if let Some(paths) = self.pick_log_files() {
             // Check if any of the added files belong to a previous session
             if !self.check_session_offer(paths.clone()) {
                 for path in paths {
