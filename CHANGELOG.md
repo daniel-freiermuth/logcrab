@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ctrl+Q quits LogCrab (eframe default quit shortcut).
 - Success toasts are dismissed by clicking them; error toasts keep their "Got it" button.
 
+### Fixed
+
+- Filters and exclude patterns no longer change their matches when a source's
+  time is calibrated; they ignore the time-offset prefix shown before messages.
+
 ## [1.3.0] - 2026-09-01
 
 ### Added

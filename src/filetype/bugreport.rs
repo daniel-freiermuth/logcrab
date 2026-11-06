@@ -365,6 +365,13 @@ impl LineType for BugreportLogLine {
         }
     }
 
+    fn search_message(&self, _config: &(), _file_state: &BugreportFileState) -> String {
+        match self {
+            Self::Logcat(l) => l.message_text().to_owned(),
+            Self::Dmesg(l) => l.message(),
+        }
+    }
+
     fn raw(&self) -> String {
         match self {
             Self::Logcat(l) => l.raw(),

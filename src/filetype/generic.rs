@@ -88,6 +88,10 @@ impl LineType for GenericLogLine {
         }
     }
 
+    fn search_message(&self, _config: &(), _file_state: &GenericFileState) -> String {
+        self.message_text.clone()
+    }
+
     fn raw(&self) -> String {
         self.raw_line.clone()
     }

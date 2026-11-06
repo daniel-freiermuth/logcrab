@@ -33,6 +33,87 @@ impl PcapLogLine {
             line_number,
         }
     }
+
+    /// Applies the content overlays shared by `display_message` and `search_message`:
+    /// optional MAC-address prefix and decoded SOME/IP(-SD) suffixes.
+    fn with_overlays(
+        &self,
+        base_msg: String,
+        config: &PcapConfig,
+        file_state: &PcapFileState,
+    ) -> String {
+        // Prepend MAC addresses if the setting is enabled.
+        let base_msg = if config.show_mac_addresses {
+            let pi = &self.packet_info;
+            match (&pi.src_mac, &pi.dst_mac) {
+                (Some(smac), Some(dmac)) => format!("{smac} \u{2192} {dmac} | {base_msg}"),
+                _ => base_msg,
+            }
+        } else {
+            base_msg
+        };
+
+        let pi = &self.packet_info;
+
+        // 1. Auto-decode SOME/IP-SD on well-known SD port (30490)
+        if pi.protocol == "UDP"
+            && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
+        {
+            if let Some(ref payload) = pi.transport_payload {
+                if let Some(sd_info) = decode_someip_sd(payload) {
+                    // Lazily register discovered endpoints
+                    file_state.add_someip_endpoints(&sd_info.endpoints);
+                    let entries_str = if sd_info.entries.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", sd_info.entries.join(", "))
+                    };
+                    return format!(
+                        "{} [SOME/IP-SD {}{}]",
+                        base_msg, sd_info.message_type, entries_str
+                    );
+                }
+            }
+        }
+
+        // 2. Legacy per-multicast toggle (backward compat)
+        if let Some(key) = pi.multicast_key() {
+            if file_state.is_someip_sd_active(&key) {
+                if let Some(ref payload) = pi.transport_payload {
+                    if let Some(sd_info) = decode_someip_sd(payload) {
+                        file_state.add_someip_endpoints(&sd_info.endpoints);
+                        let entries_str = if sd_info.entries.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" {}", sd_info.entries.join(", "))
+                        };
+                        return format!(
+                            "{} [SOME/IP-SD {}{}]",
+                            base_msg, sd_info.message_type, entries_str
+                        );
+                    }
+                }
+            }
+        }
+
+        // 3. Auto-decode SOME/IP on known endpoints discovered from SD
+        if let Some(ref payload) = pi.transport_payload {
+            let proto = &pi.protocol;
+            let is_known_src = pi
+                .src_port
+                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.src_addr, p));
+            let is_known_dst = pi
+                .dst_port
+                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.dst_addr, p));
+            if is_known_src || is_known_dst {
+                if let Some(someip_str) = decode_someip(payload) {
+                    return format!("{base_msg} [SOME/IP {someip_str}]");
+                }
+            }
+        }
+
+        base_msg
+    }
 }
 
 // ============================================================================
@@ -258,77 +339,11 @@ impl LineType for PcapLogLine {
             self.packet_info.format_message()
         };
 
-        // Prepend MAC addresses if the setting is enabled.
-        let base_msg = if config.show_mac_addresses {
-            let pi = &self.packet_info;
-            match (&pi.src_mac, &pi.dst_mac) {
-                (Some(smac), Some(dmac)) => format!("{smac} \u{2192} {dmac} | {base_msg}"),
-                _ => base_msg,
-            }
-        } else {
-            base_msg
-        };
+        self.with_overlays(base_msg, config, file_state)
+    }
 
-        let pi = &self.packet_info;
-
-        // 1. Auto-decode SOME/IP-SD on well-known SD port (30490)
-        if pi.protocol == "UDP"
-            && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
-        {
-            if let Some(ref payload) = pi.transport_payload {
-                if let Some(sd_info) = decode_someip_sd(payload) {
-                    // Lazily register discovered endpoints
-                    file_state.add_someip_endpoints(&sd_info.endpoints);
-                    let entries_str = if sd_info.entries.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {}", sd_info.entries.join(", "))
-                    };
-                    return format!(
-                        "{} [SOME/IP-SD {}{}]",
-                        base_msg, sd_info.message_type, entries_str
-                    );
-                }
-            }
-        }
-
-        // 2. Legacy per-multicast toggle (backward compat)
-        if let Some(key) = pi.multicast_key() {
-            if file_state.is_someip_sd_active(&key) {
-                if let Some(ref payload) = pi.transport_payload {
-                    if let Some(sd_info) = decode_someip_sd(payload) {
-                        file_state.add_someip_endpoints(&sd_info.endpoints);
-                        let entries_str = if sd_info.entries.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" {}", sd_info.entries.join(", "))
-                        };
-                        return format!(
-                            "{} [SOME/IP-SD {}{}]",
-                            base_msg, sd_info.message_type, entries_str
-                        );
-                    }
-                }
-            }
-        }
-
-        // 3. Auto-decode SOME/IP on known endpoints discovered from SD
-        if let Some(ref payload) = pi.transport_payload {
-            let proto = &pi.protocol;
-            let is_known_src = pi
-                .src_port
-                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.src_addr, p));
-            let is_known_dst = pi
-                .dst_port
-                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.dst_addr, p));
-            if is_known_src || is_known_dst {
-                if let Some(someip_str) = decode_someip(payload) {
-                    return format!("{base_msg} [SOME/IP {someip_str}]");
-                }
-            }
-        }
-
-        base_msg
+    fn search_message(&self, config: &PcapConfig, file_state: &PcapFileState) -> String {
+        self.with_overlays(self.packet_info.format_message(), config, file_state)
     }
 
     fn raw(&self) -> String {
