@@ -22,9 +22,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install --yes protobuf-compiler
-
       - uses: taiki-e/install-action@just
 
       - name: Run checks
