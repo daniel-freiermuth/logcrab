@@ -6,8 +6,10 @@ use egui::Ui;
 use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::{LegacyPcapReader, PcapBlockOwned, PcapError, PcapNGReader};
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
+use std::net::IpAddr;
 use std::path::Path;
 
 use crate::filetype::{BinaryFileType, InputFileType, LineType};
@@ -53,8 +55,8 @@ pub struct PcapFileState {
     inner: crate::filetype::SimpleFileState,
     /// Set of multicast address:port combinations that should decode SOME/IP SD
     someip_sd_decodings: std::sync::Mutex<HashSet<String>>,
-    /// Known SOME/IP endpoints discovered from SD messages (format: "TCP:ip:port" or "UDP:ip:port")
-    someip_known_endpoints: std::sync::Mutex<HashSet<String>>,
+    /// Known SOME/IP endpoints discovered from SD messages
+    someip_known_endpoints: std::sync::Mutex<HashSet<SomeIpEndpoint>>,
 }
 
 #[allow(
@@ -103,17 +105,15 @@ impl PcapFileState {
             .someip_known_endpoints
             .lock()
             .expect("someip_known_endpoints lock poisoned");
-        for ep in endpoints {
-            known.insert(ep.key());
-        }
+        known.extend(endpoints.iter().copied());
     }
 
-    /// Check if a given address:port is a known SOME/IP endpoint
-    pub fn is_known_someip_endpoint(&self, proto: &str, addr: &str, port: u16) -> bool {
+    /// Check if a given transport endpoint is a known SOME/IP endpoint
+    pub fn is_known_someip_endpoint(&self, endpoint: SomeIpEndpoint) -> bool {
         self.someip_known_endpoints
             .lock()
             .expect("someip_known_endpoints lock poisoned")
-            .contains(&format!("{proto}:{addr}:{port}"))
+            .contains(&endpoint)
     }
 }
 
@@ -165,7 +165,7 @@ impl serde::Serialize for PcapFileState {
             .lock()
             .expect("someip_known_endpoints lock poisoned")
             .iter()
-            .cloned()
+            .map(ToString::to_string)
             .collect();
         state.serialize_field("someip_known_endpoints", &endpoints)?;
         state.end()
@@ -191,7 +191,18 @@ impl<'de> serde::Deserialize<'de> for PcapFileState {
             },
             someip_sd_decodings: std::sync::Mutex::new(h.someip_sd_decodings.into_iter().collect()),
             someip_known_endpoints: std::sync::Mutex::new(
-                h.someip_known_endpoints.into_iter().collect(),
+                h.someip_known_endpoints
+                    .iter()
+                    .filter_map(|s| {
+                        let endpoint = SomeIpEndpoint::from_persisted(s);
+                        if endpoint.is_none() {
+                            // Older versions also persisted endpoints with an unknown
+                            // transport ("?:addr:port"); those could never match a packet.
+                            tracing::debug!("Dropping unparseable SOME/IP endpoint {s:?}");
+                        }
+                        endpoint
+                    })
+                    .collect(),
             ),
         })
     }
@@ -272,7 +283,7 @@ impl LineType for PcapLogLine {
         let pi = &self.packet_info;
 
         // 1. Auto-decode SOME/IP-SD on well-known SD port (30490)
-        if pi.protocol == "UDP"
+        if pi.protocol == PacketProtocol::Udp
             && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
         {
             if let Some(ref payload) = pi.transport_payload {
@@ -313,15 +324,22 @@ impl LineType for PcapLogLine {
         }
 
         // 3. Auto-decode SOME/IP on known endpoints discovered from SD
-        if let Some(ref payload) = pi.transport_payload {
-            let proto = &pi.protocol;
-            let is_known_src = pi
-                .src_port
-                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.src_addr, p));
-            let is_known_dst = pi
-                .dst_port
-                .is_some_and(|p| file_state.is_known_someip_endpoint(proto, &pi.dst_addr, p));
-            if is_known_src || is_known_dst {
+        if let Some(payload) = &pi.transport_payload {
+            let is_known = |addr: Option<IpAddr>, port: Option<u16>| match (
+                pi.protocol.transport(),
+                addr,
+                port,
+            ) {
+                (Some(protocol), Some(addr), Some(port)) => {
+                    file_state.is_known_someip_endpoint(SomeIpEndpoint {
+                        protocol,
+                        addr,
+                        port,
+                    })
+                }
+                _ => false,
+            };
+            if is_known(pi.src_ip, pi.src_port) || is_known(pi.dst_ip, pi.dst_port) {
                 if let Some(someip_str) = decode_someip(payload) {
                     return format!("{base_msg} [SOME/IP {someip_str}]");
                 }
@@ -435,19 +453,105 @@ impl BinaryFileType for PcapFileType {
 // Pcap parsing utilities (moved from parser/pcap.rs)
 // ============================================================================
 
+/// Transport-layer protocol carrying a SOME/IP endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransportProto {
+    Tcp,
+    Udp,
+}
+
+impl TransportProto {
+    /// Label used in messages and in persisted endpoint keys.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tcp => "TCP",
+            Self::Udp => "UDP",
+        }
+    }
+
+    fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "TCP" => Some(Self::Tcp),
+            "UDP" => Some(Self::Udp),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for TransportProto {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// Protocol of a captured packet, displayed as the first column of its message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacketProtocol {
+    Arp,
+    /// Unrecognized ethertype
+    EtherType(u16),
+    Icmp,
+    Icmpv6,
+    Tcp,
+    Udp,
+    /// Unrecognized IPv4 protocol number
+    Ipv4Other(u8),
+    /// Unrecognized IPv6 next-header value
+    Ipv6Other(u8),
+}
+
+impl PacketProtocol {
+    /// The transport protocol, if this is a TCP or UDP packet.
+    #[must_use]
+    pub const fn transport(self) -> Option<TransportProto> {
+        match self {
+            Self::Tcp => Some(TransportProto::Tcp),
+            Self::Udp => Some(TransportProto::Udp),
+            Self::Arp
+            | Self::EtherType(_)
+            | Self::Icmp
+            | Self::Icmpv6
+            | Self::Ipv4Other(_)
+            | Self::Ipv6Other(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for PacketProtocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Arp => f.write_str("ARP"),
+            Self::EtherType(ethertype) => write!(f, "0x{ethertype:04x}"),
+            Self::Icmp => f.write_str("ICMP"),
+            Self::Icmpv6 => f.write_str("ICMPv6"),
+            Self::Tcp => f.write_str(TransportProto::Tcp.label()),
+            Self::Udp => f.write_str(TransportProto::Udp.label()),
+            Self::Ipv4Other(protocol) => write!(f, "IP/{protocol}"),
+            Self::Ipv6Other(next_header) => write!(f, "IPv6/{next_header}"),
+        }
+    }
+}
+
 /// Represents a parsed network packet for display
 #[derive(Debug, Clone)]
 pub struct PacketInfo {
     pub timestamp: DateTime<Local>,
+    /// Display form of the source: the IP address, or the MAC for non-IP frames.
     pub src_addr: String,
+    /// Source IP address; `None` for non-IP frames.
+    pub src_ip: Option<IpAddr>,
     pub src_port: Option<u16>,
+    /// Display form of the destination: the IP address, or the MAC for non-IP frames.
     pub dst_addr: String,
+    /// Destination IP address; `None` for non-IP frames.
+    pub dst_ip: Option<IpAddr>,
     pub dst_port: Option<u16>,
     /// Ethernet source MAC address (e.g. `"aa:bb:cc:dd:ee:ff"`), if available.
     pub src_mac: Option<String>,
     /// Ethernet destination MAC address, if available.
     pub dst_mac: Option<String>,
-    pub protocol: String,
+    pub protocol: PacketProtocol,
     pub vlan_id: Option<u16>,
     pub length: u32,
     pub info: String,
@@ -470,13 +574,13 @@ impl PacketInfo {
     /// Check if the destination address is multicast
     #[must_use]
     pub fn is_multicast(&self) -> bool {
-        is_multicast_address(&self.dst_addr)
+        self.dst_ip.is_some_and(|ip| ip.is_multicast())
     }
 
     /// Get the multicast key for tracking SOME/IP SD decodings
     #[must_use]
     pub fn multicast_key(&self) -> Option<String> {
-        if self.is_multicast() && self.protocol == "UDP" {
+        if self.is_multicast() && self.protocol == PacketProtocol::Udp {
             self.dst_port
                 .map(|port| format!("{}:{}", self.dst_addr, port))
         } else {
@@ -799,34 +903,34 @@ impl TcpFlowTracker {
 }
 
 // ============================================================================
-// Multicast Detection
-// ============================================================================
-
-/// Check if an IP address is multicast
-fn is_multicast_address(addr: &str) -> bool {
-    if let Ok(ip) = addr.parse::<std::net::IpAddr>() {
-        return ip.is_multicast();
-    }
-    false
-}
-
-// ============================================================================
 // SOME/IP Decoder
 // ============================================================================
 
-/// A discovered SOME/IP endpoint (address + port + transport protocol)
-#[derive(Debug, Clone)]
+/// A discovered SOME/IP endpoint (transport protocol + address + port)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SomeIpEndpoint {
-    pub addr: String,
+    pub protocol: TransportProto,
+    pub addr: IpAddr,
     pub port: u16,
-    pub protocol: &'static str, // "TCP" or "UDP"
 }
 
 impl SomeIpEndpoint {
-    /// Key format used for `HashSet` lookups: "TCP:10.0.0.1:30000"
-    #[must_use]
-    pub fn key(&self) -> String {
-        format!("{}:{}:{}", self.protocol, self.addr, self.port)
+    /// Parse the persisted form written by `Display`, e.g. `"UDP:fe80::1:30501"`.
+    fn from_persisted(s: &str) -> Option<Self> {
+        let (protocol, rest) = s.split_once(':')?;
+        let (addr, port) = rest.rsplit_once(':')?;
+        Some(Self {
+            protocol: TransportProto::from_label(protocol)?,
+            addr: addr.parse().ok()?,
+            port: port.parse().ok()?,
+        })
+    }
+}
+
+/// Persisted form: `"{protocol}:{addr}:{port}"`, e.g. `"TCP:10.0.0.1:30000"`.
+impl fmt::Display for SomeIpEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.protocol, self.addr, self.port)
     }
 }
 
@@ -883,29 +987,45 @@ fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
     }
 
     /// Extract `SomeIpEndpoint` objects from a slice of SD option slices.
+    ///
+    /// Endpoints with a transport other than TCP/UDP are skipped: no parsed
+    /// packet can ever match them.
     fn extract_endpoints(opts: &[SdOptionSlice]) -> Vec<SomeIpEndpoint> {
+        const fn endpoint(addr: IpAddr, port: u16, p: TransportProtocol) -> Option<SomeIpEndpoint> {
+            let protocol = match p {
+                TransportProtocol::Tcp => TransportProto::Tcp,
+                TransportProtocol::Udp => TransportProto::Udp,
+                TransportProtocol::Generic(_) => return None,
+            };
+            Some(SomeIpEndpoint {
+                protocol,
+                addr,
+                port,
+            })
+        }
+
         opts.iter()
             .filter_map(|opt| match opt {
-                SdOptionSlice::Ipv4Endpoint(e) => Some(SomeIpEndpoint {
-                    addr: Ipv4Addr::from(e.ipv4_address()).to_string(),
-                    port: e.port(),
-                    protocol: proto_str(e.transport_protocol()),
-                }),
-                SdOptionSlice::Ipv6Endpoint(e) => Some(SomeIpEndpoint {
-                    addr: Ipv6Addr::from(e.ipv6_address()).to_string(),
-                    port: e.port(),
-                    protocol: proto_str(e.transport_protocol()),
-                }),
-                SdOptionSlice::Ipv4Multicast(e) => Some(SomeIpEndpoint {
-                    addr: Ipv4Addr::from(e.ipv4_address()).to_string(),
-                    port: e.port(),
-                    protocol: proto_str(e.transport_protocol()),
-                }),
-                SdOptionSlice::Ipv6Multicast(e) => Some(SomeIpEndpoint {
-                    addr: Ipv6Addr::from(e.ipv6_address()).to_string(),
-                    port: e.port(),
-                    protocol: proto_str(e.transport_protocol()),
-                }),
+                SdOptionSlice::Ipv4Endpoint(e) => endpoint(
+                    Ipv4Addr::from(e.ipv4_address()).into(),
+                    e.port(),
+                    e.transport_protocol(),
+                ),
+                SdOptionSlice::Ipv6Endpoint(e) => endpoint(
+                    Ipv6Addr::from(e.ipv6_address()).into(),
+                    e.port(),
+                    e.transport_protocol(),
+                ),
+                SdOptionSlice::Ipv4Multicast(e) => endpoint(
+                    Ipv4Addr::from(e.ipv4_address()).into(),
+                    e.port(),
+                    e.transport_protocol(),
+                ),
+                SdOptionSlice::Ipv6Multicast(e) => endpoint(
+                    Ipv6Addr::from(e.ipv6_address()).into(),
+                    e.port(),
+                    e.transport_protocol(),
+                ),
                 SdOptionSlice::Configuration(_)
                 | SdOptionSlice::LoadBalancing(_)
                 | SdOptionSlice::Ipv4SdEndpoint(_)
@@ -1085,7 +1205,7 @@ fn pre_discover_someip_endpoints(lines: &[PcapLogLine], file_state: &PcapFileSta
     let mut endpoints = Vec::new();
     for line in lines {
         let pi = &line.packet_info;
-        if pi.protocol == "UDP"
+        if pi.protocol == PacketProtocol::Udp
             && (pi.src_port == Some(SOMEIP_SD_PORT) || pi.dst_port == Some(SOMEIP_SD_PORT))
         {
             if let Some(ref payload) = pi.transport_payload {
@@ -1142,12 +1262,14 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
             timestamp,
             // For ARP the "addresses" are the MACs themselves; no separate MAC field.
             src_addr: src_mac,
+            src_ip: None,
             src_port: None,
             dst_addr: dst_mac,
+            dst_ip: None,
             dst_port: None,
             src_mac: None,
             dst_mac: None,
-            protocol: "ARP".to_string(),
+            protocol: PacketProtocol::Arp,
             vlan_id,
             length: data.len() as u32,
             info: "ARP Request/Reply".to_string(),
@@ -1158,12 +1280,14 @@ fn parse_packet_data(data: &[u8], timestamp: DateTime<Local>) -> Option<PacketIn
         _ => Some(PacketInfo {
             timestamp,
             src_addr: src_mac,
+            src_ip: None,
             src_port: None,
             dst_addr: dst_mac,
+            dst_ip: None,
             dst_port: None,
             src_mac: None,
             dst_mac: None,
-            protocol: format!("0x{ethertype:04x}"),
+            protocol: PacketProtocol::EtherType(ethertype),
             vlan_id,
             length: data.len() as u32,
             info: String::new(),
@@ -1199,21 +1323,21 @@ fn parse_ipv4_packet(
         return None;
     }
     let protocol = data[9];
-    let src_ip = format!("{}.{}.{}.{}", data[12], data[13], data[14], data[15]);
-    let dst_ip = format!("{}.{}.{}.{}", data[16], data[17], data[18], data[19]);
+    let src_ip = IpAddr::from([data[12], data[13], data[14], data[15]]);
+    let dst_ip = IpAddr::from([data[16], data[17], data[18], data[19]]);
     let total_len = u16::from_be_bytes([data[2], data[3]]);
     let transport_data = &data[ihl..];
-    let (proto_name, src_port, dst_port, info, tcp_details, transport_payload) = match protocol {
+    let (protocol, src_port, dst_port, info, tcp_details, transport_payload) = match protocol {
         6 => {
-            let (p, sp, dp, i, td, payload) = parse_tcp_info(transport_data);
-            (p, sp, dp, i, td, payload)
+            let (sp, dp, i, td, payload) = parse_tcp_info(transport_data);
+            (PacketProtocol::Tcp, sp, dp, i, td, payload)
         }
         17 => {
-            let (p, sp, dp, i, payload) = parse_udp_info(transport_data);
-            (p, sp, dp, i, None, payload)
+            let (sp, dp, i, payload) = parse_udp_info(transport_data);
+            (PacketProtocol::Udp, sp, dp, i, None, payload)
         }
         1 => (
-            "ICMP".to_string(),
+            PacketProtocol::Icmp,
             None,
             None,
             parse_icmp_info(transport_data),
@@ -1221,7 +1345,7 @@ fn parse_ipv4_packet(
             None,
         ),
         _ => (
-            format!("IP/{protocol}"),
+            PacketProtocol::Ipv4Other(protocol),
             None,
             None,
             String::new(),
@@ -1234,13 +1358,15 @@ fn parse_ipv4_packet(
         .is_some_and(|tcp| tcp.flags & 0x04 != 0);
     Some(PacketInfo {
         timestamp,
-        src_addr: src_ip,
+        src_addr: src_ip.to_string(),
+        src_ip: Some(src_ip),
         src_port,
-        dst_addr: dst_ip,
+        dst_addr: dst_ip.to_string(),
+        dst_ip: Some(dst_ip),
         dst_port,
         src_mac: None,
         dst_mac: None,
-        protocol: proto_name,
+        protocol,
         vlan_id,
         length: u32::from(total_len),
         info,
@@ -1261,21 +1387,28 @@ fn parse_ipv6_packet(
     }
     let next_header = data[6];
     let payload_len = u16::from_be_bytes([data[4], data[5]]);
-    let src_ip = format_ipv6(&data[8..24]);
-    let dst_ip = format_ipv6(&data[24..40]);
+    let src_ip = IpAddr::from(<[u8; 16]>::try_from(&data[8..24]).ok()?);
+    let dst_ip = IpAddr::from(<[u8; 16]>::try_from(&data[24..40]).ok()?);
     let transport_data = &data[40..];
-    let (proto_name, src_port, dst_port, info, tcp_details, transport_payload) = match next_header {
+    let (protocol, src_port, dst_port, info, tcp_details, transport_payload) = match next_header {
         6 => {
-            let (p, sp, dp, i, td, payload) = parse_tcp_info(transport_data);
-            (p, sp, dp, i, td, payload)
+            let (sp, dp, i, td, payload) = parse_tcp_info(transport_data);
+            (PacketProtocol::Tcp, sp, dp, i, td, payload)
         }
         17 => {
-            let (p, sp, dp, i, payload) = parse_udp_info(transport_data);
-            (p, sp, dp, i, None, payload)
+            let (sp, dp, i, payload) = parse_udp_info(transport_data);
+            (PacketProtocol::Udp, sp, dp, i, None, payload)
         }
-        58 => ("ICMPv6".to_string(), None, None, String::new(), None, None),
+        58 => (
+            PacketProtocol::Icmpv6,
+            None,
+            None,
+            String::new(),
+            None,
+            None,
+        ),
         _ => (
-            format!("IPv6/{next_header}"),
+            PacketProtocol::Ipv6Other(next_header),
             None,
             None,
             String::new(),
@@ -1288,13 +1421,15 @@ fn parse_ipv6_packet(
         .is_some_and(|tcp| tcp.flags & 0x04 != 0);
     Some(PacketInfo {
         timestamp,
-        src_addr: src_ip,
+        src_addr: src_ip.to_string(),
+        src_ip: Some(src_ip),
         src_port,
-        dst_addr: dst_ip,
+        dst_addr: dst_ip.to_string(),
+        dst_ip: Some(dst_ip),
         dst_port,
         src_mac: None,
         dst_mac: None,
-        protocol: proto_name,
+        protocol,
         vlan_id,
         length: u32::from(payload_len) + 40,
         info,
@@ -1304,28 +1439,13 @@ fn parse_ipv6_packet(
     })
 }
 
-fn format_ipv6(bytes: &[u8]) -> String {
-    if bytes.len() >= 16 {
-        let groups: Vec<String> = (0..8)
-            .map(|i| {
-                let val = u16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-                format!("{val:x}")
-            })
-            .collect();
-        groups.join(":")
-    } else {
-        "::".to_string()
-    }
-}
-
 #[allow(
     clippy::type_complexity,
-    reason = "the tuple is private and immediately destructured by its sole caller"
+    reason = "the tuple is private and immediately destructured by its callers"
 )]
 fn parse_tcp_info(
     data: &[u8],
 ) -> (
-    String,
     Option<u16>,
     Option<u16>,
     String,
@@ -1333,7 +1453,7 @@ fn parse_tcp_info(
     Option<Vec<u8>>,
 ) {
     if data.len() < 20 {
-        return ("TCP".to_string(), None, None, String::new(), None, None);
+        return (None, None, String::new(), None, None);
     }
     let src_port = u16::from_be_bytes([data[0], data[1]]);
     let dst_port = u16::from_be_bytes([data[2], data[3]]);
@@ -1360,7 +1480,6 @@ fn parse_tcp_info(
         payload_len,
     };
     (
-        "TCP".to_string(),
         Some(src_port),
         Some(dst_port),
         String::new(),
@@ -1369,9 +1488,9 @@ fn parse_tcp_info(
     )
 }
 
-fn parse_udp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String, Option<Vec<u8>>) {
+fn parse_udp_info(data: &[u8]) -> (Option<u16>, Option<u16>, String, Option<Vec<u8>>) {
     if data.len() < 8 {
-        return ("UDP".to_string(), None, None, String::new(), None);
+        return (None, None, String::new(), None);
     }
     let src_port = u16::from_be_bytes([data[0], data[1]]);
     let dst_port = u16::from_be_bytes([data[2], data[3]]);
@@ -1380,13 +1499,7 @@ fn parse_udp_info(data: &[u8]) -> (String, Option<u16>, Option<u16>, String, Opt
     } else {
         None
     };
-    (
-        "UDP".to_string(),
-        Some(src_port),
-        Some(dst_port),
-        String::new(),
-        payload,
-    )
+    (Some(src_port), Some(dst_port), String::new(), payload)
 }
 
 fn parse_icmp_info(data: &[u8]) -> String {
@@ -1740,11 +1853,12 @@ mod tests {
         let dst = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
         let frame = eth_frame(src, dst, 0x0806, &[0u8; 28]); // 28-byte ARP payload
         let pi = parse_packet_data(&frame, ts()).expect("ARP should parse");
-        assert_eq!(pi.protocol, "ARP");
+        assert_eq!(pi.protocol, PacketProtocol::Arp);
         // ARP: src_addr/dst_addr are the MACs, src_mac/dst_mac are None
         assert_eq!(pi.src_addr, "00:11:22:33:44:55");
         assert_eq!(pi.dst_addr, "aa:bb:cc:dd:ee:ff");
         assert!(pi.src_mac.is_none());
+        assert!(pi.src_ip.is_none());
         assert!(pi.dst_mac.is_none());
     }
 
@@ -1752,7 +1866,7 @@ mod tests {
     fn parse_packet_data_unknown_ethertype() {
         let frame = eth_frame([0; 6], [0; 6], 0x1234, &[]);
         let pi = parse_packet_data(&frame, ts()).expect("unknown ethertype should still parse");
-        assert_eq!(pi.protocol, "0x1234");
+        assert_eq!(pi.protocol, PacketProtocol::EtherType(0x1234));
     }
 
     // ================================================================
@@ -1770,7 +1884,7 @@ mod tests {
         let frame = vlan_eth_frame([0; 6], [0; 6], 42, 0x0800, &ipv4_tcp);
         let pi = parse_packet_data(&frame, ts()).expect("VLAN frame should parse");
         assert_eq!(pi.vlan_id, Some(42));
-        assert_eq!(pi.protocol, "TCP");
+        assert_eq!(pi.protocol, PacketProtocol::Tcp);
         assert_eq!(pi.src_addr, "10.0.0.1");
     }
 
@@ -1783,7 +1897,7 @@ mod tests {
         // data.len() == 14, which is < 18, so VLAN branch is NOT taken.
         // ethertype stays 0x8100, falls through to the _ arm.
         let pi = parse_packet_data(&frame, ts()).expect("should parse as unknown ethertype");
-        assert_eq!(pi.protocol, "0x8100");
+        assert_eq!(pi.protocol, PacketProtocol::EtherType(0x8100));
         assert!(pi.vlan_id.is_none());
     }
 
@@ -1799,7 +1913,8 @@ mod tests {
         let pi = parse_packet_data(&frame, ts()).expect("IPv4 should parse");
         assert_eq!(pi.src_addr, "192.168.1.10");
         assert_eq!(pi.dst_addr, "192.168.1.20");
-        assert_eq!(pi.protocol, "TCP");
+        assert_eq!(pi.protocol, PacketProtocol::Tcp);
+        assert_eq!(pi.src_ip, Some(IpAddr::from([192, 168, 1, 10])));
         assert_eq!(pi.src_mac.as_deref(), Some("00:00:00:00:00:00"));
         assert_eq!(pi.dst_mac.as_deref(), Some("ff:ff:ff:ff:ff:ff"));
     }
@@ -1827,7 +1942,7 @@ mod tests {
         let ip = ipv4_packet(1, [10, 0, 0, 1], [10, 0, 0, 2], &icmp);
         let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
         let pi = parse_packet_data(&frame, ts()).expect("ICMP should parse");
-        assert_eq!(pi.protocol, "ICMP");
+        assert_eq!(pi.protocol, PacketProtocol::Icmp);
         assert_eq!(pi.info, "Echo Request");
     }
 
@@ -1837,7 +1952,7 @@ mod tests {
         let ip = ipv4_packet(17, [8, 8, 8, 8], [10, 0, 0, 1], &udp);
         let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
         let pi = parse_packet_data(&frame, ts()).expect("UDP should parse");
-        assert_eq!(pi.protocol, "UDP");
+        assert_eq!(pi.protocol, PacketProtocol::Udp);
         assert_eq!(pi.src_port, Some(53));
         assert_eq!(pi.dst_port, Some(12345));
         assert_eq!(
@@ -1851,7 +1966,7 @@ mod tests {
         let ip = ipv4_packet(99, [1, 2, 3, 4], [5, 6, 7, 8], &[]);
         let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
         let pi = parse_packet_data(&frame, ts()).expect("unknown proto should parse");
-        assert_eq!(pi.protocol, "IP/99");
+        assert_eq!(pi.protocol, PacketProtocol::Ipv4Other(99));
     }
 
     #[test]
@@ -1880,9 +1995,13 @@ mod tests {
         ipv6.extend_from_slice(&tcp_seg);
         let frame = eth_frame([0; 6], [0; 6], 0x86DD, &ipv6);
         let pi = parse_packet_data(&frame, ts()).expect("IPv6 should parse");
-        assert_eq!(pi.protocol, "TCP");
-        assert_eq!(pi.src_addr, "0:0:0:0:0:0:0:1");
-        assert_eq!(pi.dst_addr, "0:0:0:0:0:0:0:2");
+        assert_eq!(pi.protocol, PacketProtocol::Tcp);
+        assert_eq!(pi.src_addr, "::1");
+        assert_eq!(pi.dst_addr, "::2");
+        assert_eq!(
+            pi.dst_ip,
+            Some(IpAddr::from(std::net::Ipv6Addr::from(2u128)))
+        );
     }
 
     #[test]
@@ -1899,8 +2018,7 @@ mod tests {
     #[test]
     fn parse_tcp_info_valid_segment() {
         let seg = tcp_segment(8080, 443, 100, 200, 0x12); // SYN+ACK
-        let (proto, sp, dp, _info, details, _payload) = parse_tcp_info(&seg);
-        assert_eq!(proto, "TCP");
+        let (sp, dp, _info, details, _payload) = parse_tcp_info(&seg);
         assert_eq!(sp, Some(8080));
         assert_eq!(dp, Some(443));
         let td = details.expect("should have tcp details");
@@ -1912,8 +2030,7 @@ mod tests {
 
     #[test]
     fn parse_tcp_info_too_short() {
-        let (proto, sp, dp, _, details, _) = parse_tcp_info(&[0u8; 10]);
-        assert_eq!(proto, "TCP");
+        let (sp, dp, _, details, _) = parse_tcp_info(&[0u8; 10]);
         assert!(sp.is_none());
         assert!(dp.is_none());
         assert!(details.is_none());
@@ -1923,7 +2040,7 @@ mod tests {
     fn parse_tcp_info_with_payload() {
         let mut seg = tcp_segment(1, 2, 0, 0, 0x10); // ACK
         seg.extend_from_slice(b"hello");
-        let (_, _, _, _, details, payload) = parse_tcp_info(&seg);
+        let (_, _, _, details, payload) = parse_tcp_info(&seg);
         let td = details.expect("should have tcp details");
         assert_eq!(td.payload_len, 5);
         assert_eq!(payload.as_deref(), Some(b"hello".as_slice()));
@@ -1936,8 +2053,7 @@ mod tests {
     #[test]
     fn parse_udp_info_valid() {
         let udp = udp_datagram(53, 12345, b"data");
-        let (proto, sp, dp, _, payload) = parse_udp_info(&udp);
-        assert_eq!(proto, "UDP");
+        let (sp, dp, _, payload) = parse_udp_info(&udp);
         assert_eq!(sp, Some(53));
         assert_eq!(dp, Some(12345));
         assert_eq!(payload.as_deref(), Some(b"data".as_slice()));
@@ -1945,8 +2061,7 @@ mod tests {
 
     #[test]
     fn parse_udp_info_too_short() {
-        let (proto, sp, dp, _, payload) = parse_udp_info(&[0u8; 4]);
-        assert_eq!(proto, "UDP");
+        let (sp, dp, _, payload) = parse_udp_info(&[0u8; 4]);
         assert!(sp.is_none());
         assert!(dp.is_none());
         assert!(payload.is_none());
@@ -1955,7 +2070,7 @@ mod tests {
     #[test]
     fn parse_udp_info_header_only_no_payload() {
         let udp = udp_datagram(100, 200, &[]);
-        let (_, sp, dp, _, payload) = parse_udp_info(&udp);
+        let (sp, dp, _, payload) = parse_udp_info(&udp);
         assert_eq!(sp, Some(100));
         assert_eq!(dp, Some(200));
         assert!(payload.is_none());
@@ -1992,40 +2107,20 @@ mod tests {
     }
 
     // ================================================================
-    // format_ipv6
+    // multicast_key
     // ================================================================
 
     #[test]
-    fn format_ipv6_loopback() {
-        let mut addr = [0u8; 16];
-        addr[15] = 1;
-        assert_eq!(format_ipv6(&addr), "0:0:0:0:0:0:0:1");
-    }
-
-    #[test]
-    fn format_ipv6_too_short() {
-        assert_eq!(format_ipv6(&[0u8; 8]), "::");
-    }
-
-    // ================================================================
-    // is_multicast_address
-    // ================================================================
-
-    #[test]
-    fn multicast_ipv4() {
-        assert!(is_multicast_address("224.0.0.1"));
-        assert!(is_multicast_address("239.255.255.255"));
-    }
-
-    #[test]
-    fn unicast_ipv4() {
-        assert!(!is_multicast_address("192.168.1.1"));
-        assert!(!is_multicast_address("10.0.0.1"));
-    }
-
-    #[test]
-    fn invalid_addr_not_multicast() {
-        assert!(!is_multicast_address("not-an-ip"));
+    fn multicast_key_only_for_udp_to_multicast_destination() {
+        let parse = |dst: [u8; 4]| {
+            let ip = ipv4_packet(17, [10, 0, 0, 1], dst, &udp_datagram(30490, 30490, &[]));
+            parse_packet_data(&eth_frame([0; 6], [0; 6], 0x0800, &ip), ts()).expect("UDP")
+        };
+        assert_eq!(
+            parse([224, 224, 224, 245]).multicast_key().as_deref(),
+            Some("224.224.224.245:30490")
+        );
+        assert_eq!(parse([10, 0, 0, 2]).multicast_key(), None);
     }
 
     // ================================================================
@@ -2045,12 +2140,14 @@ mod tests {
         PacketInfo {
             timestamp: ts(),
             src_addr: src.to_string(),
+            src_ip: src.parse().ok(),
             src_port: Some(sp),
             dst_addr: dst.to_string(),
+            dst_ip: dst.parse().ok(),
             dst_port: Some(dp),
             src_mac: None,
             dst_mac: None,
-            protocol: "TCP".to_string(),
+            protocol: PacketProtocol::Tcp,
             vlan_id: None,
             length: 54 + payload_len,
             info: String::new(),
@@ -2096,12 +2193,14 @@ mod tests {
         let mut pkt = PacketInfo {
             timestamp: ts(),
             src_addr: "1.1.1.1".to_string(),
+            src_ip: Some(IpAddr::from([1, 1, 1, 1])),
             src_port: Some(80),
             dst_addr: "2.2.2.2".to_string(),
+            dst_ip: Some(IpAddr::from([2, 2, 2, 2])),
             dst_port: Some(1234),
             src_mac: None,
             dst_mac: None,
-            protocol: "TCP".to_string(),
+            protocol: PacketProtocol::Tcp,
             vlan_id: None,
             length: 54,
             info: String::new(),
@@ -2126,12 +2225,14 @@ mod tests {
         let mut pkt = PacketInfo {
             timestamp: ts(),
             src_addr: "1.1.1.1".to_string(),
+            src_ip: Some(IpAddr::from([1, 1, 1, 1])),
             src_port: Some(53),
             dst_addr: "2.2.2.2".to_string(),
+            dst_ip: Some(IpAddr::from([2, 2, 2, 2])),
             dst_port: Some(12345),
             src_mac: None,
             dst_mac: None,
-            protocol: "UDP".to_string(),
+            protocol: PacketProtocol::Udp,
             vlan_id: None,
             length: 100,
             info: String::new(),
@@ -2248,5 +2349,70 @@ mod tests {
             utc_nanos(lines[0].packet_info.timestamp),
             (1_700_000_000, 500_000_000)
         );
+    }
+
+    // ================================================================
+    // SOME/IP known endpoints
+    // ================================================================
+
+    /// SOME/IP request header (svc 0x1234, method 0x0001) with an empty payload.
+    const SOMEIP_REQUEST: [u8; 16] = [0x12, 0x34, 0x00, 0x01, 0, 0, 0, 8, 0, 1, 0, 1, 1, 1, 0, 0];
+
+    #[test]
+    fn someip_decoded_for_known_ipv6_endpoint() {
+        let server = std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let client = std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2);
+        let udp = udp_datagram(40000, 30501, &SOMEIP_REQUEST);
+        let mut ipv6 = vec![0u8; 40];
+        ipv6[0] = 0x60; // version 6
+        ipv6[4..6].copy_from_slice(&(udp.len() as u16).to_be_bytes());
+        ipv6[6] = 17; // next header = UDP
+        ipv6[8..24].copy_from_slice(&client.octets());
+        ipv6[24..40].copy_from_slice(&server.octets());
+        ipv6.extend_from_slice(&udp);
+        let frame = eth_frame([0; 6], [0; 6], 0x86DD, &ipv6);
+        let line = PcapLogLine::new(parse_packet_data(&frame, ts()).expect("IPv6 UDP"), 1);
+
+        let state = PcapFileState::default();
+        let config = PcapConfig::default();
+        assert!(!line.display_message(&config, &state).contains("[SOME/IP "));
+
+        state.add_someip_endpoints(&[SomeIpEndpoint {
+            protocol: TransportProto::Udp,
+            addr: server.into(),
+            port: 30501,
+        }]);
+        let msg = line.display_message(&config, &state);
+        assert!(msg.contains("[SOME/IP REQ svc=0x1234"), "{msg}");
+    }
+
+    #[test]
+    fn known_endpoints_load_from_persisted_strings() {
+        let state: PcapFileState = serde_json::from_str(
+            r#"{"someip_known_endpoints": ["UDP:fe80::1:30501", "TCP:10.0.0.1:30000", "?:10.0.0.2:1"]}"#,
+        )
+        .expect("legacy state should deserialize");
+        let v6 = SomeIpEndpoint {
+            protocol: TransportProto::Udp,
+            addr: "fe80::1".parse().expect("ipv6"),
+            port: 30501,
+        };
+        let v4 = SomeIpEndpoint {
+            protocol: TransportProto::Tcp,
+            addr: IpAddr::from([10, 0, 0, 1]),
+            port: 30000,
+        };
+        assert!(state.is_known_someip_endpoint(v6));
+        assert!(state.is_known_someip_endpoint(v4));
+        assert!(!state.is_known_someip_endpoint(SomeIpEndpoint {
+            protocol: TransportProto::Udp,
+            ..v4
+        }));
+
+        let reloaded: PcapFileState =
+            serde_json::from_str(&serde_json::to_string(&state).expect("serialize"))
+                .expect("round-trip");
+        assert!(reloaded.is_known_someip_endpoint(v6));
+        assert!(reloaded.is_known_someip_endpoint(v4));
     }
 }

@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scrollable views fade out at their edges.
 - Ctrl+Q quits LogCrab (eframe default quit shortcut).
 - Success toasts are dismissed by clicking them; error toasts keep their "Got it" button.
+- PCAP: IPv6 addresses are shown in compressed form (`fe80::1` instead of
+  `fe80:0:0:0:0:0:0:1`).
+
+### Fixed
+
+- PCAP: SOME/IP payloads to/from endpoints announced via SOME/IP-SD are now decoded
+  for IPv6 endpoints, not only IPv4.
 
 ## [1.3.0] - 2026-09-01
 
