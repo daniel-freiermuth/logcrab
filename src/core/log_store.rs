@@ -706,6 +706,32 @@ where
         })
     }
 
+    /// Look up a single line as input for the local heuristic anomaly scorers.
+    ///
+    /// Unlike `get_as_log_line`, `message` is the canonical `LineType::message()`
+    /// rather than `display_message()`, so rarity templates, entropy and keyword
+    /// scores do not depend on UI settings or time calibration (the same text
+    /// `get_sidecar_message` sends to the ML sidecar). Returns `None` when
+    /// `line_index` is out of range.
+    #[allow(clippy::significant_drop_tightening)]
+    pub fn get_scoring_line(&self, line_index: usize) -> Option<LogLine> {
+        let lines = self.lines.read().expect("lines lock poisoned");
+        let config = self.config.read().expect("config lock poisoned");
+        let file_state = &*self.file_state;
+        let line = lines.get(line_index)?;
+        Some(LogLine {
+            timestamp: line.timestamp(&*config, file_state),
+            message: line.message(),
+            raw: line.raw(),
+            line_number: line.line_number(),
+            anomaly_score: 0.0,
+            sidecar_anomaly_score: 0.0,
+            sidecar_score_is_unk: false,
+            sidecar_score_is_rare: false,
+            sidecar_scored: false,
+        })
+    }
+
     /// Returns the canonical sidecar message and timestamp (ms) for a single line.
     ///
     /// Unlike `get_as_log_line`, this calls `LineType::message()` which returns the
