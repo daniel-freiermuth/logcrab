@@ -407,6 +407,13 @@ impl LogCrabApp {
 
     /// Render top menu bar
     fn render_menu_bar(&mut self, ui: &mut egui::Ui) {
+        self.render_file_menu(ui);
+        self.render_view_menu(ui);
+        self.render_help_menu(ui);
+    }
+
+    /// Render the File menu (open, add, recent sessions, remove, export/import filters, sidecar, quit).
+    fn render_file_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("File", |ui| {
             if ui.button("Open Log File...").clicked() {
                 self.open_file_dialog();
@@ -542,7 +549,10 @@ impl LogCrabApp {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
+    }
 
+    /// Render the View menu (tabs, bookmarks, bright mode, file config, ML scoring, dedup).
+    fn render_view_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("View", |ui| {
             if let Some(ref mut log_view) = &mut self.session {
                 if ui.button("Add Filter Tab").clicked() {
@@ -660,7 +670,10 @@ impl LogCrabApp {
                 GlobalConfig::update_and_apply(&mut self.global_config, |c| c.hide_duplicates = new_val);
             }
         });
+    }
 
+    /// Render the Help menu (anomaly explanation, keyboard shortcuts, about).
+    fn render_help_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Help", |ui| {
             if ui.button("Anomaly Score Calculation").clicked() {
                 self.show_anomaly_explanation = true;
