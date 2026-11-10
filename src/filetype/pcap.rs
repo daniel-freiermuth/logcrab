@@ -666,7 +666,8 @@ impl FlowKey {
 
 #[derive(Debug, Clone)]
 struct TcpFlowState {
-    next_seq: u32,
+    /// Next expected sequence number; `None` until data has been seen.
+    next_seq: Option<u32>,
     last_ack: u32,
     dup_ack_count: u8,
     recent_seqs: Vec<(u32, u32)>,
@@ -675,7 +676,7 @@ struct TcpFlowState {
 impl TcpFlowState {
     fn new() -> Self {
         Self {
-            next_seq: 0,
+            next_seq: None,
             last_ack: 0,
             dup_ack_count: 0,
             recent_seqs: Vec::with_capacity(10),
@@ -685,21 +686,18 @@ impl TcpFlowState {
         if payload_len == 0 {
             return false;
         }
-        for (old_seq, old_len) in &self.recent_seqs {
-            if seq == *old_seq && payload_len == *old_len {
-                return true;
-            }
-            if seq < self.next_seq && seq + payload_len > *old_seq {
-                return true;
-            }
-        }
-        false
+        let seq_end = seq.wrapping_add(payload_len);
+        // A retransmission resends bytes already seen in this direction; a late
+        // segment that only fills a gap carries unseen bytes and is not one.
+        self.recent_seqs.iter().any(|&(old_seq, old_len)| {
+            seq_before(seq, old_seq.wrapping_add(old_len)) && seq_before(old_seq, seq_end)
+        })
     }
     const fn is_out_of_order(&self, seq: u32, payload_len: u32) -> bool {
-        if payload_len == 0 || self.next_seq == 0 {
-            return false;
+        match self.next_seq {
+            Some(next_seq) => payload_len > 0 && seq_before(next_seq, seq),
+            None => false,
         }
-        seq > self.next_seq
     }
     fn update(&mut self, seq: u32, ack: u32, payload_len: u32, has_ack_flag: bool) {
         if payload_len > 0 {
@@ -708,8 +706,13 @@ impl TcpFlowState {
                 self.recent_seqs.remove(0);
             }
             let seq_end = seq.wrapping_add(payload_len);
-            if self.next_seq == 0 || seq == self.next_seq {
-                self.next_seq = seq_end;
+            // Track the highest sequence end seen so a single gap does not
+            // flag every later segment.
+            if self
+                .next_seq
+                .is_none_or(|next_seq| seq_before(next_seq, seq_end))
+            {
+                self.next_seq = Some(seq_end);
             }
         }
         if has_ack_flag {
@@ -721,6 +724,11 @@ impl TcpFlowState {
             }
         }
     }
+}
+
+/// Whether TCP sequence number `a` comes before `b`, modulo 2^32 (RFC 1982).
+const fn seq_before(a: u32, b: u32) -> bool {
+    b.wrapping_sub(a).cast_signed() > 0
 }
 
 pub struct TcpFlowTracker {
@@ -2159,6 +2167,126 @@ mod tests {
         let mut pkt3 = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, 100, 0, 0x10, 50);
         tracker.analyze_packet(&mut pkt3);
         assert!(!pkt3.is_abnormal);
+    }
+
+    #[test]
+    fn flow_tracker_resumes_in_order_after_gap() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut analyze = |seq: u32| {
+            let mut pkt = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, seq, 0, 0x10, 50);
+            tracker.analyze_packet(&mut pkt);
+            pkt
+        };
+        assert!(!analyze(100).is_abnormal);
+
+        // Segment 150..200 is missing: the segment after the gap is out-of-order
+        let after_gap = analyze(200);
+        assert!(after_gap.is_abnormal);
+        assert!(after_gap.info.contains("Out-of-Order"));
+
+        // Segments continuing from the one after the gap are in order again
+        let next = analyze(250);
+        assert!(!next.is_abnormal, "unexpected anomaly: {}", next.info);
+        let next = analyze(300);
+        assert!(!next.is_abnormal, "unexpected anomaly: {}", next.info);
+    }
+
+    #[test]
+    fn flow_tracker_late_segment_does_not_stall_flow() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut analyze = |seq: u32| {
+            let mut pkt = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, seq, 0, 0x10, 50);
+            tracker.analyze_packet(&mut pkt);
+            pkt
+        };
+        analyze(100);
+        analyze(200);
+        // The missing segment arrives late: it carries unseen data, so it is
+        // not a retransmission (the gap was already reported on seq 200)
+        let late = analyze(150);
+        assert!(!late.is_abnormal, "unexpected anomaly: {}", late.info);
+
+        let next = analyze(250);
+        assert!(!next.is_abnormal, "unexpected anomaly: {}", next.info);
+        let next = analyze(300);
+        assert!(!next.is_abnormal, "unexpected anomaly: {}", next.info);
+    }
+
+    #[test]
+    fn flow_tracker_detects_retransmission_across_seq_wrap() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut analyze = |seq: u32, len: u32| {
+            let mut pkt = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, seq, 0, 0x10, len);
+            tracker.analyze_packet(&mut pkt);
+            pkt
+        };
+        analyze(0xFFFF_F000, 0x100);
+        analyze(0xFFFF_F800, 0x100);
+        // Coalesced retransmission filling the gap, covering 0xFFFF_F800 and
+        // ending past the 2^32 wrap
+        let retx = analyze(0xFFFF_F100, 0x1000);
+        assert!(retx.info.contains("Retransmission"), "info: {}", retx.info);
+    }
+
+    #[test]
+    fn flow_tracker_flags_gap_across_seq_wrap() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut analyze = |seq: u32, len: u32| {
+            let mut pkt = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, seq, 0, 0x10, len);
+            tracker.analyze_packet(&mut pkt);
+            pkt
+        };
+        assert!(!analyze(0xFFFF_FF00, 0x80).is_abnormal);
+
+        // 0xFFFF_FF80..0 is missing: the segment past the gap is out-of-order
+        let after_gap = analyze(0, 0x100);
+        assert!(
+            after_gap.info.contains("Out-of-Order"),
+            "info: {}",
+            after_gap.info
+        );
+
+        // The late fill from before the wrap and the next in-order segment are not
+        let late = analyze(0xFFFF_FF80, 0x80);
+        assert!(!late.is_abnormal, "unexpected anomaly: {}", late.info);
+        let next = analyze(0x100, 0x100);
+        assert!(!next.is_abnormal, "unexpected anomaly: {}", next.info);
+    }
+
+    #[test]
+    fn flow_tracker_retransmission_does_not_rewind_next_seq_at_zero() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut analyze = |seq: u32, len: u32| {
+            let mut pkt = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, seq, 0, 0x10, len);
+            tracker.analyze_packet(&mut pkt);
+            pkt
+        };
+        analyze(0xFFFF_FE00, 0x100);
+        // Ends exactly at the 2^32 wrap: the next expected sequence number is 0
+        analyze(0xFFFF_FF00, 0x100);
+        let retx = analyze(0xFFFF_FE00, 0x100);
+        assert!(retx.info.contains("Retransmission"), "info: {}", retx.info);
+
+        let next = analyze(0, 0x100);
+        assert!(!next.is_abnormal, "unexpected anomaly: {}", next.info);
+    }
+
+    #[test]
+    fn flow_tracker_flags_gap_when_next_seq_is_zero() {
+        let mut tracker = TcpFlowTracker::new();
+        let mut analyze = |seq: u32, len: u32| {
+            let mut pkt = make_tcp_packet("1.1.1.1", 80, "2.2.2.2", 1234, seq, 0, 0x10, len);
+            tracker.analyze_packet(&mut pkt);
+            pkt
+        };
+        analyze(0xFFFF_FF00, 0x100);
+        // 0..0x100 is missing
+        let after_gap = analyze(0x100, 0x100);
+        assert!(
+            after_gap.info.contains("Out-of-Order"),
+            "info: {}",
+            after_gap.info
+        );
     }
 
     // ================================================================
