@@ -26,17 +26,17 @@ const fn get_rfcomm_frame_type(control: u8) -> &'static str {
 const fn get_rfcomm_mux_cmd(cmd_type: u8) -> &'static str {
     let cmd = cmd_type >> 2;
     match cmd {
-        0x08 => "PN",
-        0x14 => "PSC",
-        0x04 => "CLD",
-        0x18 => "Test",
-        0x02 => "FCoff",
-        0x0A => "FCon",
-        0x0E => "MSC",
-        0x12 => "NSC",
-        0x11 => "RPN",
-        0x09 => "RLS",
-        0x20 => "SNC",
+        0x20 => "PN",
+        0x10 => "PSC",
+        0x30 => "CLD",
+        0x08 => "Test",
+        0x18 => "FCoff",
+        0x28 => "FCon",
+        0x38 => "MSC",
+        0x04 => "NSC",
+        0x24 => "RPN",
+        0x14 => "RLS",
+        0x34 => "SNC",
         _ => "Unknown_MuxCmd",
     }
 }
@@ -176,6 +176,33 @@ mod tests {
             try_parse_rfcomm(&[addr(0, 1), RFCOMM_UIH, 0x01]).as_deref(),
             Some("RFCOMM UIH DLCI=0")
         );
+    }
+
+    #[test]
+    fn dlci_zero_mux_command_names() {
+        // Type octet on the wire: bits 8..3 = command type, bit 2 = C/R, bit 1 = EA.
+        // Values per TS 07.10 / Linux include/net/bluetooth/rfcomm.h (type >> 2).
+        let cases = [
+            (0x83, "PN"),    // 0x20
+            (0x43, "PSC"),   // 0x10
+            (0xC3, "CLD"),   // 0x30
+            (0x23, "Test"),  // 0x08
+            (0x63, "FCoff"), // 0x18
+            (0xA3, "FCon"),  // 0x28
+            (0xE3, "MSC"),   // 0x38
+            (0x13, "NSC"),   // 0x04
+            (0x93, "RPN"),   // 0x24
+            (0x53, "RLS"),   // 0x14
+            (0xD3, "SNC"),   // 0x34
+            (0x03, "Unknown_MuxCmd"),
+        ];
+        for (type_octet, name) in cases {
+            assert_eq!(
+                try_parse_rfcomm(&[addr(0, 1), RFCOMM_UIH, 0x05, type_octet, 0x01, FCS]).as_deref(),
+                Some(format!("RFCOMM UIH MuxCtrl {name} Cmd").as_str()),
+                "type octet 0x{type_octet:02x}"
+            );
+        }
     }
 
     #[test]
