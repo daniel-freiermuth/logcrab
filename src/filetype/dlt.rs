@@ -137,6 +137,36 @@ impl DltLogLine {
         let diff_str = format_time_diff(self.storage_time.signed_duration_since(inferred_time));
         format!("[{} ({diff_str}) {storage_ecu}]", self.storage_time)
     }
+
+    /// Builds the pending calibration opened by "Calibrate Time Here" on this line.
+    fn calibration_state(
+        &self,
+        config: crate::config::DltTimestampSource,
+        file_state: &DltFileState,
+    ) -> DltCalibrationState {
+        use crate::config::DltTimestampSource;
+
+        let is_inferred = matches!(config, DltTimestampSource::InferredMonotonic)
+            && self.header_timestamp_us.is_some();
+
+        // Pre-fill with the time the table shows for this line, sync point included.
+        let current_time = self.timestamp(&config, file_state);
+
+        DltCalibrationState {
+            line_number: self.line_number,
+            ecu_id: self.ecu_id.clone(),
+            app_id: self.app_id.clone(),
+            header_timestamp_us: self.header_timestamp_us.unwrap_or(0),
+            is_inferred,
+            storage_time: self.storage_time,
+            window: crate::filetype::CalibrationWindow::new(
+                current_time,
+                is_inferred,
+                Some(current_time),
+                self.storage_time,
+            ),
+        }
+    }
 }
 
 // ============================================================================
@@ -164,6 +194,9 @@ pub struct SyncPoint {
 /// `DltFileState::egui_render_file_state`. `#[serde(skip)]` — not persisted.
 #[derive(Debug, Clone)]
 pub struct DltCalibrationState {
+    /// Line number of the right-clicked line; selects the sync-point offset
+    /// that `timestamp()` adds on top of the calibrated time.
+    pub line_number: usize,
     /// ECU ID of the right-clicked line.
     pub ecu_id: String,
     /// Application ID of the right-clicked line.
@@ -501,43 +534,11 @@ impl LineType for DltLogLine {
         file_state: &DltFileState,
     ) {
         if ui.button("\u{23F1} Calibrate Time Here").clicked() {
-            use crate::config::DltTimestampSource;
-
-            let is_inferred = matches!(config, DltTimestampSource::InferredMonotonic)
-                && self.header_timestamp_us.is_some();
-
-            // Current display time: inferred if available, otherwise storage.
-            let current_time = if is_inferred {
-                let header_us = self
-                    .header_timestamp_us
-                    .expect("header_timestamp_us is Some when is_inferred");
-                let key = (self.ecu_id.clone(), self.app_id.clone());
-                file_state
-                    .boot_times
-                    .get(&key)
-                    .map_or(self.storage_time, |bt| {
-                        *bt + chrono::TimeDelta::microseconds(header_us)
-                    })
-            } else {
-                self.storage_time + chrono::Duration::milliseconds(file_state.storage_offset_ms())
-            };
-
             *file_state
                 .calibration
                 .lock()
-                .expect("calibration lock poisoned") = Some(DltCalibrationState {
-                ecu_id: self.ecu_id.clone(),
-                app_id: self.app_id.clone(),
-                header_timestamp_us: self.header_timestamp_us.unwrap_or(0),
-                is_inferred,
-                storage_time: self.storage_time,
-                window: crate::filetype::CalibrationWindow::new(
-                    current_time,
-                    is_inferred,
-                    Some(current_time),
-                    self.storage_time,
-                ),
-            });
+                .expect("calibration lock poisoned") =
+                Some(self.calibration_state(*config, file_state));
             ui.close();
         }
 
@@ -603,8 +604,15 @@ impl crate::filetype::LogFileState for DltFileState {
                         target_time,
                         apply_to_all_apps,
                     } => {
+                        // `timestamp()` adds this line's sync-point offset on top of
+                        // the calibrated base, so calibrate the base to the target
+                        // time without it.
+                        let base_target = target_time
+                            - chrono::Duration::milliseconds(
+                                self.sync_point_offset_ms(cal.line_number),
+                            );
                         if cal.is_inferred {
-                            let new_boot_time = target_time
+                            let new_boot_time = base_target
                                 - chrono::TimeDelta::microseconds(cal.header_timestamp_us);
                             let key = (cal.ecu_id.clone(), cal.app_id.clone());
                             let ecu_id = cal.ecu_id.clone();
@@ -620,7 +628,7 @@ impl crate::filetype::LogFileState for DltFileState {
                                 self.boot_times.insert(key, new_boot_time);
                             }
                         } else {
-                            let offset_ms = (target_time - cal.storage_time).num_milliseconds();
+                            let offset_ms = (base_target - cal.storage_time).num_milliseconds();
                             self.storage_offset_ms
                                 .store(offset_ms, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -1310,5 +1318,87 @@ mod tests {
         state.pending_jump_line.store(41, Ordering::Relaxed);
         assert_eq!(state.take_pending_jump_line(), Some(41));
         assert_eq!(state.take_pending_jump_line(), None);
+    }
+
+    /// Runs one headless egui frame in which the user presses Enter, which
+    /// confirms any open calibration window with its current text.
+    fn frame_with_enter_pressed(mut render: impl FnMut(&mut egui::Ui)) {
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: Some(egui::Key::Enter),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut output = egui::Context::default().run_ui(input, |ui| render(ui));
+        // No renderer consumes the font atlas upload in tests.
+        output.textures_delta.clear();
+    }
+
+    /// A line behind a sync point, with a calibrated boot time and storage offset.
+    fn line_behind_sync_point() -> (DltLogLine, DltFileState) {
+        let state = state_with_sync_points(&[(5, 5_000)]);
+        state.storage_offset_ms.store(1_000, Ordering::Relaxed);
+        state.boot_times.insert(
+            ("ECU1".to_string(), "APP1".to_string()),
+            storage_time() - chrono::Duration::hours(1),
+        );
+        (line(10, Some(7_000_000)), state)
+    }
+
+    const BOTH_MODES: [DltTimestampSource; 2] = [
+        DltTimestampSource::StorageTime,
+        DltTimestampSource::InferredMonotonic,
+    ];
+
+    #[test]
+    fn calibrate_time_here_prefills_the_displayed_time_behind_a_sync_point() {
+        for config in BOTH_MODES {
+            let (line, state) = line_behind_sync_point();
+            let mut cal = line.calibration_state(config, &state);
+
+            let mut prefilled = None;
+            frame_with_enter_pressed(|ui| {
+                if let crate::filetype::CalibrationResult::Confirmed { target_time, .. } =
+                    cal.window.render(ui)
+                {
+                    prefilled.get_or_insert(target_time);
+                }
+            });
+
+            assert_eq!(
+                prefilled,
+                Some(line.timestamp(&config, &state)),
+                "{config:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn calibrate_time_here_moves_a_line_behind_a_sync_point_to_the_target_time() {
+        for config in BOTH_MODES {
+            let (line, state) = line_behind_sync_point();
+            let target = storage_time() + chrono::Duration::minutes(2);
+            let mut cal = line.calibration_state(config, &state);
+            // Stands in for the user typing `target` into the window.
+            cal.window = crate::filetype::CalibrationWindow::new(
+                target,
+                cal.is_inferred,
+                None,
+                line.storage_time,
+            );
+            *state.calibration.lock().expect("calibration lock poisoned") = Some(cal);
+
+            let mut changed = false;
+            frame_with_enter_pressed(|ui| {
+                changed |= state.egui_render_file_state(ui, std::path::Path::new("test.dlt"));
+            });
+
+            assert!(changed, "{config:?}: calibration was not confirmed");
+            assert_eq!(line.timestamp(&config, &state), target, "{config:?}");
+        }
     }
 }
