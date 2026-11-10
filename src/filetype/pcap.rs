@@ -1320,7 +1320,15 @@ fn parse_ipv4_packet(
     let src_ip = IpAddr::from([data[12], data[13], data[14], data[15]]);
     let dst_ip = IpAddr::from([data[16], data[17], data[18], data[19]]);
     let total_len = u16::from_be_bytes([data[2], data[3]]);
-    let transport_data = &data[ihl..];
+    // Trim link-layer padding (e.g. Ethernet minimum-frame padding) using the
+    // IPv4 total length. Fall back to the captured length when the field is
+    // implausible: 0 with TCP segmentation offload, or larger than the
+    // capture when the snapshot length truncated the packet.
+    let ip_end = match usize::from(total_len) {
+        len if len >= ihl && len <= data.len() => len,
+        _ => data.len(),
+    };
+    let transport_data = &data[ihl..ip_end];
     let (protocol, src_port, dst_port, info, tcp_details, transport_payload) = match protocol {
         6 => {
             let (sp, dp, i, td, payload) = parse_tcp_info(transport_data);
@@ -1970,6 +1978,44 @@ mod tests {
         let frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
         let pi = parse_packet_data(&frame, ts()).expect("RST should parse");
         assert!(pi.is_abnormal);
+    }
+
+    /// Build a pure ACK frame padded to the 60-byte Ethernet minimum.
+    fn padded_pure_ack(seq: u32, ack: u32) -> Vec<u8> {
+        let tcp_seg = tcp_segment(1234, 80, seq, ack, 0x10);
+        let ip = ipv4_packet(6, [10, 0, 0, 1], [10, 0, 0, 2], &tcp_seg);
+        let mut frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
+        frame.resize(60, 0);
+        frame
+    }
+
+    #[test]
+    fn ipv4_ethernet_padding_is_not_tcp_payload() {
+        let frame = padded_pure_ack(100, 1);
+        let pi = parse_packet_data(&frame, ts()).expect("padded ACK should parse");
+        let tcp = pi.tcp_details.expect("TCP details");
+        assert_eq!(tcp.payload_len, 0);
+        assert!(pi.transport_payload.is_none_or(|p| p.is_empty()));
+    }
+
+    #[test]
+    fn ipv4_ethernet_padding_is_not_udp_payload() {
+        let udp = udp_datagram(53, 12345, b"ab");
+        let ip = ipv4_packet(17, [10, 0, 0, 1], [10, 0, 0, 2], &udp);
+        let mut frame = eth_frame([0; 6], [0; 6], 0x0800, &ip);
+        frame.resize(60, 0);
+        let pi = parse_packet_data(&frame, ts()).expect("padded UDP should parse");
+        assert_eq!(pi.transport_payload.as_deref(), Some(&b"ab"[..]));
+    }
+
+    #[test]
+    fn padded_pure_acks_are_not_retransmissions() {
+        let mut tracker = TcpFlowTracker::new();
+        for ack in 1..=3 {
+            let mut pi = parse_packet_data(&padded_pure_ack(100, ack), ts()).expect("parse");
+            tracker.analyze_packet(&mut pi);
+            assert!(!pi.is_abnormal, "ACK {ack} flagged: {}", pi.info);
+        }
     }
 
     // ================================================================
