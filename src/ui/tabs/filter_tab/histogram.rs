@@ -435,21 +435,7 @@ impl Histogram {
             dark_mode,
         );
 
-        // Calculate view bucket size for markers
-        let view_duration = view_end - view_start;
-        let view_bucket_size = Duration::from_secs_f64(
-            view_duration.num_milliseconds() as f64 / 1000.0 / num_visible_buckets.max(1) as f64,
-        );
-
-        Self::draw_markers(
-            &painter,
-            rect,
-            store,
-            view_start,
-            view_bucket_size,
-            markers,
-            num_visible_buckets,
-        );
+        Self::draw_markers(&painter, rect, store, view_start, view_end, markers);
         Self::draw_selected_indicator(&painter, rect, selected_x_fraction);
 
         // Handle zoom interactions
@@ -497,16 +483,7 @@ impl Histogram {
             ui.ctx().request_repaint();
         }
 
-        Self::handle_marker_hover(
-            ui,
-            &response,
-            rect,
-            store,
-            view_start,
-            view_bucket_size,
-            markers,
-            num_visible_buckets,
-        );
+        Self::handle_marker_hover(ui, &response, rect, store, view_start, view_end, markers);
 
         Self::handle_click(
             ui,
@@ -515,8 +492,7 @@ impl Histogram {
             store,
             filtered_indices,
             view_start,
-            view_bucket_size,
-            num_visible_buckets,
+            view_end,
         )
     }
 
@@ -808,33 +784,21 @@ impl Histogram {
         rect: egui::Rect,
         store: &LogStore,
         view_start: chrono::DateTime<chrono::Local>,
-        view_bucket_size: Duration,
+        view_end: chrono::DateTime<chrono::Local>,
         markers: &[HistogramMarker],
-        num_visible_buckets: usize,
     ) {
         profiling::scope!("Histogram::draw_markers");
-        let total_width = rect.width();
-        let total_time = num_visible_buckets as u32 * view_bucket_size;
 
         for marker in markers {
             for line_idx in marker.indices.iter() {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };
-                let ts = line.timestamp;
-                let elapsed = ts - view_start;
 
                 // Skip markers outside visible range
-                if elapsed.num_milliseconds() < 0
-                    || elapsed.num_milliseconds() > total_time.as_millis() as i64
-                {
+                let Some(x) = Self::x_for_time(rect, line.timestamp, view_start, view_end) else {
                     continue;
-                }
-
-                let x = rect.min.x
-                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * f64::from(total_width))
-                        as f32;
-
+                };
                 painter.vline(x, rect.y_range(), (1.0, marker.color));
             }
         }
@@ -846,9 +810,8 @@ impl Histogram {
         rect: egui::Rect,
         store: &LogStore,
         view_start: chrono::DateTime<chrono::Local>,
-        view_bucket_size: Duration,
+        view_end: chrono::DateTime<chrono::Local>,
         markers: &[HistogramMarker],
-        num_visible_buckets: usize,
     ) {
         struct MarkerMatch<'a> {
             marker: &'a HistogramMarker,
@@ -860,8 +823,6 @@ impl Histogram {
             return;
         };
 
-        let total_width = rect.width();
-        let total_time = num_visible_buckets as u32 * view_bucket_size;
         let hover_threshold = 3.0; // pixels
 
         let mut closest_match: Option<MarkerMatch> = None;
@@ -871,19 +832,11 @@ impl Histogram {
                 let Some(line) = store.get_by_id(line_idx) else {
                     continue;
                 };
-                let ts = line.timestamp;
-                let elapsed = ts - view_start;
 
                 // Skip markers outside visible range
-                if elapsed.num_milliseconds() < 0
-                    || elapsed.num_milliseconds() > total_time.as_millis() as i64
-                {
+                let Some(x) = Self::x_for_time(rect, line.timestamp, view_start, view_end) else {
                     continue;
-                }
-
-                let x = rect.min.x
-                    + (elapsed.as_seconds_f64() / total_time.as_secs_f64() * f64::from(total_width))
-                        as f32;
+                };
 
                 let distance = (hover_pos.x - x).abs();
                 if distance < hover_threshold
@@ -933,8 +886,7 @@ impl Histogram {
         store: &LogStore,
         filtered_indices: &[StoreID],
         view_start: chrono::DateTime<chrono::Local>,
-        view_bucket_size: Duration,
-        num_visible_buckets: usize,
+        view_end: chrono::DateTime<chrono::Local>,
     ) -> Option<HistogramClickEvent> {
         profiling::scope!("Histogram::handle_click");
 
@@ -950,23 +902,52 @@ impl Histogram {
         }
 
         let pos = response.interact_pointer_pos()?;
-        let relative_x = pos.x - rect.min.x;
-        if relative_x < 0.0 {
-            return None;
-        }
 
         // Calculate click time directly from x position
         // to match how the selected indicator position is calculated
-        let total_time = view_bucket_size * (num_visible_buckets as u32);
-        let click_fraction = f64::from(relative_x / rect.width());
-        let click_offset = timedelta_from_secs_f64(total_time.as_secs_f64() * click_fraction)?;
-        let click_time = view_start + click_offset;
+        let click_time = Self::time_at_x(rect, pos.x, view_start, view_end)?;
 
         // Binary search to find the closest line by timestamp
         // Since filtered_indices are sorted by timestamp, we can use binary search
         let closest_idx = Self::find_closest_line_by_time(store, filtered_indices, click_time);
 
         closest_idx.map(|line_index| HistogramClickEvent { line_index })
+    }
+
+    /// Map a pointer x position inside `rect` to a timestamp in the visible range.
+    fn time_at_x(
+        rect: egui::Rect,
+        x: f32,
+        view_start: DateTime<Local>,
+        view_end: DateTime<Local>,
+    ) -> Option<DateTime<Local>> {
+        let relative_x = x - rect.min.x;
+        if relative_x < 0.0 {
+            return None;
+        }
+        let total_time = view_end - view_start;
+        let click_fraction = f64::from(relative_x / rect.width());
+        let click_offset = timedelta_from_secs_f64(total_time.as_seconds_f64() * click_fraction)?;
+        Some(view_start + click_offset)
+    }
+
+    /// Horizontal position of `ts` inside `rect`, or `None` if it lies outside the visible range.
+    fn x_for_time(
+        rect: egui::Rect,
+        ts: DateTime<Local>,
+        view_start: DateTime<Local>,
+        view_end: DateTime<Local>,
+    ) -> Option<f32> {
+        let total_time = view_end - view_start;
+        let elapsed = ts - view_start;
+        if total_time <= TimeDelta::zero() || elapsed < TimeDelta::zero() || elapsed > total_time {
+            return None;
+        }
+        Some(
+            rect.min.x
+                + (elapsed.as_seconds_f64() / total_time.as_seconds_f64() * f64::from(rect.width()))
+                    as f32,
+        )
     }
 
     /// Find the line closest to a given timestamp using binary search
@@ -1300,6 +1281,44 @@ mod tests {
         zoom.set_visible_range(ts(5), ts(5));
         zoom.set_visible_range(ts(10), ts(0));
         assert_eq!(zoom.visible_range, Some((ts(0), ts(10))));
+    }
+
+    fn us(micros: i64) -> DateTime<Local> {
+        ts(0) + TimeDelta::microseconds(micros)
+    }
+
+    fn assert_within_us(actual: DateTime<Local>, expected: DateTime<Local>) {
+        let diff = (actual - expected).abs();
+        assert!(
+            diff <= TimeDelta::microseconds(1),
+            "expected {expected:?}, got {actual:?} (diff {diff:?})"
+        );
+    }
+
+    #[test]
+    fn click_maps_across_the_exact_view_span_for_fractional_ms_views() {
+        // 400 us (sub-millisecond) and 1.9 ms views, as produced by drag zoom on pcap data.
+        for view_us in [400, 1_900, 15_700] {
+            let (start, end) = (us(0), us(view_us));
+            let right = Histogram::time_at_x(rect(), rect().max.x, start, end).expect("time");
+            assert_within_us(right, end);
+            let middle = Histogram::time_at_x(rect(), rect().center().x, start, end).expect("time");
+            assert_within_us(middle, us(view_us / 2));
+        }
+    }
+
+    #[test]
+    fn markers_are_placed_within_rect_for_fractional_ms_views() {
+        let r = rect();
+        // 1.5 ms into a 1.9 ms view → ~79% of the width, not past the right edge.
+        let x = Histogram::x_for_time(r, us(1_500), us(0), us(1_900)).expect("visible");
+        let expected = r.width() * (1_500.0 / 1_900.0);
+        assert!((x - expected).abs() < 0.01, "x = {x}");
+        // Sub-millisecond view: finite position, and markers past the end are hidden.
+        let x = Histogram::x_for_time(r, us(200), us(0), us(400)).expect("visible");
+        assert!((x - r.center().x).abs() < 0.01, "x = {x}");
+        assert_eq!(Histogram::x_for_time(r, us(600), us(0), us(400)), None);
+        assert_eq!(Histogram::x_for_time(r, us(-1), us(0), us(400)), None);
     }
 
     #[test]
