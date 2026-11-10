@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The window title is only re-sent when it changes; re-sending it every frame
   kept LogCrab redrawing continuously while idle or minimised.
+- The generic text reader no longer drops lines whose local timestamp falls in a DST fall-back
+  hour (earlier instant is used) or spring-forward gap (moved forward by the gap length).
 
 ## [1.3.0] - 2026-09-01
 
