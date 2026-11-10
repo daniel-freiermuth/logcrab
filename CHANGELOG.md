@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kept LogCrab redrawing continuously while idle or minimised.
 - The generic text reader no longer drops lines whose local timestamp falls in a DST fall-back
   hour (earlier instant is used) or spring-forward gap (moved forward by the gap length).
+- The generic text reader no longer drops year-less lines dated Feb 29 (syslog `Feb 29 …`,
+  logcat `02-29 …`). Logs without a year stay in 1970, which has no Feb 29, so these lines are
+  placed at the start of that day (1970-03-01 00:00); their time of day is not kept.
 
 ## [1.3.0] - 2026-09-01
 

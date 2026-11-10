@@ -1,7 +1,10 @@
 // LogCrab - GPL-3.0-or-later
 // Copyright (C) 2026 Daniel Freiermuth
 
-use chrono::{DateTime, Local, MappedLocalTime, NaiveDateTime, Offset, TimeDelta, TimeZone};
+use chrono::{
+    DateTime, Datelike, Local, MappedLocalTime, NaiveDate, NaiveDateTime, NaiveTime, Offset,
+    TimeDelta, TimeZone,
+};
 use egui::Ui;
 use fancy_regex::Regex;
 use std::fs::File;
@@ -209,6 +212,25 @@ static BRACKETED_CTIME_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid regex literal")
 });
 
+/// Year that year-less timestamps (syslog `Nov 20 …`, logcat-style `11-20 …`) are placed in.
+/// Saved calibration offsets are relative to timestamps in this year, so it must not change.
+const YEARLESS_ANCHOR_YEAR: i32 = 1970;
+
+/// Year year-less timestamps are parsed in before being moved to [`YEARLESS_ANCHOR_YEAR`].
+/// A leap year, so `Feb 29` parses instead of being dropped.
+const YEARLESS_PARSE_YEAR: i32 = 1972;
+
+/// Move a year-less timestamp parsed in [`YEARLESS_PARSE_YEAR`] into [`YEARLESS_ANCHOR_YEAR`].
+///
+/// The anchor year has no Feb 29, and inserting one would add a fake day to logs from non-leap
+/// years. A Feb 29 timestamp is therefore placed at the instant that day begins (Feb 28 + 24 h,
+/// i.e. Mar 1 00:00), which keeps it after every Feb 28 line; its time of day is not kept.
+fn anchor_yearless(parsed: NaiveDateTime) -> Option<NaiveDateTime> {
+    parsed.with_year(YEARLESS_ANCHOR_YEAR).or_else(|| {
+        NaiveDate::from_ymd_opt(YEARLESS_ANCHOR_YEAR, 3, 1).map(|day| day.and_time(NaiveTime::MIN))
+    })
+}
+
 /// Resolve a wall-clock time in `tz` without dropping it at DST transitions.
 ///
 /// An ambiguous time (fall-back hour) resolves to its earlier instant. A non-existent time
@@ -308,22 +330,22 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = LOGCAT_TIMESTAMP_GENERIC.captures(remaining) {
-        let timestamp_str = format!("1970-{}", &caps[1]);
+        let timestamp_str = format!("{YEARLESS_PARSE_YEAR}-{}", &caps[1]);
         if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.3f")
         {
-            timestamp = resolve_wall_clock(&Local, naive);
+            timestamp = anchor_yearless(naive).and_then(|n| resolve_wall_clock(&Local, n));
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = SYSLOG_TIMESTAMP.captures(remaining) {
-        let ts_str = format!("1970 {}", &caps[1]);
+        let ts_str = format!("{YEARLESS_PARSE_YEAR} {}", &caps[1]);
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S%.3f") {
-            timestamp = resolve_wall_clock(&Local, naive);
+            timestamp = anchor_yearless(naive).and_then(|n| resolve_wall_clock(&Local, n));
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S")
         {
-            timestamp = resolve_wall_clock(&Local, naive);
+            timestamp = anchor_yearless(naive).and_then(|n| resolve_wall_clock(&Local, n));
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = TIME_ONLY_TIMESTAMP.captures(remaining) {
@@ -619,6 +641,50 @@ mod tests {
         assert_eq!(
             line.timestamp.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
             "2025-11-20 14:23:45.123456"
+        );
+    }
+
+    fn parse_ts(raw: &str) -> DateTime<Local> {
+        parse_generic_line(raw.to_string(), 1)
+            .expect("year-less line must not be dropped")
+            .timestamp
+    }
+
+    #[test]
+    fn syslog_feb_28_to_mar_1_spacing_has_no_leap_day() {
+        let before = parse_ts("Feb 28 23:59:59 host kernel: before");
+        let after = parse_ts("Mar  1 00:00:01 host kernel: after");
+        assert_eq!(after - before, chrono::Duration::seconds(2));
+    }
+
+    #[test]
+    fn logcat_style_feb_28_to_mar_1_spacing_has_no_leap_day() {
+        let before = parse_ts("02-28 23:59:59.000 1 2 I T: before");
+        let after = parse_ts("03-01 00:00:01.000 1 2 I T: after");
+        assert_eq!(after - before, chrono::Duration::seconds(2));
+    }
+
+    #[test]
+    fn syslog_leap_day_line_is_kept_at_start_of_leap_day() {
+        let raw = "Feb 29 12:00:00 host kernel: leap day".to_string();
+        let line = parse_generic_line(raw, 1).expect("Feb 29 syslog line must not be dropped");
+        assert_eq!(line.message_text, "host kernel: leap day");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            "1970-03-01 00:00:00.000"
+        );
+        assert!(parse_ts("Feb 28 23:59:59 x: before") < line.timestamp);
+        assert!(line.timestamp < parse_ts("Mar  1 00:00:01 x: after"));
+    }
+
+    #[test]
+    fn logcat_style_leap_day_line_is_kept_at_start_of_leap_day() {
+        let raw = "02-29 12:00:00.000 123 456 I Tag: leap day".to_string();
+        let line = parse_generic_line(raw, 1).expect("02-29 logcat line must not be dropped");
+        assert_eq!(line.message_text, "123 456 I Tag: leap day");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            "1970-03-01 00:00:00.000"
         );
     }
 
