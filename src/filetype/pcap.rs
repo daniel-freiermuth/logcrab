@@ -1570,6 +1570,24 @@ pub fn parse_pcap_to_lines<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PcapLo
     Ok(lines)
 }
 
+/// Initial capacity of the pcap-parser read buffer.
+const PCAP_READER_INITIAL_CAPACITY: usize = 65_536;
+
+/// Upper bound the read buffer may grow to for a single oversized record.
+/// Real captures stay far below this (tcpdump's default snaplen is 256 KiB);
+/// it only bounds memory for corrupt length fields.
+const PCAP_READER_MAX_CAPACITY: usize = 64 * 1024 * 1024;
+
+/// Double the reader's buffer after `PcapError::BufferTooSmall` so the next
+/// record fits. Returns `false` when the buffer is already at its maximum.
+fn grow_pcap_reader_buffer(reader: &mut impl PcapReaderIterator, capacity: &mut usize) -> bool {
+    if *capacity >= PCAP_READER_MAX_CAPACITY {
+        return false;
+    }
+    *capacity = (*capacity * 2).min(PCAP_READER_MAX_CAPACITY);
+    reader.grow(*capacity)
+}
+
 fn parse_legacy_pcap_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     profiling::scope!("parse_legacy_pcap_to_lines");
     use anyhow::Context as _;
@@ -1577,7 +1595,8 @@ fn parse_legacy_pcap_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     let file = File::open(path)
         .with_context(|| format!("Failed to open pcap file: {}", path.display()))?;
     let reader = BufReader::new(file);
-    let mut pcap_reader = LegacyPcapReader::new(65536, reader)
+    let mut capacity = PCAP_READER_INITIAL_CAPACITY;
+    let mut pcap_reader = LegacyPcapReader::new(capacity, reader)
         .map_err(|e| anyhow::anyhow!("Failed to create pcap reader: {e:?}"))?;
     let mut lines = Vec::new();
     let mut line_number = 1usize;
@@ -1616,6 +1635,12 @@ fn parse_legacy_pcap_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
                     .refill()
                     .map_err(|e| anyhow::anyhow!("Read error: {e}"))?;
             }
+            Err(PcapError::BufferTooSmall) => {
+                if !grow_pcap_reader_buffer(&mut pcap_reader, &mut capacity) {
+                    tracing::warn!("Pcap record exceeds {PCAP_READER_MAX_CAPACITY} bytes");
+                    break;
+                }
+            }
             Err(e) => {
                 tracing::warn!("Pcap parse error: {e:?}");
                 break;
@@ -1633,7 +1658,8 @@ fn parse_pcapng_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
     let file = File::open(path)
         .with_context(|| format!("Failed to open pcapng file: {}", path.display()))?;
     let reader = BufReader::new(file);
-    let mut pcap_reader = PcapNGReader::new(65536, reader)
+    let mut capacity = PCAP_READER_INITIAL_CAPACITY;
+    let mut pcap_reader = PcapNGReader::new(capacity, reader)
         .map_err(|e| anyhow::anyhow!("Failed to create pcapng reader: {e:?}"))?;
     let mut lines = Vec::new();
     let mut line_number = 1usize;
@@ -1691,6 +1717,12 @@ fn parse_pcapng_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
                 pcap_reader
                     .refill()
                     .map_err(|e| anyhow::anyhow!("Read error: {e}"))?;
+            }
+            Err(PcapError::BufferTooSmall) => {
+                if !grow_pcap_reader_buffer(&mut pcap_reader, &mut capacity) {
+                    tracing::warn!("Pcapng block exceeds {PCAP_READER_MAX_CAPACITY} bytes");
+                    break;
+                }
             }
             Err(e) => {
                 tracing::warn!("Pcapng parse error: {e:?}");
@@ -2408,5 +2440,99 @@ mod tests {
                 .expect("round-trip");
         assert!(reloaded.is_known_someip_endpoint(v6));
         assert!(reloaded.is_known_someip_endpoint(v4));
+    }
+
+    // ================================================================
+    // Records larger than the initial 64 KiB reader buffer
+    // ================================================================
+
+    /// An ARP Ethernet frame padded to exactly `len` bytes.
+    fn arp_frame_of_len(len: usize) -> Vec<u8> {
+        let mut frame = eth_frame(
+            [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+            [0xff; 6],
+            0x0806,
+            &[0u8; 28],
+        );
+        frame.resize(len, 0);
+        frame
+    }
+
+    /// Frame sizes of a loopback capture (MTU 65536) of a bulk TCP transfer:
+    /// one frame larger than 64 KiB among small ones. The large frame is
+    /// 4-byte aligned so pcapng block padding does not affect its length.
+    const LOOPBACK_FRAME_LENS: [usize; 5] = [100, 65_540, 100, 100, 100];
+
+    fn write_temp(bytes: &[u8]) -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let mut file = tempfile::NamedTempFile::new().expect("create temp capture");
+        file.write_all(bytes).expect("write temp capture");
+        file.flush().expect("flush temp capture");
+        file
+    }
+
+    #[test]
+    fn legacy_pcap_reads_frames_larger_than_initial_buffer() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0xa1b2_c3d4u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes()); // version major
+        bytes.extend_from_slice(&4u16.to_le_bytes()); // version minor
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // thiszone
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // sigfigs
+        bytes.extend_from_slice(&262_144u32.to_le_bytes()); // tcpdump default snaplen
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // LINKTYPE_ETHERNET
+        for len in LOOPBACK_FRAME_LENS {
+            let frame = arp_frame_of_len(len);
+            let frame_len = u32::try_from(frame.len()).expect("frame fits in u32");
+            bytes.extend_from_slice(&1_700_000_000u32.to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.extend_from_slice(&frame_len.to_le_bytes()); // incl_len
+            bytes.extend_from_slice(&frame_len.to_le_bytes()); // orig_len
+            bytes.extend_from_slice(&frame);
+        }
+        let file = write_temp(&bytes);
+        let lines = parse_pcap_to_lines(file.path()).expect("pcap should parse");
+        assert_eq!(lines.len(), LOOPBACK_FRAME_LENS.len());
+        assert_eq!(lines[1].packet_info.length, 65_540);
+    }
+
+    #[test]
+    fn pcapng_reads_blocks_larger_than_initial_buffer() {
+        let mut bytes = Vec::new();
+        // Section Header Block
+        bytes.extend_from_slice(&0x0A0D_0D0Au32.to_le_bytes());
+        bytes.extend_from_slice(&28u32.to_le_bytes());
+        bytes.extend_from_slice(&0x1A2B_3C4Du32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // major
+        bytes.extend_from_slice(&0u16.to_le_bytes()); // minor
+        bytes.extend_from_slice(&(-1i64).to_le_bytes()); // section length unknown
+        bytes.extend_from_slice(&28u32.to_le_bytes());
+        // Interface Description Block
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&20u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // LINKTYPE_ETHERNET
+        bytes.extend_from_slice(&0u16.to_le_bytes()); // reserved
+        bytes.extend_from_slice(&262_144u32.to_le_bytes()); // snaplen
+        bytes.extend_from_slice(&20u32.to_le_bytes());
+        // Enhanced Packet Blocks
+        for len in LOOPBACK_FRAME_LENS {
+            let mut frame = arp_frame_of_len(len);
+            let cap_len = u32::try_from(frame.len()).expect("frame fits in u32");
+            frame.resize(frame.len().next_multiple_of(4), 0);
+            let block_len = u32::try_from(32 + frame.len()).expect("block fits in u32");
+            bytes.extend_from_slice(&6u32.to_le_bytes());
+            bytes.extend_from_slice(&block_len.to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes()); // interface id
+            bytes.extend_from_slice(&0u32.to_le_bytes()); // ts high
+            bytes.extend_from_slice(&0u32.to_le_bytes()); // ts low
+            bytes.extend_from_slice(&cap_len.to_le_bytes());
+            bytes.extend_from_slice(&cap_len.to_le_bytes()); // orig len
+            bytes.extend_from_slice(&frame);
+            bytes.extend_from_slice(&block_len.to_le_bytes());
+        }
+        let file = write_temp(&bytes);
+        let lines = parse_pcap_to_lines(file.path()).expect("pcapng should parse");
+        assert_eq!(lines.len(), LOOPBACK_FRAME_LENS.len());
+        assert_eq!(lines[1].packet_info.length, 65_540);
     }
 }
