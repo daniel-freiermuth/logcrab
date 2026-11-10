@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Calibrate Time Here" on a DLT line at or after a sync point now moves the line to the
   entered time and pre-fills the time shown in the table, instead of both ignoring the
   sync point's offset.
+- The generic text reader no longer drops lines whose local timestamp falls in a DST fall-back
+  hour (earlier instant is used) or spring-forward gap (moved forward by the gap length).
 
 ## [1.3.0] - 2026-09-01
 
