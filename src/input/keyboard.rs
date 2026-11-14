@@ -359,7 +359,9 @@ impl ShortcutAction {
             Self::MoveUp => "Move to the previous log line in the active view",
             Self::MoveDown => "Move to the next log line in the active view",
             Self::ToggleBookmark => "Add or remove a bookmark on the selected line",
-            Self::FocusSearch => "Jump to the search input field (filter tabs only). Press Enter to return focus to logs.",
+            Self::FocusSearch => {
+                "Jump to the search input field (filter tabs only). Press Enter to return focus to logs."
+            }
             Self::NewFilterTab => "Create a new filter tab with search focused",
             Self::NewBookmarksTab => "Create a new bookmarks tab next to the current tab",
             Self::CloseTab => "Close the currently active tab",

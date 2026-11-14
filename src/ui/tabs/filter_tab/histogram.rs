@@ -20,13 +20,13 @@ use crate::core::histogram_worker::{
     AnomalyDistribution, HistogramCacheKey, HistogramData, HistogramRequest, HistogramResult,
     HistogramWorkerHandle, NUM_BUCKETS, SCORE_BUCKETS,
 };
-use crate::core::{log_store::StoreID, LogStore};
+use crate::core::{LogStore, log_store::StoreID};
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::filter_tab::log_table;
 use chrono::{DateTime, Local, TimeDelta};
 use egui::{Color32, Pos2, Ui};
-use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 /// Convert a floating-point seconds value to `TimeDelta`, handling negative values.

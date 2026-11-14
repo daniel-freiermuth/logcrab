@@ -23,12 +23,12 @@
 //!
 //! The worker is owned by the application and shuts down gracefully when dropped.
 
+use crate::core::LogStore;
 use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::queue_map::QueueMap;
-use crate::core::LogStore;
 use fancy_regex::Regex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

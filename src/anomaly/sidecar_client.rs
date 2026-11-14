@@ -28,10 +28,10 @@
 //! `ExplainPollStatus`) is identical to the V1 WebSocket client so that the
 //! rest of the codebase requires zero changes.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -49,11 +49,11 @@ pub mod proto {
 }
 
 use proto::{
+    CloseFrame, EndFrame, ExplainFrame, HealthRequest, LinesFrame, ListModelsRequest,
+    ScoreStreamClientMessage, ScoreStreamServerMessage, StartFrame, SubmitSampleRequest,
     score_stream_client_message::Payload as ClientPayload,
     score_stream_server_message::Payload as ServerPayload,
-    sidecar_client::SidecarClient as GrpcClient, CloseFrame, EndFrame, ExplainFrame, HealthRequest,
-    LinesFrame, ListModelsRequest, ScoreStreamClientMessage, ScoreStreamServerMessage, StartFrame,
-    SubmitSampleRequest,
+    sidecar_client::SidecarClient as GrpcClient,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────

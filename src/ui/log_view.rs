@@ -27,10 +27,10 @@ use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::filter_state::FilterState;
 use crate::ui::tabs::{
-    navigation, BookmarksView, FilterView, HighlightsView, LogCrabTab, LogCrabTabViewer,
-    PendingTabAdd,
+    BookmarksView, FilterView, HighlightsView, LogCrabTab, LogCrabTabViewer, PendingTabAdd,
+    navigation,
 };
-use crate::ui::{PaneDirection, ProgressToastHandle, DEFAULT_PALETTE};
+use crate::ui::{DEFAULT_PALETTE, PaneDirection, ProgressToastHandle};
 
 use anyhow::Context as _;
 use chrono::Local;

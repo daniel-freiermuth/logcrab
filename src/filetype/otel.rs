@@ -4,7 +4,7 @@
 use chrono::{DateTime, Local};
 use egui::Ui;
 use opentelemetry_proto::tonic::{common::v1::any_value::Value as OTelValue, logs::v1::LogsData};
-use std::fs::{metadata, File};
+use std::fs::{File, metadata};
 use std::io::Read;
 use std::path::Path;
 use std::time::UNIX_EPOCH;

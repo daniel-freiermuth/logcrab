@@ -21,15 +21,15 @@
 //! This module provides the core regex-based search functionality
 //! with background filtering support via the global filter worker.
 
+use crate::core::LogStore;
 use crate::core::filter_worker::{
     FilterCancellation, FilterRequest, FilterRequestPriority, FilterResult, FilterWorkerHandle,
 };
 use crate::core::log_store::{StoreID, StoreVersion};
-use crate::core::LogStore;
 use fancy_regex::{Error, Regex};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// Global counter for assigning unique search IDs
 static NEXT_SEARCH_ID: AtomicUsize = AtomicUsize::new(0);
@@ -347,10 +347,12 @@ mod tests {
     #[test]
     fn test_get_exclude_regex_empty() {
         let state = SearchState::new();
-        assert!(state
-            .get_exclude_regex()
-            .expect("should not error")
-            .is_none());
+        assert!(
+            state
+                .get_exclude_regex()
+                .expect("should not error")
+                .is_none()
+        );
     }
 
     #[test]
@@ -360,10 +362,12 @@ mod tests {
         let regex = state.get_exclude_regex().expect("should not error");
         assert!(regex.is_some());
         // Case insensitive by default
-        assert!(regex
-            .expect("should have regex")
-            .is_match("error")
-            .expect("match should not error"));
+        assert!(
+            regex
+                .expect("should have regex")
+                .is_match("error")
+                .expect("match should not error")
+        );
     }
 
     #[test]

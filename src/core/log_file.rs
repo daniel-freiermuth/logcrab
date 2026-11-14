@@ -86,8 +86,8 @@ impl LogFileLoader {
         warnings: &crate::ui::ToastSender,
         config: Arc<RwLock<<FT::LineType as LineType>::Config>>,
         open_fn: impl FnOnce(&Path, Arc<<FT::LineType as LineType>::FileState>) -> anyhow::Result<FT>
-            + Send
-            + 'static,
+        + Send
+        + 'static,
         store: &Arc<LogStore>,
     ) -> (Arc<SourceData<FT>>, Vec<SavedFilter>, Vec<SavedHighlight>)
     where

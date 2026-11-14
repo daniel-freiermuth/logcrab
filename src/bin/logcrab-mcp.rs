@@ -35,12 +35,12 @@ use std::collections::HashMap;
 use logcrab::anomaly::sidecar_client::{InputLine, SidecarClient};
 use logcrab::export::ExportRecord;
 use rmcp::{
-    handler::server::wrapper::Parameters, tool, tool_handler, tool_router, transport::stdio,
-    ServerHandler, ServiceExt,
+    ServerHandler, ServiceExt, handler::server::wrapper::Parameters, tool, tool_handler,
+    tool_router, transport::stdio,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::task;
 
 // ── Parameter types ───────────────────────────────────────────────────────────

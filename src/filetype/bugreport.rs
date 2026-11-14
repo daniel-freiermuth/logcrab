@@ -10,8 +10,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
-use super::dmesg::{parse_dmesg_line, DmesgLogLine};
-use super::logcat::{parse_logcat_line, LogcatLogLine};
+use super::dmesg::{DmesgLogLine, parse_dmesg_line};
+use super::logcat::{LogcatLogLine, parse_logcat_line};
 use crate::filetype::{CalibrationState, InputFileType, LineType, LogFileState, TextFileType};
 
 // ============================================================================

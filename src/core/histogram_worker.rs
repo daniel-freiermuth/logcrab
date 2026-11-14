@@ -23,12 +23,12 @@
 //!
 //! The worker is owned by the application and shuts down gracefully when dropped.
 
+use crate::core::LogStore;
 use crate::core::log_store::{StoreID, StoreVersion};
 use crate::core::queue_map::QueueMap;
-use crate::core::LogStore;
 use chrono::{DateTime, Local};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 /// Number of horizontal time buckets in the histogram

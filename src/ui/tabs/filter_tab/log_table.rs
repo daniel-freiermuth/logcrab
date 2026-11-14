@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use crate::{
     core::{
-        log_store::{LogLine, StoreID},
         LogStore,
+        log_store::{LogLine, StoreID},
     },
     parser::format_time_diff,
     ui::{filter_highlight::FilterHighlight, tabs::filter_tab::filter_state::FilterState},

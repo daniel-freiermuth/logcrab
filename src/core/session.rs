@@ -334,10 +334,10 @@ impl CrabFilters {
 
         if filters.version > CRAB_FILTERS_VERSION {
             tracing::warn!(
-            ".crab-filters file version {} is newer than supported version {}. Some features may not work correctly.",
-            filters.version,
-            CRAB_FILTERS_VERSION
-        );
+                ".crab-filters file version {} is newer than supported version {}. Some features may not work correctly.",
+                filters.version,
+                CRAB_FILTERS_VERSION
+            );
         }
 
         Ok(filters)
