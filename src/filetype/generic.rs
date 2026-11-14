@@ -1,7 +1,10 @@
 // LogCrab - GPL-3.0-or-later
 // Copyright (C) 2026 Daniel Freiermuth
 
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{
+    DateTime, Datelike, Local, MappedLocalTime, NaiveDate, NaiveDateTime, NaiveTime, Offset,
+    TimeDelta, TimeZone,
+};
 use egui::Ui;
 use fancy_regex::Regex;
 use std::fs::File;
@@ -209,6 +212,42 @@ static BRACKETED_CTIME_TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid regex literal")
 });
 
+/// Year that year-less timestamps (syslog `Nov 20 …`, logcat-style `11-20 …`) are placed in.
+/// Saved calibration offsets are relative to timestamps in this year, so it must not change.
+const YEARLESS_ANCHOR_YEAR: i32 = 1970;
+
+/// Year year-less timestamps are parsed in before being moved to [`YEARLESS_ANCHOR_YEAR`].
+/// A leap year, so `Feb 29` parses instead of being dropped.
+const YEARLESS_PARSE_YEAR: i32 = 1972;
+
+/// Move a year-less timestamp parsed in [`YEARLESS_PARSE_YEAR`] into [`YEARLESS_ANCHOR_YEAR`].
+///
+/// The anchor year has no Feb 29, and inserting one would add a fake day to logs from non-leap
+/// years. A Feb 29 timestamp is therefore placed at the instant that day begins (Feb 28 + 24 h,
+/// i.e. Mar 1 00:00), which keeps it after every Feb 28 line; its time of day is not kept.
+fn anchor_yearless(parsed: NaiveDateTime) -> Option<NaiveDateTime> {
+    parsed.with_year(YEARLESS_ANCHOR_YEAR).or_else(|| {
+        NaiveDate::from_ymd_opt(YEARLESS_ANCHOR_YEAR, 3, 1).map(|day| day.and_time(NaiveTime::MIN))
+    })
+}
+
+/// Resolve a wall-clock time in `tz` without dropping it at DST transitions.
+///
+/// An ambiguous time (fall-back hour) resolves to its earlier instant. A non-existent time
+/// (spring-forward gap) is read with the offset in effect before the gap, i.e. it moves forward
+/// by the length of the gap.
+fn resolve_wall_clock<Tz: TimeZone>(tz: &Tz, naive: NaiveDateTime) -> Option<DateTime<Tz>> {
+    match tz.from_local_datetime(&naive) {
+        MappedLocalTime::Single(dt) | MappedLocalTime::Ambiguous(dt, _) => Some(dt),
+        MappedLocalTime::None => {
+            let before_gap = naive.checked_sub_signed(TimeDelta::days(1))?;
+            let offset_before_gap = tz.offset_from_utc_datetime(&before_gap).fix();
+            let utc = naive.checked_sub_offset(offset_before_gap)?;
+            Some(tz.from_utc_datetime(&utc))
+        }
+    }
+}
+
 /// Parse a single line and return the concrete `GenericLogLine` if it has a recognised timestamp.
 pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogLine> {
     let mut timestamp = None;
@@ -216,12 +255,12 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
 
     if let Ok(Some(caps)) = SLASH_TIMESTAMP.captures(remaining) {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y/%m/%d %H:%M:%S%.f") {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y/%m/%d %H:%M:%S")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = HYPHENATED_TIMESTAMP.captures(remaining) {
@@ -231,12 +270,12 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
         if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S%.f")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = ISO_TIMESTAMP.captures(remaining) {
@@ -269,55 +308,55 @@ pub fn parse_generic_line(raw: String, line_number: usize) -> Option<GenericLogL
                     |_| chrono::NaiveDateTime::parse_from_str(&naive_ts, "%Y-%m-%d %H:%M:%S"),
                 )
             {
-                timestamp = Local.from_local_datetime(&naive).single();
+                timestamp = resolve_wall_clock(&Local, naive);
                 remaining = remaining[caps[0].len()..].trim_start();
             }
         }
     } else if let Ok(Some(caps)) = BRACKETED_TIMESTAMP.captures(remaining) {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S%.3f")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&caps[1], "%Y-%m-%d %H:%M:%S")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = BRACKETED_CTIME_TIMESTAMP.captures(remaining) {
         // e.g. [Sat Mar  7 11:53:27 2026]
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&caps[1], "%a %b %e %H:%M:%S %Y") {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = LOGCAT_TIMESTAMP_GENERIC.captures(remaining) {
-        let timestamp_str = format!("1970-{}", &caps[1]);
+        let timestamp_str = format!("{YEARLESS_PARSE_YEAR}-{}", &caps[1]);
         if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.3f")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = anchor_yearless(naive).and_then(|n| resolve_wall_clock(&Local, n));
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = SYSLOG_TIMESTAMP.captures(remaining) {
-        let ts_str = format!("1970 {}", &caps[1]);
+        let ts_str = format!("{YEARLESS_PARSE_YEAR} {}", &caps[1]);
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S%.3f") {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = anchor_yearless(naive).and_then(|n| resolve_wall_clock(&Local, n));
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y %b %d %H:%M:%S")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = anchor_yearless(naive).and_then(|n| resolve_wall_clock(&Local, n));
             remaining = remaining[caps[0].len()..].trim_start();
         }
     } else if let Ok(Some(caps)) = TIME_ONLY_TIMESTAMP.captures(remaining) {
         let ts_str = format!("1970-01-01 {}", &caps[1]);
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S%.f") {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         } else if let Ok(naive) =
             chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S")
         {
-            timestamp = Local.from_local_datetime(&naive).single();
+            timestamp = resolve_wall_clock(&Local, naive);
             remaining = remaining[caps[0].len()..].trim_start();
         }
     }
@@ -603,5 +642,136 @@ mod tests {
             line.timestamp.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
             "2025-11-20 14:23:45.123456"
         );
+    }
+
+    fn parse_ts(raw: &str) -> DateTime<Local> {
+        parse_generic_line(raw.to_string(), 1)
+            .expect("year-less line must not be dropped")
+            .timestamp
+    }
+
+    #[test]
+    fn syslog_feb_28_to_mar_1_spacing_has_no_leap_day() {
+        let before = parse_ts("Feb 28 23:59:59 host kernel: before");
+        let after = parse_ts("Mar  1 00:00:01 host kernel: after");
+        assert_eq!(after - before, chrono::Duration::seconds(2));
+    }
+
+    #[test]
+    fn logcat_style_feb_28_to_mar_1_spacing_has_no_leap_day() {
+        let before = parse_ts("02-28 23:59:59.000 1 2 I T: before");
+        let after = parse_ts("03-01 00:00:01.000 1 2 I T: after");
+        assert_eq!(after - before, chrono::Duration::seconds(2));
+    }
+
+    #[test]
+    fn syslog_leap_day_line_is_kept_at_start_of_leap_day() {
+        let raw = "Feb 29 12:00:00 host kernel: leap day".to_string();
+        let line = parse_generic_line(raw, 1).expect("Feb 29 syslog line must not be dropped");
+        assert_eq!(line.message_text, "host kernel: leap day");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            "1970-03-01 00:00:00.000"
+        );
+        assert!(parse_ts("Feb 28 23:59:59 x: before") < line.timestamp);
+        assert!(line.timestamp < parse_ts("Mar  1 00:00:01 x: after"));
+    }
+
+    #[test]
+    fn logcat_style_leap_day_line_is_kept_at_start_of_leap_day() {
+        let raw = "02-29 12:00:00.000 123 456 I Tag: leap day".to_string();
+        let line = parse_generic_line(raw, 1).expect("02-29 logcat line must not be dropped");
+        assert_eq!(line.message_text, "123 456 I Tag: leap day");
+        assert_eq!(
+            line.timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
+            "1970-03-01 00:00:00.000"
+        );
+    }
+
+    /// Central European time for 2025 only: CEST (+02:00) from 2025-03-30 01:00 UTC
+    /// until 2025-10-26 01:00 UTC, CET (+01:00) otherwise.
+    #[derive(Clone, Copy, Debug)]
+    struct Cet2025;
+
+    impl Cet2025 {
+        fn cet() -> chrono::FixedOffset {
+            chrono::FixedOffset::east_opt(3600).expect("valid offset")
+        }
+        fn cest() -> chrono::FixedOffset {
+            chrono::FixedOffset::east_opt(7200).expect("valid offset")
+        }
+    }
+
+    impl TimeZone for Cet2025 {
+        type Offset = chrono::FixedOffset;
+
+        fn from_offset(_offset: &chrono::FixedOffset) -> Self {
+            Self
+        }
+
+        fn offset_from_local_date(
+            &self,
+            local: &chrono::NaiveDate,
+        ) -> MappedLocalTime<chrono::FixedOffset> {
+            self.offset_from_local_datetime(&local.and_time(chrono::NaiveTime::MIN))
+        }
+
+        fn offset_from_local_datetime(
+            &self,
+            local: &NaiveDateTime,
+        ) -> MappedLocalTime<chrono::FixedOffset> {
+            let valid = |offset: chrono::FixedOffset| {
+                local
+                    .checked_sub_offset(offset)
+                    .is_some_and(|utc| self.offset_from_utc_datetime(&utc) == offset)
+            };
+            match (valid(Self::cest()), valid(Self::cet())) {
+                (true, true) => MappedLocalTime::Ambiguous(Self::cest(), Self::cet()),
+                (true, false) => MappedLocalTime::Single(Self::cest()),
+                (false, true) => MappedLocalTime::Single(Self::cet()),
+                (false, false) => MappedLocalTime::None,
+            }
+        }
+
+        fn offset_from_utc_date(&self, utc: &chrono::NaiveDate) -> chrono::FixedOffset {
+            self.offset_from_utc_datetime(&utc.and_time(chrono::NaiveTime::MIN))
+        }
+
+        fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> chrono::FixedOffset {
+            let start = naive("2025-03-30 01:00:00");
+            let end = naive("2025-10-26 01:00:00");
+            if (start..end).contains(utc) {
+                Self::cest()
+            } else {
+                Self::cet()
+            }
+        }
+    }
+
+    fn naive(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").expect("valid test timestamp")
+    }
+
+    #[test]
+    fn fall_back_hour_resolves_to_earlier_instant() {
+        let dt = resolve_wall_clock(&Cet2025, naive("2025-10-26 02:30:00"))
+            .expect("ambiguous wall-clock time must not be dropped");
+        assert_eq!(dt.naive_utc(), naive("2025-10-26 00:30:00"));
+        assert_eq!(dt.naive_local(), naive("2025-10-26 02:30:00"));
+    }
+
+    #[test]
+    fn spring_forward_gap_moves_forward_by_gap_length() {
+        let dt = resolve_wall_clock(&Cet2025, naive("2025-03-30 02:30:00"))
+            .expect("non-existent wall-clock time must not be dropped");
+        assert_eq!(dt.naive_utc(), naive("2025-03-30 01:30:00"));
+        assert_eq!(dt.naive_local(), naive("2025-03-30 03:30:00"));
+    }
+
+    #[test]
+    fn unambiguous_wall_clock_time_is_unchanged() {
+        let dt = resolve_wall_clock(&Cet2025, naive("2025-10-26 01:30:00"))
+            .expect("unambiguous wall-clock time must resolve");
+        assert_eq!(dt.naive_utc(), naive("2025-10-25 23:30:00"));
     }
 }
