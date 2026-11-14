@@ -1528,6 +1528,57 @@ fn pcap_ts_to_datetime(sec: u32, frac: u32, nanosecond_precision: bool) -> Optio
     Local.timestamp_opt(i64::from(sec), nanos).single()
 }
 
+/// Decode a pcapng `if_tsresol` option byte into timestamp units per second.
+///
+/// The high bit selects a power of two, otherwise a power of ten. Returns
+/// `None` when the resolution does not fit in a u64.
+fn pcapng_units_per_second(if_tsresol: u8) -> Option<u64> {
+    let exponent = u32::from(if_tsresol & 0x7F);
+    if if_tsresol & 0x80 != 0 {
+        1u64.checked_shl(exponent)
+    } else {
+        10u64.checked_pow(exponent)
+    }
+}
+
+/// Decode the `if_tsoffset` option (seconds added to every timestamp of the
+/// interface) of an IDB, in the byte order of its section. A missing or
+/// malformed option means no offset.
+fn pcapng_if_tsoffset(options: &[pcap_parser::PcapNGOption<'_>], big_endian: bool) -> i64 {
+    options
+        .iter()
+        .find(|opt| opt.code == pcap_parser::OptionCode::IfTsoffset)
+        .and_then(|opt| <[u8; 8]>::try_from(opt.value.get(..8)?).ok())
+        .map_or(0, |bytes| {
+            if big_endian {
+                i64::from_be_bytes(bytes)
+            } else {
+                i64::from_le_bytes(bytes)
+            }
+        })
+}
+
+/// Convert a raw 64-bit pcapng timestamp, counted in `units_per_second` and
+/// shifted by `offset_secs`, to a local `DateTime`. Returns `None` for a zero
+/// resolution or a time that is before the epoch or unrepresentable.
+fn pcapng_ts_to_datetime(
+    ts_raw: u64,
+    units_per_second: u64,
+    offset_secs: i64,
+) -> Option<DateTime<Local>> {
+    let secs = ts_raw.checked_div(units_per_second)?;
+    let rem = ts_raw % units_per_second;
+    // rem < units_per_second <= u64::MAX, so rem * 1e9 fits in a u128 and the
+    // quotient is below 1e9.
+    let nanos =
+        u32::try_from(u128::from(rem) * 1_000_000_000 / u128::from(units_per_second)).ok()?;
+    let secs = i64::try_from(secs).ok()?.checked_add(offset_secs)?;
+    if secs < 0 {
+        return None;
+    }
+    Local.timestamp_opt(secs, nanos).single()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PcapFormat {
     Legacy,
@@ -1637,31 +1688,36 @@ fn parse_pcapng_to_lines(path: &Path) -> anyhow::Result<Vec<PcapLogLine>> {
         .map_err(|e| anyhow::anyhow!("Failed to create pcapng reader: {e:?}"))?;
     let mut lines = Vec::new();
     let mut line_number = 1usize;
-    let mut if_tsresol: u64 = 1_000_000;
+    // `(units per second, offset seconds)` of each interface in the current
+    // section, indexed by interface ID. `None` marks an `if_tsresol` that does
+    // not fit in a u64.
+    let mut if_clocks: Vec<Option<(u64, i64)>> = Vec::new();
+    let mut section_big_endian = false;
     let mut flow_tracker = TcpFlowTracker::new();
     loop {
         match pcap_reader.next() {
             Ok((offset, block)) => {
                 match block {
+                    PcapBlockOwned::NG(pcap_parser::Block::SectionHeader(shb)) => {
+                        // Interface IDs are scoped to their section.
+                        if_clocks.clear();
+                        section_big_endian = shb.big_endian();
+                    }
                     PcapBlockOwned::NG(pcap_parser::Block::InterfaceDescription(idb)) => {
-                        for opt in &idb.options {
-                            if opt.code.0 == 9 && !opt.value.is_empty() {
-                                let resol = opt.value[0];
-                                if_tsresol = if resol & 0x80 != 0 {
-                                    1u64 << (resol & 0x7F)
-                                } else {
-                                    10u64.pow(u32::from(resol))
-                                };
-                            }
-                        }
+                        let offset_secs = pcapng_if_tsoffset(&idb.options, section_big_endian);
+                        if_clocks.push(
+                            pcapng_units_per_second(idb.if_tsresol)
+                                .map(|units| (units, offset_secs)),
+                        );
                     }
                     PcapBlockOwned::NG(pcap_parser::Block::EnhancedPacket(epb)) => {
                         let ts_raw = (u64::from(epb.ts_high) << 32) | u64::from(epb.ts_low);
-                        let sec = ts_raw / if_tsresol;
-                        let nsec = ((ts_raw % if_tsresol) * 1_000_000_000) / if_tsresol;
-                        let timestamp = Local
-                            .timestamp_opt(sec.cast_signed(), nsec as u32)
-                            .single()
+                        let timestamp = usize::try_from(epb.if_id)
+                            .ok()
+                            .and_then(|if_id| if_clocks.get(if_id).copied().flatten())
+                            .and_then(|(units, offset_secs)| {
+                                pcapng_ts_to_datetime(ts_raw, units, offset_secs)
+                            })
                             .unwrap_or_else(Local::now);
                         if let Some(mut packet_info) = parse_packet_data(epb.data, timestamp) {
                             flow_tracker.analyze_packet(&mut packet_info);
@@ -2408,5 +2464,216 @@ mod tests {
                 .expect("round-trip");
         assert!(reloaded.is_known_someip_endpoint(v6));
         assert!(reloaded.is_known_someip_endpoint(v4));
+    }
+
+    // ================================================================
+    // pcapng timestamp resolution (end to end through the parser)
+    // ================================================================
+
+    /// Append a pcapng block with the given type and body in the given byte order.
+    fn push_pcapng_block(bytes: &mut Vec<u8>, big_endian: bool, block_type: u32, body: &[u8]) {
+        let total_len = u32::try_from(12 + body.len()).expect("block fits in u32");
+        let u32_bytes = |v: u32| {
+            if big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            }
+        };
+        bytes.extend_from_slice(&u32_bytes(block_type));
+        bytes.extend_from_slice(&u32_bytes(total_len));
+        bytes.extend_from_slice(body);
+        bytes.extend_from_slice(&u32_bytes(total_len));
+    }
+
+    /// Write a little-endian pcapng with one Ethernet interface per entry of
+    /// `if_tsresols` (the raw `if_tsresol` option byte) and one ARP packet per
+    /// `(if_id, raw_timestamp)` pair.
+    fn write_pcapng(if_tsresols: &[u8], packets: &[(u32, u64)]) -> tempfile::NamedTempFile {
+        let interfaces: Vec<(u8, Option<i64>)> =
+            if_tsresols.iter().map(|&tsresol| (tsresol, None)).collect();
+        write_pcapng_sections(&[pcapng_section_bytes(false, &interfaces, packets)])
+    }
+
+    /// Encode a single pcapng section in the given byte order with one
+    /// Ethernet interface per `(if_tsresol, if_tsoffset)` entry and one ARP
+    /// packet per `(if_id, raw_timestamp)` pair.
+    fn pcapng_section_bytes(
+        big_endian: bool,
+        interfaces: &[(u8, Option<i64>)],
+        packets: &[(u32, u64)],
+    ) -> Vec<u8> {
+        let u16_bytes = |v: u16| {
+            if big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            }
+        };
+        let u32_bytes = |v: u32| {
+            if big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            }
+        };
+        let i64_bytes = |v: i64| {
+            if big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            }
+        };
+        let frame = eth_frame(
+            [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+            [0xff; 6],
+            0x0806,
+            &[0u8; 28],
+        );
+        let frame_len = u32::try_from(frame.len()).expect("frame fits in u32");
+        let mut bytes = Vec::new();
+
+        let mut shb = Vec::new();
+        shb.extend_from_slice(&u32_bytes(0x1A2B_3C4D)); // byte-order magic
+        shb.extend_from_slice(&u16_bytes(1)); // version major
+        shb.extend_from_slice(&u16_bytes(0)); // version minor
+        shb.extend_from_slice(&i64_bytes(-1)); // section length unknown
+        push_pcapng_block(&mut bytes, big_endian, 0x0A0D_0D0A, &shb);
+
+        for &(tsresol, tsoffset) in interfaces {
+            let mut idb = Vec::new();
+            idb.extend_from_slice(&u16_bytes(1)); // LINKTYPE_ETHERNET
+            idb.extend_from_slice(&u16_bytes(0)); // reserved
+            idb.extend_from_slice(&u32_bytes(65535)); // snaplen
+            idb.extend_from_slice(&u16_bytes(9)); // if_tsresol
+            idb.extend_from_slice(&u16_bytes(1));
+            idb.extend_from_slice(&[tsresol, 0, 0, 0]);
+            if let Some(tsoffset) = tsoffset {
+                idb.extend_from_slice(&u16_bytes(14)); // if_tsoffset
+                idb.extend_from_slice(&u16_bytes(8));
+                idb.extend_from_slice(&i64_bytes(tsoffset));
+            }
+            idb.extend_from_slice(&[0u8; 4]); // opt_endofopt
+            push_pcapng_block(&mut bytes, big_endian, 1, &idb);
+        }
+
+        for &(if_id, ts_raw) in packets {
+            let mut epb = Vec::new();
+            epb.extend_from_slice(&u32_bytes(if_id));
+            epb.extend_from_slice(&u32_bytes((ts_raw >> 32) as u32));
+            epb.extend_from_slice(&u32_bytes(ts_raw as u32));
+            epb.extend_from_slice(&u32_bytes(frame_len)); // captured length
+            epb.extend_from_slice(&u32_bytes(frame_len)); // original length
+            epb.extend_from_slice(&frame);
+            epb.resize(epb.len().next_multiple_of(4), 0);
+            push_pcapng_block(&mut bytes, big_endian, 6, &epb);
+        }
+
+        bytes
+    }
+
+    /// Write a pcapng consisting of the given encoded sections to a temp file.
+    fn write_pcapng_sections(sections: &[Vec<u8>]) -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let mut file = tempfile::NamedTempFile::new().expect("create temp pcapng");
+        for section in sections {
+            file.write_all(section).expect("write temp pcapng");
+        }
+        file.flush().expect("flush temp pcapng");
+        file
+    }
+
+    #[test]
+    fn pcapng_timestamps_use_their_own_interface_resolution() {
+        // Interface 0 ticks in microseconds, interface 1 in nanoseconds; both
+        // packets encode 2023-11-14T22:13:20.500Z.
+        let file = write_pcapng(
+            &[6, 9],
+            &[(0, 1_700_000_000_500_000), (1, 1_700_000_000_500_000_000)],
+        );
+        let lines = parse_pcap_to_lines(file.path()).expect("pcapng should parse");
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            assert_eq!(
+                utc_nanos(line.packet_info.timestamp),
+                (1_700_000_000, 500_000_000)
+            );
+        }
+    }
+
+    #[test]
+    fn pcapng_picosecond_timestamps_do_not_overflow() {
+        // 10_000_000.5 s at picosecond resolution still fits the 64-bit field,
+        // but the sub-second remainder times 1e9 does not fit in a u64.
+        let file = write_pcapng(&[12], &[(0, 10_000_000_500_000_000_000)]);
+        let lines = parse_pcap_to_lines(file.path()).expect("pcapng should parse");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            utc_nanos(lines[0].packet_info.timestamp),
+            (10_000_000, 500_000_000)
+        );
+    }
+
+    #[test]
+    fn pcapng_binary_timestamp_resolution() {
+        // 2^20 units per second: 1_700_000_000 s + half a second.
+        let file = write_pcapng(&[0x80 + 20], &[(0, (1_700_000_000 << 20) | (1 << 19))]);
+        let lines = parse_pcap_to_lines(file.path()).expect("pcapng should parse");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            utc_nanos(lines[0].packet_info.timestamp),
+            (1_700_000_000, 500_000_000)
+        );
+    }
+
+    #[test]
+    fn pcapng_out_of_range_timestamp_resolution_does_not_panic() {
+        // 2^70 and 10^20 units per second do not fit in a u64.
+        let file = write_pcapng(&[0x80 + 70, 20], &[(0, 1), (1, 1)]);
+        let lines = parse_pcap_to_lines(file.path()).expect("pcapng should parse");
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn pcapng_timestamps_apply_interface_offset() {
+        // Each interface's if_tsoffset (seconds) is added to its timestamps;
+        // both packets encode 2023-11-14T22:13:20.500Z. Checked in both byte
+        // orders, because the option value follows the section's endianness.
+        for big_endian in [false, true] {
+            let file = write_pcapng_sections(&[pcapng_section_bytes(
+                big_endian,
+                &[(6, Some(1_700_000_000)), (9, Some(-1_000))],
+                &[(0, 500_000), (1, 1_700_001_000_500_000_000)],
+            )]);
+            let lines = parse_pcap_to_lines(file.path()).expect("pcapng should parse");
+            assert_eq!(lines.len(), 2, "big_endian={big_endian}");
+            for line in &lines {
+                assert_eq!(
+                    utc_nanos(line.packet_info.timestamp),
+                    (1_700_000_000, 500_000_000),
+                    "big_endian={big_endian}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pcapng_interface_ids_are_scoped_to_their_section() {
+        // Section 1 (little-endian): interface 0 ticks in nanoseconds.
+        // Section 2 (big-endian): interface 0 ticks in microseconds with an
+        // if_tsoffset. Each EPB must resolve if_id 0 within its own section;
+        // both packets encode 2023-11-14T22:13:20.500Z.
+        let file = write_pcapng_sections(&[
+            pcapng_section_bytes(false, &[(9, None)], &[(0, 1_700_000_000_500_000_000)]),
+            pcapng_section_bytes(true, &[(6, Some(1_700_000_000))], &[(0, 500_000)]),
+        ]);
+        let lines = parse_pcap_to_lines(file.path()).expect("pcapng should parse");
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            assert_eq!(
+                utc_nanos(line.packet_info.timestamp),
+                (1_700_000_000, 500_000_000)
+            );
+        }
     }
 }
