@@ -21,11 +21,11 @@ use egui::{Color32, RichText, Ui};
 use crate::config::GlobalConfig;
 use crate::core::{SavedFilter, SearchRule};
 use crate::input::ShortcutAction;
+use crate::ui::DEFAULT_PALETTE;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
-use crate::ui::tabs::filter_tab::HistogramMarker;
 use crate::ui::tabs::LogCrabTab;
-use crate::ui::DEFAULT_PALETTE;
+use crate::ui::tabs::filter_tab::HistogramMarker;
 
 /// Tab for managing highlight rules
 #[derive(Default)]

@@ -22,12 +22,12 @@ pub use bookmark_panel::{BookmarkData, BookmarkPanel, BookmarkPanelEvent};
 
 use crate::{
     config::GlobalConfig,
-    core::{log_store::StoreID, SavedFilter},
+    core::{SavedFilter, log_store::StoreID},
     input::ShortcutAction,
     ui::{
         filter_highlight::FilterHighlight,
         session_state::SessionState,
-        tabs::{filter_tab::HistogramMarker, LogCrabTab},
+        tabs::{LogCrabTab, filter_tab::HistogramMarker},
     },
 };
 use anyhow::Context as _;

@@ -1,18 +1,18 @@
-use super::windows;
 use super::ToastManager;
+use super::windows;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::config::session_history::{RecordedSession, SessionHistory};
 use crate::config::GlobalConfig;
+use crate::config::session_history::{RecordedSession, SessionHistory};
+use crate::core::ScoringConfig;
 use crate::core::histogram_worker::HistogramWorker;
 use crate::core::log_store::all_file_extensions;
-use crate::core::ScoringConfig;
 use crate::core::{FilterWorker, LogStore};
-use crate::input::{is_modifier_key, KeyboardBindings, ShortcutAction};
-use crate::ui::tabs::{BookmarksView, HighlightsView};
+use crate::input::{KeyboardBindings, ShortcutAction, is_modifier_key};
 use crate::ui::CrabSession;
+use crate::ui::tabs::{BookmarksView, HighlightsView};
 use egui::text::LayoutJob;
 use egui::{Color32, Id, LayerId, Order, TextStyle};
 use std::fmt::Write;

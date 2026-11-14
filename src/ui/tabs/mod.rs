@@ -45,7 +45,7 @@ pub trait LogCrabTab {
         histogram_markers: &[HistogramMarker],
     );
     fn process_events(&mut self, actions: &[ShortcutAction], data_state: &mut SessionState)
-        -> bool;
+    -> bool;
     fn try_into_stored_filter(&self) -> Option<SavedFilter>;
     fn get_filter_highlight(&self) -> Option<FilterHighlight>;
     fn get_histogram_marker(&mut self) -> Option<HistogramMarker>;

@@ -1000,7 +1000,12 @@ mod tests {
             "AVCTP/Single TL=3 Cmd AVRCP STATUS GetCapabilities Cap=EventsSupported"
         );
         assert_eq!(
-            decode(&vendor_dependent(CTYPE_STABLE, 0x10, 0x00, &[0x03, 0x02, 0x01, 0x0D])),
+            decode(&vendor_dependent(
+                CTYPE_STABLE,
+                0x10,
+                0x00,
+                &[0x03, 0x02, 0x01, 0x0D]
+            )),
             "AVCTP/Single TL=3 Rsp AVRCP STABLE GetCapabilities Cap=EventsSupported [PLAYBACK_STATUS_CHANGED, VOLUME_CHANGED]"
         );
         // Count claims 10 events but only 2 were captured.

@@ -472,7 +472,7 @@ mod tests {
 
         assert!(config.read_only);
         assert_eq!(config.schema_version, SCHEMA_VERSION); // defaults
-                                                           // All user-configurable fields should be defaults
+        // All user-configurable fields should be defaults
         assert!(!config.bright_mode);
         assert!(config.shortcuts.is_empty());
         assert!(config.favorite_filters.is_empty());

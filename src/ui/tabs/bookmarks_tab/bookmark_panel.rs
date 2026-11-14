@@ -16,9 +16,9 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::core::LogStore;
 use crate::core::log_store::LogLine;
 use crate::core::log_store::StoreID;
-use crate::core::LogStore;
 use crate::ui::filter_highlight::FilterHighlight;
 use crate::ui::session_state::SessionState;
 use crate::ui::tabs::filter_tab::log_table::{

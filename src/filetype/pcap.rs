@@ -835,10 +835,10 @@ pub struct SomeIpSdInfo {
 
 /// Decode SOME/IP SD (Service Discovery) payload using `someip_parse` library
 fn decode_someip_sd(payload: &[u8]) -> Option<SomeIpSdInfo> {
+    use someip_parse::SomeipMsgSlice;
     use someip_parse::sd::entries::{EventGroupEntryType, SdServiceEntryType};
     use someip_parse::sd::options::TransportProtocol;
     use someip_parse::sd::{SdEntrySlice, SdHeader, SdOptionSlice};
-    use someip_parse::SomeipMsgSlice;
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     /// Format a slice of SD option slices as compact endpoint strings.

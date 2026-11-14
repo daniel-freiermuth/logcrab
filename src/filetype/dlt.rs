@@ -3,14 +3,14 @@
 
 use chrono::{DateTime, Local};
 use dashmap::DashMap;
-use dlt_core::read::{read_message, DltMessageReader};
+use dlt_core::read::{DltMessageReader, read_message};
 use egui::Ui;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicI64, AtomicU64, Ordering},
     Arc, Mutex,
+    atomic::{AtomicI64, AtomicU64, Ordering},
 };
 
 use crate::filetype::{BinaryFileType, EguiConfig, InputFileType, LineType};
@@ -584,11 +584,7 @@ impl LineType for DltLogLine {
 impl crate::filetype::LogFileState for DltFileState {
     fn take_pending_jump_line(&self) -> Option<usize> {
         let val = self.pending_jump_line.swap(usize::MAX, Ordering::Relaxed);
-        if val == usize::MAX {
-            None
-        } else {
-            Some(val)
-        }
+        if val == usize::MAX { None } else { Some(val) }
     }
 
     #[allow(
@@ -1114,9 +1110,11 @@ mod tests {
                 .map(|v| *v),
             Some(expected_new_boot)
         );
-        assert!(!state
-            .boot_times
-            .contains_key(&("ECU1".to_string(), "NOTS".to_string())));
+        assert!(
+            !state
+                .boot_times
+                .contains_key(&("ECU1".to_string(), "NOTS".to_string()))
+        );
         assert_eq!(state.boot_times.len(), 2);
     }
 
@@ -1296,9 +1294,11 @@ mod tests {
 
         assert_eq!(state.storage_offset_ms(), 0);
         assert_eq!(state.boot_times.len(), 1);
-        assert!(state
-            .boot_times
-            .contains_key(&("ECU1".to_string(), "APP1".to_string())));
+        assert!(
+            state
+                .boot_times
+                .contains_key(&("ECU1".to_string(), "APP1".to_string()))
+        );
         assert_eq!(state.sync_point_offset_ms(usize::MAX), 0);
     }
 

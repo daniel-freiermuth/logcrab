@@ -16,8 +16,9 @@
 // You should have received a copy of the GNU General Public License
 // along with LogCrab.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::core::session::{CrabFile, SessionError, CRAB_FILE_VERSION};
+use crate::core::session::{CRAB_FILE_VERSION, CrabFile, SessionError};
 use crate::core::{SavedFilter, SavedHighlight};
+use crate::filetype::{InputFileType, LineType, LogFileState};
 use crate::filetype::{
     btsnoop::BtsnoopFileType, bugreport::BugreportFileType, dlt::DltFileType, dmesg::DmesgFileType,
     generic::GenericFileType, logcat::LogcatFileType, otel::OtelFileType, pcap::PcapFileType,
@@ -26,7 +27,6 @@ use crate::filetype::{
     btsnoop::BtsnoopLogLine, bugreport::BugreportLogLine, dlt::DltLogLine, dmesg::DmesgLogLine,
     generic::GenericLogLine, logcat::LogcatLogLine, otel::OtelLogLine, pcap::PcapLogLine,
 };
-use crate::filetype::{InputFileType, LineType, LogFileState};
 use crate::ui::tabs::bookmarks_tab::BookmarkData;
 use chrono::Local;
 use egui;
