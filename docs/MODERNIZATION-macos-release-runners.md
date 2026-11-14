@@ -50,7 +50,7 @@ Nothing breaks before August 2027. This decision is **not** urgent. It is record
 - It removes the dependency on GitHub's Intel fleet entirely, instead of trading one retiring label for one with an unknown date.
 - Both macOS artifacts are built by one image and one SDK.
 - The build is cross-compile-safe:
-  - `build.rs` only runs host tools: `protoc` via `tonic-prost-build`, and `git`.
+  - `build.rs` only runs one host tool, `git`. The sidecar proto is compiled in-process by `protox` + `tonic-prost-build`, with no `protoc`.
   - No C code is compiled for macOS targets. `cargo tree --target all -i cc` shows `cc` only under android-activity, iana-time-zone-haiku and wayland-backend.
   - `objc-sys` / `core-foundation-sys` only emit link directives.
 - Option D stays available later with no wasted work. Revisit it when macOS 26 security support ends (expected fall 2028).
