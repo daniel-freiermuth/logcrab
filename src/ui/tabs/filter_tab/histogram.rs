@@ -780,8 +780,7 @@ impl Histogram {
         let mut current_y = bottom_y;
 
         // Draw each score bucket from bottom (low scores) to top (high scores)
-        for bucket_idx in 0..SCORE_BUCKETS {
-            let count = dist.buckets[bucket_idx];
+        for (bucket_idx, &count) in dist.buckets.iter().enumerate() {
             if count == 0 {
                 continue;
             }
