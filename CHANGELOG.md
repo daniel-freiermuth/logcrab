@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The window title is only re-sent when it changes; re-sending it every frame
   kept LogCrab redrawing continuously while idle or minimised.
+- Filters and exclude patterns no longer change their matches when a source's
+  time is calibrated; they ignore the time-offset prefix shown before messages.
 
 ## [1.3.0] - 2026-09-01
 
