@@ -108,8 +108,7 @@ impl ToastSender {
     pub(crate) fn take_pending_errors(&self) -> Vec<String> {
         self.queue
             .lock()
-            .map(|mut q| q.drain(..).collect())
-            .unwrap_or_default()
+            .map_or_default(|mut q| q.drain(..).collect())
     }
 }
 
@@ -293,8 +292,7 @@ impl ToastManager {
         let pending: Vec<String> = self
             .pending_notifications
             .lock()
-            .map(|mut q| q.drain(..).collect())
-            .unwrap_or_default();
+            .map_or_default(|mut q| q.drain(..).collect());
         for msg in pending {
             self.show_error(msg);
         }
@@ -303,8 +301,7 @@ impl ToastManager {
         let successes: Vec<String> = self
             .pending_successes
             .lock()
-            .map(|mut q| q.drain(..).collect())
-            .unwrap_or_default();
+            .map_or_default(|mut q| q.drain(..).collect());
         for msg in successes {
             self.show_success(msg);
         }
