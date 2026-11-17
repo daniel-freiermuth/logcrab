@@ -162,7 +162,6 @@ impl DltLogLine {
             window: crate::filetype::CalibrationWindow::new(
                 current_time,
                 is_inferred,
-                Some(current_time),
                 self.storage_time,
             ),
         }
@@ -572,7 +571,6 @@ impl LineType for DltLogLine {
                 window: crate::filetype::CalibrationWindow::new(
                     current_time,
                     false, // not DLT-specific "apply to all" mode
-                    Some(current_time),
                     self.storage_time,
                 ),
             });
@@ -1392,12 +1390,8 @@ mod tests {
             let target = storage_time() + chrono::Duration::minutes(2);
             let mut cal = line.calibration_state(config, &state);
             // Stands in for the user typing `target` into the window.
-            cal.window = crate::filetype::CalibrationWindow::new(
-                target,
-                cal.is_inferred,
-                None,
-                line.storage_time,
-            );
+            cal.window =
+                crate::filetype::CalibrationWindow::new(target, cal.is_inferred, line.storage_time);
             *state.calibration.lock().expect("calibration lock poisoned") = Some(cal);
 
             let mut changed = false;

@@ -44,12 +44,7 @@ impl SimpleFileState {
             let display_time = raw_time + chrono::Duration::milliseconds(self.time_offset_ms());
             *self.calibration.lock().expect("calibration lock poisoned") = Some((
                 raw_time,
-                crate::filetype::CalibrationWindow::new(
-                    display_time,
-                    false,
-                    Some(display_time),
-                    raw_time,
-                ),
+                crate::filetype::CalibrationWindow::new(display_time, false, raw_time),
             ));
             ui.close();
         }

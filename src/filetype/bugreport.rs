@@ -398,12 +398,7 @@ impl LineType for BugreportLogLine {
                         .lock()
                         .expect("logcat calibration lock poisoned") = Some((
                         raw_time,
-                        crate::filetype::CalibrationWindow::new(
-                            display_time,
-                            false,
-                            Some(display_time),
-                            display_time,
-                        ),
+                        crate::filetype::CalibrationWindow::new(display_time, false, display_time),
                     ));
                     ui.close();
                 }
@@ -418,12 +413,7 @@ impl LineType for BugreportLogLine {
                         .lock()
                         .expect("dmesg calibration lock poisoned") = Some((
                         raw_time,
-                        crate::filetype::CalibrationWindow::new(
-                            display_time,
-                            false,
-                            Some(display_time),
-                            display_time,
-                        ),
+                        crate::filetype::CalibrationWindow::new(display_time, false, display_time),
                     ));
                     ui.close();
                 }
