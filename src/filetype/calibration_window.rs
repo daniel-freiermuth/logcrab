@@ -23,7 +23,7 @@ pub struct CalibrationWindow {
     target_time_str: String,
     focus_requested: bool,
     is_dlt: bool,
-    calculated_time: Option<DateTime<Local>>,
+    current_time: DateTime<Local>,
     original_time: DateTime<Local>,
     apply_to_all_apps: bool,
 }
@@ -33,14 +33,13 @@ impl CalibrationWindow {
     pub fn new(
         current_time: DateTime<Local>,
         is_dlt: bool,
-        calculated_time: Option<DateTime<Local>>,
         original_time: DateTime<Local>,
     ) -> Self {
         Self {
             target_time_str: current_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string(),
             focus_requested: false,
             is_dlt,
-            calculated_time,
+            current_time,
             original_time,
             apply_to_all_apps: false,
         }
@@ -67,16 +66,20 @@ impl CalibrationWindow {
                     ("Current time:", "Original time:")
                 };
 
-                if let Some(calc_time) = self.calculated_time {
-                    ui.horizontal(|ui| {
-                        ui.label(current_label);
-                        ui.label(calc_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string());
-                        if ui.button("Use for calibration").clicked() {
-                            self.target_time_str =
-                                calc_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-                        }
-                    });
-                }
+                ui.horizontal(|ui| {
+                    ui.label(current_label);
+                    ui.label(
+                        self.current_time
+                            .format("%Y-%m-%d %H:%M:%S%.3f")
+                            .to_string(),
+                    );
+                    if ui.button("Use for calibration").clicked() {
+                        self.target_time_str = self
+                            .current_time
+                            .format("%Y-%m-%d %H:%M:%S%.3f")
+                            .to_string();
+                    }
+                });
 
                 ui.horizontal(|ui| {
                     ui.label(original_label);
