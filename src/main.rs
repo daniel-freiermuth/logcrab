@@ -26,7 +26,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 #[derive(Parser, Debug)]
 #[command(name = "logcrab")]
 #[command(author = "LogCrab Team")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Analyze log files with anomaly detection and pattern matching", long_about = None)]
 struct Args {
     /// Path(s) to log file(s) to open
